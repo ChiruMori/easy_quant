@@ -30,6 +30,7 @@ export function JobsPage() {
               <TableHead>状态</TableHead>
               <TableHead>计划时间</TableHead>
               <TableHead className="text-right">尝试次数</TableHead>
+              <TableHead>执行结果</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -41,6 +42,12 @@ export function JobsPage() {
                 </TableCell>
                 <TableCell>{new Date(job.available_at).toLocaleString("zh-CN")}</TableCell>
                 <TableCell className="text-right tabular-nums">{job.attempt_count}</TableCell>
+                <TableCell>
+                  {job.error_summary?.message ||
+                    (job.job_type === "tdx-daily-update" && job.result_summary
+                      ? `更新 ${Number(job.result_summary.imported_days ?? 0)} 日 / ${Number(job.result_summary.imported_rows ?? 0)} 条；未变化 ${Number(job.result_summary.unchanged_days ?? 0)} 日；休市 ${Number(job.result_summary.closed_days ?? 0)} 日`
+                      : "—")}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

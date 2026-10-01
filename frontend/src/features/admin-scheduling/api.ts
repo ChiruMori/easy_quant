@@ -23,6 +23,8 @@ export interface JobRecord {
   status: string
   available_at: string
   attempt_count: number
+  result_summary?: Record<string, unknown>
+  error_summary?: { message?: string }
 }
 export interface AuditRecord {
   id: string

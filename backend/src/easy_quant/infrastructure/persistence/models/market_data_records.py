@@ -36,6 +36,16 @@ class HistoryImportStockModel(Base):
     completed_at: Mapped[datetime] = mapped_column(UtcDateTime())
 
 
+class TdxDailyCheckpointModel(Base):
+    __tablename__ = "tdx_daily_checkpoints"
+    trading_day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(20))
+    archive_sha256: Mapped[str | None] = mapped_column(String(64))
+    row_count: Mapped[int] = mapped_column(default=0)
+    checked_at: Mapped[datetime] = mapped_column(UtcDateTime())
+    reason: Mapped[str] = mapped_column(String(200), default="")
+
+
 class InstrumentModel(Base):
     __tablename__ = "instruments"
     symbol: Mapped[str] = mapped_column(String(20), primary_key=True)

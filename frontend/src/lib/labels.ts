@@ -22,6 +22,7 @@ const labels: Record<string, string> = {
   email: "邮件",
   ntfy: "ntfy 推送",
   "market-data-acquisition": "每日行情更新",
+  "tdx-daily-update": "通达信 A 股盘后增量",
   "live-analysis": "实盘策略分析",
   before_market: "盘前",
   on_market: "盘中",
