@@ -1,0 +1,1 @@
+{"version":"1","dataset":"daily-bars","format":"csv","required":["symbol","trading_day","open","high","low","close","volume"],"unique_key":["symbol","trading_day"]}

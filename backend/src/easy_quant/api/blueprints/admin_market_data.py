@@ -1,0 +1,337 @@
+from __future__ import annotations
+
+import csv
+import hashlib
+import io
+import json
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+
+from flask import Blueprint, g, request
+
+from easy_quant.api.dependencies import get_container
+from easy_quant.api.middleware.auth import require_admin
+from easy_quant.api.responses import success
+from easy_quant.api.schemas.market_data import AcquisitionRequest, SourceOrderRequest
+from easy_quant.application.services.audit_runtime import record_audit
+from easy_quant.domain.market_data.calendar import TradingCalendar
+from easy_quant.domain.shared.errors import DomainError
+from easy_quant.infrastructure.core import UuidGenerator
+
+blueprint = Blueprint("admin_market_data", __name__, url_prefix="/api/v1/admin/market-data")
+
+
+def _exchange(symbol: str) -> str:
+    if symbol.startswith(("4", "8", "92")):
+        return "北京证券交易所"
+    if symbol.startswith(("5", "6", "9")):
+        return "上海证券交易所"
+    return "深圳证券交易所"
+
+
+def _coverage_status(first_day: date | None, last_day: date | None) -> str:
+    if first_day is None or last_day is None:
+        return "未同步"
+    days = (last_day - first_day).days
+    if days >= 3652:
+        return "完全同步"
+    if days >= 1095:
+        return "部分同步"
+    return "数据不足"
+
+
+@blueprint.get("/datasets")
+@require_admin
+def list_datasets():
+    return success(get_container().state.datasets)
+
+
+@blueprint.put("/datasets/<dataset_key>/sources")
+@require_admin
+def update_source_order(dataset_key: str):
+    payload = SourceOrderRequest.model_validate(request.get_json() or {})
+    dataset = next(
+        (item for item in get_container().state.datasets if item["key"] == dataset_key), None
+    )
+    if dataset is None:
+        return success(None, status=404)
+    existing = {item["key"]: item for item in dataset["sources"]}
+    dataset["sources"] = [existing[key] for key in payload.source_keys if key in existing]
+    for source in dataset["sources"]:
+        source["enabled"] = source["key"] in payload.enabled_keys
+    datasets = get_container().state.datasets
+    dataset_index = next(index for index, item in enumerate(datasets) if item["key"] == dataset_key)
+    datasets[dataset_index] = dataset
+    record_audit(
+        get_container(),
+        actor_user_id=g.current_user.id,
+        action="update",
+        resource_type="data-source-config",
+        resource_id=dataset_key,
+        after={"enabled_sources": sorted(payload.enabled_keys)},
+    )
+    return success(dataset)
+
+
+@blueprint.get("/coverage")
+@require_admin
+def market_data_coverage():
+    store = get_container().market_data
+    instruments = {str(item["symbol"]): item for item in store.list_instruments()}
+    bars = store.list_bars()
+    symbols = sorted(set(instruments) | {str(row["symbol"]) for row in bars})
+    rows = []
+    calendar = TradingCalendar(store.list_trading_days() or None)
+    now = get_container().authentication.clock.now()
+    for symbol in symbols:
+        days = sorted(
+            date.fromisoformat(str(row["trading_day"])) for row in bars if row["symbol"] == symbol
+        )
+        first_day = days[0] if days else None
+        last_day = days[-1] if days else None
+        instrument = instruments.get(symbol, {})
+        freshness = calendar.freshness(first_day=first_day, last_day=last_day, now=now)
+        rows.append(
+            {
+                "symbol": symbol,
+                "name": instrument.get("name", ""),
+                "exchange": instrument.get("exchange", _exchange(symbol)),
+                "listed_on": instrument.get("listed_on"),
+                "first_trading_day": first_day.isoformat() if first_day else None,
+                "last_trading_day": last_day.isoformat() if last_day else None,
+                "record_count": len(days),
+                "sync_status": _coverage_status(first_day, last_day),
+                "freshness_status": freshness.status.value,
+                "updated": freshness.status.value == "updated",
+                "stale": freshness.status.value == "stale",
+                "previous_trading_day": freshness.previous_trading_day.isoformat(),
+                "recommended_end_day": freshness.recommended_end_day.isoformat(),
+            }
+        )
+    return success({"instrument_count": len(symbols), "items": rows})
+
+
+@blueprint.post("/acquisitions")
+@require_admin
+def create_acquisition():
+    payload = AcquisitionRequest.model_validate(request.get_json() or {})
+    tasks = get_container().state.acquisitions
+    task = {
+        "id": f"task-{UuidGenerator().new()}",
+        "dataset_key": payload.dataset_key,
+        "force": payload.force,
+        "status": "queued",
+        "symbols": payload.symbols,
+        "start_day": payload.start_day,
+        "end_day": payload.end_day,
+        "attempts": [],
+        "record_count": 0,
+    }
+    tasks[str(task["id"])] = task
+    service = get_container().data_sync
+    if service is not None:
+        task["status"] = "running"
+        try:
+            dataset = next(
+                (
+                    item
+                    for item in get_container().state.datasets
+                    if item["key"] == payload.dataset_key
+                ),
+                None,
+            )
+            enabled_sources = (
+                {str(item["key"]) for item in dataset["sources"] if item.get("enabled", True)}
+                if dataset
+                else None
+            )
+            result = service.sync(
+                payload.dataset_key,
+                symbols=payload.symbols,
+                start_day=date.fromisoformat(payload.start_day) if payload.start_day else None,
+                end_day=date.fromisoformat(payload.end_day) if payload.end_day else None,
+                force=payload.force,
+                source_keys=enabled_sources,
+            )
+            task.update(result)
+            task["status"] = "succeeded"
+        except (DomainError, ValueError) as error:
+            task["status"] = "failed"
+            task["message"] = str(error)
+            details = getattr(error, "details", None)
+            if isinstance(details, dict):
+                task["attempts"] = details.get("attempts", [])
+        tasks[str(task["id"])] = task
+    record_audit(
+        get_container(),
+        actor_user_id=g.current_user.id,
+        action="execute",
+        resource_type="data-acquisition",
+        resource_id=str(task["id"]),
+        after={"dataset_key": payload.dataset_key, "status": str(task["status"])},
+    )
+    return success(task, status=202)
+
+
+@blueprint.get("/acquisitions")
+@require_admin
+def list_acquisitions():
+    return success(list(get_container().state.acquisitions.values()))
+
+
+@blueprint.get("/acquisitions/<task_id>")
+@require_admin
+def get_acquisition(task_id: str):
+    return success(
+        get_container().state.acquisitions.get(task_id, {"id": task_id, "status": "not_found"})
+    )
+
+
+@blueprint.post("/imports/preview")
+@require_admin
+def preview_import():
+    uploaded = request.files.get("file")
+    if uploaded is None:
+        return success(
+            {
+                "valid": False,
+                "rows": 0,
+                "issues": [{"row": 0, "field": "file", "message": "请选择 CSV 文件"}],
+            }
+        )
+    text = uploaded.read().decode("utf-8-sig")
+    rows = list(csv.DictReader(io.StringIO(text)))
+    dataset_key = str(request.form.get("dataset_key", "daily-bars"))
+    allowed_datasets = {
+        "daily-bars",
+        "market-values",
+        "pledge-ratios",
+        "financial-indicators",
+        "industry-memberships",
+        "security-profiles",
+    }
+    if dataset_key not in allowed_datasets:
+        return success(
+            {
+                "valid": False,
+                "rows": len(rows),
+                "issues": [{"row": 0, "field": "dataset_key", "message": "不支持的数据集"}],
+            }
+        )
+    required = (
+        {"symbol", "trading_day", "open", "high", "low", "close", "volume"}
+        if dataset_key == "daily-bars"
+        else {"symbol", "available_at"}
+    )
+    issues: list[dict[str, object]] = []
+    for index, row in enumerate(rows, start=2):
+        for field in required:
+            if not row.get(field):
+                issues.append({"row": index, "field": field, "message": "必填字段不能为空"})
+        date_field = "trading_day" if dataset_key == "daily-bars" else "available_at"
+        try:
+            if dataset_key == "daily-bars":
+                date.fromisoformat(row.get(date_field, ""))
+            else:
+                parsed_at = datetime.fromisoformat(row.get(date_field, ""))
+                if parsed_at.tzinfo is None:
+                    raise ValueError
+        except ValueError:
+            issues.append(
+                {
+                    "row": index,
+                    "field": date_field,
+                    "message": "日线日期须为 YYYY-MM-DD；其他数据须为带时区的 ISO 时间",
+                }
+            )
+        for field in (
+            ("open", "high", "low", "close", "volume") if dataset_key == "daily-bars" else ()
+        ):
+            try:
+                Decimal(row.get(field, ""))
+            except InvalidOperation:
+                issues.append({"row": index, "field": field, "message": "必须为有效十进制数"})
+    preview_id = f"preview-{len(get_container().state.import_previews) + 1}"
+    if not issues:
+        get_container().state.import_previews[preview_id] = {
+            "dataset_key": dataset_key,
+            "rows": rows,
+        }
+    return success(
+        {
+            "preview_id": preview_id if not issues else None,
+            "valid": not issues,
+            "rows": len(rows),
+            "issues": issues,
+        }
+    )
+
+
+@blueprint.post("/imports/commit")
+@require_admin
+def commit_import():
+    payload = request.get_json() or {}
+    state = get_container().state
+    preview = state.import_previews.pop(str(payload.get("preview_id", "")), None)
+    if preview is None:
+        return success({"status": "failed", "message": "预检结果不存在或已提交"}, status=409)
+    dataset_key = str(preview.get("dataset_key", "daily-bars"))
+    rows = preview["rows"]
+    if dataset_key != "daily-bars":
+        normalized = []
+        for row in rows:
+            symbol = str(row["symbol"]).zfill(6)
+            record_key = str(row.get("record_key") or "")
+            if not record_key:
+                record_key = hashlib.sha256(
+                    json.dumps(row, ensure_ascii=False, sort_keys=True).encode()
+                ).hexdigest()
+            normalized.append({**row, "symbol": symbol, "record_key": record_key})
+        overwritten = get_container().market_data.upsert_records(dataset_key, normalized)
+        record_audit(
+            get_container(),
+            actor_user_id=g.current_user.id,
+            action="import",
+            resource_type="dataset",
+            resource_id=dataset_key,
+            after={"rows": len(rows), "overwritten": overwritten},
+        )
+        return success(
+            {"status": "succeeded", "rows": len(rows), "overwritten": overwritten},
+            status=201,
+        )
+    normalized_rows = []
+    for row in rows:
+        symbol = str(row["symbol"]).zfill(6)
+        trading_day = str(row["trading_day"])
+        normalized_rows.append(
+            {
+                "symbol": symbol,
+                "trading_day": trading_day,
+                "available_at": f"{trading_day}T15:00:00+08:00",
+                **{
+                    field: str(Decimal(row[field]))
+                    for field in ("open", "high", "low", "close", "volume")
+                },
+            }
+        )
+    overwritten = get_container().market_data.upsert_bars(normalized_rows)
+    existing = {item["symbol"] for item in get_container().market_data.list_instruments()}
+    get_container().market_data.upsert_instruments(
+        [
+            {"symbol": row["symbol"], "name": "", "exchange": _exchange(row["symbol"])}
+            for row in normalized_rows
+            if row["symbol"] not in existing
+        ]
+    )
+    record_audit(
+        get_container(),
+        actor_user_id=g.current_user.id,
+        action="import",
+        resource_type="dataset",
+        resource_id="daily-bars",
+        after={"rows": len(rows), "overwritten": overwritten},
+    )
+    return success(
+        {"status": "succeeded", "rows": len(rows), "overwritten": overwritten}, status=201
+    )

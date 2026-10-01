@@ -1,0 +1,53 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Easy Quant API", "version": "0.1.0"},
+  "servers": [{"url": "/api/v1"}],
+  "components": {
+    "schemas": {
+      "Success": {"type": "object", "required": ["data"], "properties": {"data": {}}},
+      "Error": {"type": "object", "required": ["error", "request_id"], "properties": {"error": {"type": "object"}, "request_id": {"type": ["string", "null"]}}}
+    },
+    "securitySchemes": {"cookieSession": {"type": "apiKey", "in": "cookie", "name": "session"}, "csrf": {"type": "apiKey", "in": "header", "name": "X-CSRF-Token"}}
+  },
+  "paths": {
+    "/health": {"get": {"operationId": "health", "responses": {"200": {"description": "healthy"}}}},
+    "/auth/initialize": {"post": {"operationId": "initialize", "responses": {"201": {"description": "initialized"}}}},
+    "/auth/login": {"post": {"operationId": "login", "responses": {"200": {"description": "logged in"}}}},
+    "/auth/logout": {"post": {"operationId": "logout", "responses": {"204": {"description": "logged out"}}}},
+    "/auth/me": {"get": {"operationId": "me", "responses": {"200": {"description": "current user"}}}},
+    "/auth/accept-invitation": {"post": {"operationId": "acceptInvitation", "responses": {"201": {"description": "accepted"}}}},
+    "/factors": {"get": {"operationId": "listFactors", "responses": {"200": {"description": "factor catalog"}}}},
+    "/factors/{key}": {"get": {"operationId": "getFactor", "responses": {"200": {"description": "factor detail"}}}},
+    "/strategies": {"get": {"operationId": "listStrategies", "responses": {"200": {"description": "strategies"}}}, "post": {"operationId": "createStrategy", "responses": {"201": {"description": "created"}}}},
+    "/strategies/templates": {"get": {"operationId": "listStrategyTemplates", "responses": {"200": {"description": "templates"}}}},
+    "/strategies/{strategy_id}/versions": {"post": {"operationId": "createStrategyVersion", "responses": {"201": {"description": "created"}}}},
+    "/strategies/{strategy_id}/run": {"post": {"operationId": "runStrategy", "responses": {"200": {"description": "run output"}}}},
+    "/backtests": {"get": {"operationId": "listBacktests", "responses": {"200": {"description": "回测记录"}}}, "post": {"operationId": "createBacktest", "responses": {"201": {"description": "已创建"}, "409": {"description": "行情数据缺失"}}}},
+    "/backtests/{run_id}": {"get": {"operationId": "getBacktest", "responses": {"200": {"description": "result"}}}},
+    "/backtests/compare": {"post": {"operationId": "compareBacktests", "responses": {"200": {"description": "comparison"}}}},
+    "/live-instances": {"get": {"operationId": "listLiveInstances", "responses": {"200": {"description": "instances"}}}, "post": {"operationId": "createLiveInstance", "responses": {"201": {"description": "created"}}}},
+    "/live-instances/{instance_id}": {"get": {"operationId": "getLiveInstance", "responses": {"200": {"description": "instance"}}}},
+    "/live-instances/{instance_id}/pause": {"post": {"operationId": "pauseLiveInstance", "responses": {"200": {"description": "paused"}}}},
+    "/live-instances/{instance_id}/terminate": {"post": {"operationId": "terminateLiveInstance", "responses": {"200": {"description": "terminated"}}}},
+    "/live-instances/{instance_id}/analyze/{phase}": {"post": {"operationId": "analyzeLiveInstance", "responses": {"200": {"description": "已执行策略阶段"}}}},
+    "/recommendations/{recommendation_id}/{kind}": {"post": {"operationId": "actOnRecommendation", "responses": {"200": {"description": "recorded"}}}},
+    "/recommendations/portfolio/{live_instance_id}": {"get": {"operationId": "getPortfolio", "responses": {"200": {"description": "portfolio"}}}},
+    "/notifications/subscriptions": {"get": {"operationId": "listSubscriptions", "responses": {"200": {"description": "subscriptions"}}}, "post": {"operationId": "createSubscription", "responses": {"201": {"description": "created"}}}},
+    "/notifications/subscriptions/{subscription_id}": {"patch": {"operationId": "updateSubscription", "responses": {"200": {"description": "updated"}}}},
+    "/notifications/deliveries": {"get": {"operationId": "listDeliveries", "responses": {"200": {"description": "deliveries"}}}},
+    "/admin/market-data/datasets": {"get": {"operationId": "listDatasets", "responses": {"200": {"description": "datasets"}}}},
+    "/admin/market-data/coverage": {"get": {"operationId": "getMarketDataCoverage", "responses": {"200": {"description": "股票日线覆盖状态"}}}},
+    "/admin/market-data/datasets/{dataset_key}/sources": {"put": {"operationId": "setSources", "responses": {"200": {"description": "updated"}}}},
+    "/admin/market-data/acquisitions": {"get": {"operationId": "listAcquisitions", "responses": {"200": {"description": "tasks"}}}, "post": {"operationId": "createAcquisition", "responses": {"202": {"description": "queued"}}}},
+    "/admin/market-data/acquisitions/{task_id}": {"get": {"operationId": "getAcquisition", "responses": {"200": {"description": "status"}}}},
+    "/admin/market-data/imports/preview": {"post": {"operationId": "previewImport", "responses": {"200": {"description": "preview"}}}},
+    "/admin/market-data/imports/commit": {"post": {"operationId": "commitImport", "responses": {"201": {"description": "imported"}}}},
+    "/admin/invitations": {"get": {"operationId": "listInvitations", "responses": {"200": {"description": "invitations"}}}, "post": {"operationId": "createInvitation", "responses": {"201": {"description": "created"}}}},
+    "/admin/users": {"get": {"operationId": "listUsers", "responses": {"200": {"description": "users"}}}},
+    "/admin/users/{user_id}": {"patch": {"operationId": "updateUser", "responses": {"200": {"description": "updated"}}}},
+    "/admin/schedules": {"get": {"operationId": "listSchedules", "responses": {"200": {"description": "schedules"}}}, "post": {"operationId": "createSchedule", "responses": {"201": {"description": "created"}}}},
+    "/admin/schedules/{schedule_id}": {"patch": {"operationId": "updateSchedule", "responses": {"200": {"description": "updated"}}}},
+    "/admin/jobs": {"get": {"operationId": "listJobs", "responses": {"200": {"description": "jobs"}}}},
+    "/admin/audit-events": {"get": {"operationId": "listAuditEvents", "responses": {"200": {"description": "events"}}}}
+  }
+}

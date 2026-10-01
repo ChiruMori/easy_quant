@@ -1,0 +1,131 @@
+openapi: 3.1.0
+info:
+  title: Easy Quant 易量化平台 API
+  version: 0.1.0
+  description: 首期 REST API 边界；实现阶段由 Pydantic schema 保持同步。
+servers:
+  - url: /api/v1
+paths:
+  /auth/initialize:
+    post:
+      summary: 一次性初始化管理员
+      responses:
+        "201": {description: 管理员已创建}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /auth/login:
+    post:
+      summary: 登录并建立 Cookie 会话
+      responses:
+        "200": {description: 登录成功}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /auth/logout:
+    post:
+      summary: 撤销当前会话
+      responses:
+        "204": {description: 已退出}
+  /auth/me:
+    get:
+      summary: 当前用户与 CSRF 信息
+      responses:
+        "200": {description: 当前用户}
+  /admin/datasets:
+    get: {summary: 数据集目录, responses: {"200": {description: 数据集列表}}}
+  /admin/sources:
+    get: {summary: 来源及排序, responses: {"200": {description: 来源列表}}}
+    post: {summary: 创建来源配置, responses: {"201": {description: 已创建}}}
+  /admin/acquisitions:
+    get: {summary: 拉取任务列表, responses: {"200": {description: 分页任务列表}}}
+    post: {summary: 创建拉取任务, responses: {"202": {description: 已入队}}}
+  /admin/uploads/preflight:
+    post: {summary: 上传文件预检, responses: {"200": {description: 预检结果}}}
+  /admin/uploads/{preflight_id}/commit:
+    post:
+      summary: 确认导入
+      parameters: [{$ref: "#/components/parameters/PreflightId"}]
+      responses: {"202": {description: 导入已入队}}
+  /factors:
+    get: {summary: 只读因子目录, responses: {"200": {description: 因子列表}}}
+  /factors/{factor_name}:
+    get:
+      summary: 因子文档
+      parameters: [{$ref: "#/components/parameters/FactorName"}]
+      responses: {"200": {description: 因子详情}}
+  /strategies:
+    get: {summary: 当前用户策略, responses: {"200": {description: 策略列表}}}
+    post: {summary: 创建策略及首个版本, responses: {"201": {description: 已创建}}}
+  /strategies/{strategy_id}/versions:
+    post:
+      summary: 保存新策略版本
+      parameters: [{$ref: "#/components/parameters/StrategyId"}]
+      responses: {"201": {description: 新版本}}
+  /strategy-runs:
+    post: {summary: 验证或运行策略版本, responses: {"202": {description: 已入队}}}
+  /backtests:
+    get: {summary: 当前用户回测, responses: {"200": {description: 回测列表}}}
+    post: {summary: 创建回测, responses: {"202": {description: 已入队}}}
+  /backtests/compare:
+    get: {summary: 比较两个回测, responses: {"200": {description: 同口径比较}}}
+  /live-instances:
+    get: {summary: 当前用户实盘实例, responses: {"200": {description: 实盘列表}}}
+    post: {summary: 从成功回测启动实盘, responses: {"201": {description: 实盘实例}}}
+  /recommendations:
+    get: {summary: 当前用户建议, responses: {"200": {description: 建议列表}}}
+  /recommendations/{recommendation_id}/confirm:
+    post:
+      summary: 确认按建议执行
+      parameters: [{$ref: "#/components/parameters/RecommendationId"}, {$ref: "#/components/parameters/IdempotencyKey"}]
+      responses: {"200": {description: 实际操作与组合结果}}
+  /recommendations/{recommendation_id}/reject:
+    post:
+      summary: 拒绝建议
+      parameters: [{$ref: "#/components/parameters/RecommendationId"}, {$ref: "#/components/parameters/IdempotencyKey"}]
+      responses: {"200": {description: 建议状态}}
+  /recommendations/{recommendation_id}/correct:
+    post:
+      summary: 录入修正后的实际操作
+      parameters: [{$ref: "#/components/parameters/RecommendationId"}, {$ref: "#/components/parameters/IdempotencyKey"}]
+      responses: {"200": {description: 实际操作与组合结果}}
+  /notification-subscriptions:
+    get: {summary: 当前用户通知订阅, responses: {"200": {description: 订阅列表}}}
+    post: {summary: 创建通知订阅, responses: {"201": {description: 已创建}}}
+  /jobs/{job_id}:
+    get:
+      summary: 查询长任务
+      parameters: [{$ref: "#/components/parameters/JobId"}]
+      responses: {"200": {description: 任务状态}}
+components:
+  parameters:
+    PreflightId: {name: preflight_id, in: path, required: true, schema: {type: string, format: uuid}}
+    FactorName: {name: factor_name, in: path, required: true, schema: {type: string}}
+    StrategyId: {name: strategy_id, in: path, required: true, schema: {type: string, format: uuid}}
+    RecommendationId: {name: recommendation_id, in: path, required: true, schema: {type: string, format: uuid}}
+    JobId: {name: job_id, in: path, required: true, schema: {type: string, format: uuid}}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, maxLength: 128}}
+  responses:
+    Unauthorized:
+      description: 未认证
+      content: {application/json: {schema: {$ref: "#/components/schemas/ErrorEnvelope"}}}
+    Conflict:
+      description: 状态冲突
+      content: {application/json: {schema: {$ref: "#/components/schemas/ErrorEnvelope"}}}
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            details: {type: object, additionalProperties: true}
+        request_id: {type: string}
+    Page:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items: {type: array, items: {type: object}}
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1, maximum: 200}
+        total: {type: integer, minimum: 0}

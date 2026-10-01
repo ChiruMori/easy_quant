@@ -1,0 +1,50 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "后端 API",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "flask",
+      "python": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/backend",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend/src",
+        "FLASK_APP": "easy_quant.api.app:create_app",
+        "FLASK_DEBUG": "1"
+      },
+      "args": ["run", "--debug", "--host", "127.0.0.1", "--port", "5000"],
+      "jinja": true,
+      "justMyCode": true
+    },
+    {
+      "name": "前端 Vite",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "pnpm --dir frontend dev",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "后端 Worker",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "easy_quant.worker.runner",
+      "python": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/backend",
+      "env": { "PYTHONPATH": "${workspaceFolder}/backend/src" },
+      "justMyCode": true
+    }
+  ],
+  "compounds": [
+    {
+      "name": "全栈开发（双端热更新）",
+      "configurations": ["后端 API", "前端 Vite"],
+      "stopAll": true
+    },
+    {
+      "name": "全栈开发（含 Worker）",
+      "configurations": ["后端 API", "前端 Vite", "后端 Worker"],
+      "stopAll": true
+    }
+  ]
+}

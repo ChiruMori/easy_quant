@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import date
+from decimal import Decimal
+
+from easy_quant.domain.backtesting.entities import (
+    BacktestConfig,
+    BacktestPeriod,
+    Portfolio,
+    SimulatedTrade,
+)
+from easy_quant.domain.backtesting.execution import MarketBar, execute_signal
+from easy_quant.domain.backtesting.metrics import calculate_metrics
+from easy_quant.domain.strategies.entities import Signal
+
+StrategyAtDay = Callable[[date], list[Signal]]
+PhasedStrategyAtDay = Callable[[date, str], list[Signal]]
+
+
+def run_daily_backtest(
+    config: BacktestConfig,
+    bars: list[MarketBar],
+    strategy: StrategyAtDay,
+) -> tuple[list[BacktestPeriod], list[SimulatedTrade], dict[str, Decimal | int | None]]:
+    portfolio = Portfolio(config.initial_cash)
+    periods: list[BacktestPeriod] = []
+    trades: list[SimulatedTrade] = []
+    by_day: dict[date, list[MarketBar]] = {}
+    for bar in bars:
+        if config.start_day <= bar.trading_day <= config.end_day:
+            by_day.setdefault(bar.trading_day, []).append(bar)
+    for trading_day in sorted(by_day):
+        visible_bars = {bar.symbol: bar for bar in by_day[trading_day]}
+        for signal in strategy(trading_day):
+            bar = visible_bars.get(signal.symbol)
+            if bar is None:
+                continue
+            trade = execute_signal(portfolio, signal, bar, config.fee_rate, config.slippage_rate)
+            if trade is not None:
+                trades.append(trade)
+        positions_value = sum(
+            (
+                visible_bars[symbol].close * quantity
+                for symbol, quantity in portfolio.positions.items()
+                if symbol in visible_bars
+            ),
+            Decimal(0),
+        )
+        periods.append(
+            BacktestPeriod(
+                trading_day, portfolio.cash + positions_value, portfolio.cash, positions_value
+            )
+        )
+    turnover = (
+        sum((trade.price * trade.quantity for trade in trades), Decimal(0)) / config.initial_cash
+    )
+    metrics = calculate_metrics([period.equity for period in periods], turnover, len(trades))
+    return periods, trades, metrics
+
+
+def run_phased_daily_backtest(
+    config: BacktestConfig,
+    bars: list[MarketBar],
+    strategy: PhasedStrategyAtDay,
+) -> tuple[list[BacktestPeriod], list[SimulatedTrade], dict[str, Decimal | int | None]]:
+    """按盘前、盘中、盘后顺序运行策略；回测路径没有通知副作用。
+
+    盘前信号按开盘价成交，盘中限价信号仅在当日高低价覆盖触发价时成交，
+    盘后信号按收盘价成交。这样不会把盘中条件错误地统一按收盘价执行。
+    """
+
+    portfolio = Portfolio(config.initial_cash)
+    periods: list[BacktestPeriod] = []
+    trades: list[SimulatedTrade] = []
+    by_day: dict[date, list[MarketBar]] = {}
+    for bar in bars:
+        if config.start_day <= bar.trading_day <= config.end_day:
+            by_day.setdefault(bar.trading_day, []).append(bar)
+
+    for trading_day in sorted(by_day):
+        visible_bars = {bar.symbol: bar for bar in by_day[trading_day]}
+        for phase in ("before_market", "on_market", "after_market"):
+            for signal in strategy(trading_day, phase):
+                bar = visible_bars.get(signal.symbol)
+                if bar is None:
+                    continue
+                reference_price = _phase_price(phase, signal, bar)
+                if reference_price is None:
+                    continue
+                trade = execute_signal(
+                    portfolio,
+                    signal,
+                    bar,
+                    config.fee_rate,
+                    config.slippage_rate,
+                    reference_price,
+                )
+                if trade is not None:
+                    trades.append(trade)
+        positions_value = sum(
+            (
+                visible_bars[symbol].close * quantity
+                for symbol, quantity in portfolio.positions.items()
+                if symbol in visible_bars
+            ),
+            Decimal(0),
+        )
+        periods.append(
+            BacktestPeriod(
+                trading_day, portfolio.cash + positions_value, portfolio.cash, positions_value
+            )
+        )
+
+    turnover = (
+        sum((trade.price * trade.quantity for trade in trades), Decimal(0)) / config.initial_cash
+    )
+    metrics = calculate_metrics([period.equity for period in periods], turnover, len(trades))
+    return periods, trades, metrics
+
+
+def _phase_price(phase: str, signal: Signal, bar: MarketBar) -> Decimal | None:
+    if phase == "before_market":
+        return bar.open if bar.open is not None else bar.close
+    if phase == "after_market":
+        return bar.close
+    if signal.trigger_price is None:
+        return bar.open if bar.open is not None else bar.close
+    low = bar.low if bar.low is not None else bar.close
+    high = bar.high if bar.high is not None else bar.close
+    return signal.trigger_price if low <= signal.trigger_price <= high else None

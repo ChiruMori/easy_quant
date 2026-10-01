@@ -1,0 +1,44 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: Ruff format
+        entry: uv run --project backend ruff format backend/src backend/tests backend/migrations backend/resources
+        language: system
+        pass_filenames: false
+        files: ^backend/.*\.py$
+      - id: ruff-check
+        name: Ruff lint and safe fixes
+        entry: uv run --project backend ruff check --fix backend/src backend/tests backend/migrations backend/resources
+        language: system
+        pass_filenames: false
+        files: ^backend/.*\.py$
+      - id: pyright
+        name: Python type check
+        entry: uv run --project backend pyright --project backend/pyproject.toml
+        language: system
+        pass_filenames: false
+        files: ^backend/.*\.py$
+      - id: frontend-format
+        name: Frontend Prettier
+        entry: pnpm --dir frontend format
+        language: system
+        pass_filenames: false
+        files: ^frontend/
+      - id: frontend-eslint
+        name: Frontend ESLint and fixes
+        entry: pnpm --dir frontend lint:fix
+        language: system
+        pass_filenames: false
+        files: ^frontend/
+      - id: frontend-typecheck
+        name: Frontend TypeScript check
+        entry: pnpm --dir frontend typecheck
+        language: system
+        pass_filenames: false
+        files: ^frontend/
+      - id: commit-message
+        name: Commit message convention
+        entry: uv run --project backend python tools/check_commit_message.py
+        language: system
+        stages: [commit-msg]

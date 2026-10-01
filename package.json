@@ -1,0 +1,31 @@
+{
+  "name": "easy-quant",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.15.1",
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"pnpm dev:backend\" \"pnpm dev:frontend\"",
+    "dev:backend": "uv run --project backend flask --app easy_quant.api.app:create_app run --debug --host 127.0.0.1 --port 5000",
+    "dev:worker": "uv run --project backend easy-quant-worker",
+    "dev:frontend": "pnpm --dir frontend dev",
+    "check": "pnpm check:backend && pnpm check:frontend",
+    "check:backend": "uv run --project backend ruff format --check backend/src backend/tests backend/migrations backend/resources && uv run --project backend ruff check backend/src backend/tests backend/migrations backend/resources && uv run --project backend pyright --project backend/pyproject.toml && uv run --project backend pytest --rootdir backend",
+    "check:frontend": "pnpm --dir frontend check",
+    "format": "pnpm format:backend && pnpm format:frontend",
+    "format:backend": "uv run --project backend ruff format backend/src backend/tests backend/migrations backend/resources",
+    "format:frontend": "pnpm --dir frontend format",
+    "lint:fix": "uv run --project backend ruff check --fix backend/src backend/tests backend/migrations backend/resources && pnpm --dir frontend lint:fix",
+    "fix": "pnpm format && pnpm lint:fix",
+    "hooks:install": "uv run --project backend pre-commit install --hook-type pre-commit --hook-type commit-msg",
+    "test": "pnpm test:backend && pnpm test:frontend",
+    "test:backend": "uv run --project backend pytest",
+    "test:frontend": "pnpm --dir frontend test",
+    "test:e2e": "pnpm --dir frontend test:e2e",
+    "build": "pnpm --dir frontend build",
+    "migrate": "uv run --project backend alembic -c backend/alembic.ini upgrade head",
+    "health": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/health.ps1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
