@@ -26,6 +26,20 @@ from easy_quant.infrastructure.persistence.models.market_data_records import (
 )
 
 
+def bar_coverage_statement():
+    # MariaDB 在大库中可能仍选择较宽的聚簇主键；明确读取股票/日期二级索引。
+    return (
+        select(
+            DailyBarModel.symbol,
+            func.min(DailyBarModel.trading_day),
+            func.max(DailyBarModel.trading_day),
+            func.count(),
+        )
+        .with_hint(DailyBarModel, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql")
+        .group_by(DailyBarModel.symbol)
+    )
+
+
 class InMemoryMarketDataStore:
     def __init__(
         self,
@@ -140,12 +154,7 @@ class SqlAlchemyMarketDataStore:
         return overwritten
 
     def bar_coverage(self) -> dict[str, dict[str, Any]]:
-        statement = select(
-            DailyBarModel.symbol,
-            func.min(DailyBarModel.trading_day),
-            func.max(DailyBarModel.trading_day),
-            func.count(),
-        ).group_by(DailyBarModel.symbol)
+        statement = bar_coverage_statement()
         return {
             symbol: {"first_day": first, "last_day": last, "count": count}
             for symbol, first, last, count in self.session.execute(statement)

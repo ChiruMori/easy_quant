@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import zipfile
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -80,6 +81,13 @@ def main() -> int:
             LocalFileHistoryLoader(args.archive.parent / "batches") if args.local_infile else None
         )
         store = SqlHistoryStore(create_session_factory(engine), lambda: datetime.now(UTC), loader)
+        stop_requested = False
+
+        def request_stop(_signum, _frame) -> None:
+            nonlocal stop_requested
+            stop_requested = True
+
+        previous_handler = signal.signal(signal.SIGINT, request_stop)
 
         def progress(result: HistoryImportResult) -> None:
             done = result.imported_stocks + result.skipped_stocks + len(result.failures)
@@ -97,6 +105,8 @@ def main() -> int:
                 ),
                 flush=True,
             )
+            if stop_requested:
+                raise KeyboardInterrupt
 
         try:
             result = import_history(
@@ -109,6 +119,7 @@ def main() -> int:
             print(f"数据库不可用（{type(error).__name__}）；重跑可继续已完成检查点", flush=True)
             return 1
         finally:
+            signal.signal(signal.SIGINT, previous_handler)
             engine.dispose()
     report = {
         "source_url": ARCHIVE_URL,

@@ -22,7 +22,7 @@ def test_bulk_rows_keep_prices_units_and_utc_availability() -> None:
     assert "adjustment='none'" in LOAD_SQL
 
 
-@pytest.mark.parametrize("failure", ["warning", "db-error", None])
+@pytest.mark.parametrize("failure", ["warning", "db-error", "interrupt", None])
 def test_native_loader_checks_warnings_redacts_errors_and_removes_owned_file(monkeypatch, failure):
     state = {"closed": False, "removed": False}
 
@@ -46,6 +46,11 @@ def test_native_loader_checks_warnings_redacts_errors_and_removes_owned_file(mon
         def execute(self, _sql, *_args):
             if failure == "db-error":
                 raise OperationalError(1234, "SECRET_CONNECTION_DETAIL")
+            if failure == "interrupt":
+                try:
+                    raise KeyboardInterrupt
+                except KeyboardInterrupt:
+                    raise OperationalError(2013, "SECRET_CONNECTION_DETAIL") from None
 
         def fetchone(self):
             return ("Note", 1265, "SECRET_DETAIL") if failure == "warning" else None
@@ -68,7 +73,10 @@ def test_native_loader_checks_warnings_redacts_errors_and_removes_owned_file(mon
     monkeypatch.setattr(tdx_bulk.tempfile, "NamedTemporaryFile", lambda **_kwargs: MemoryFile())
     monkeypatch.setattr(tdx_bulk, "Path", MemoryPath)
     loader = LocalFileHistoryLoader(cast(Path, MemoryPath()))
-    if failure:
+    if failure == "interrupt":
+        with pytest.raises(KeyboardInterrupt):
+            loader(cast(Session, FakeSession()), parse_day(fixture_bytes(), "000001"), "a" * 64)
+    elif failure:
         with pytest.raises(RuntimeError) as error:
             loader(cast(Session, FakeSession()), parse_day(fixture_bytes(), "000001"), "a" * 64)
         assert "SECRET" not in str(error.value)

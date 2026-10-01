@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import zipfile
 
+import pytest
+
 from easy_quant.application.services.history_import import import_history
 from easy_quant.infrastructure.imports.tdx import TdxArchive
 from tests.infrastructure.test_tdx_archive import fixture_bytes
@@ -58,3 +60,23 @@ def test_invalid_stock_never_reaches_store() -> None:
     with zipfile.ZipFile(stream) as archive:
         result = import_history(TdxArchive(archive), store, "snapshot")
     assert result.failures and not store.rows and not store.stocks
+
+
+def test_interrupt_at_progress_boundary_keeps_committed_stock_and_resume_skips_it() -> None:
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("sz000001.day", fixture_bytes())
+    stream.seek(0)
+    store = Store()
+    store.fail = False
+
+    def stop(_result):
+        raise KeyboardInterrupt
+
+    with zipfile.ZipFile(stream) as archive:
+        source = TdxArchive(archive)
+        with pytest.raises(KeyboardInterrupt):
+            import_history(source, store, "snapshot", progress=stop)
+        resumed = import_history(source, store, "snapshot")
+    assert resumed.skipped_stocks == 1 and resumed.imported_rows == 0
+    assert len(store.rows) == 2

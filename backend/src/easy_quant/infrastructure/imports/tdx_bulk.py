@@ -54,6 +54,11 @@ class LocalFileHistoryLoader:
             finally:
                 cursor.close()
         except MySQLError as error:
-            raise RuntimeError(f"原生批量导入失败（{type(error).__name__}），事务已回滚") from None
+            if isinstance(error.__context__, KeyboardInterrupt):
+                raise KeyboardInterrupt from None
+            code = error.args[0] if error.args and isinstance(error.args[0], int) else "unknown"
+            raise RuntimeError(
+                f"原生批量导入失败（{type(error).__name__}/{code}），事务已回滚"
+            ) from None
         finally:
             path.unlink(missing_ok=True)

@@ -6,15 +6,19 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from sqlalchemy import Table
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.schema import CreateIndex
 
 from easy_quant.infrastructure.imports.tdx import parse_day
+from easy_quant.infrastructure.persistence.models.market_data_records import DailyBarModel
 from easy_quant.infrastructure.persistence.repositories.history_import import (
     SqlHistoryStore,
     bar_values,
     bars_upsert,
 )
+from easy_quant.infrastructure.persistence.repositories.runtime import bar_coverage_statement
 from tests.infrastructure.test_tdx_archive import fixture_bytes
 
 
@@ -66,3 +70,19 @@ def test_initial_schema_remains_frozen_before_history_migration() -> None:
     assert "history_import_stocks" not in metadata.tables
     assert "source" not in metadata.tables["daily_bars"].columns
     assert "amount" not in metadata.tables["daily_bars"].columns
+    assert not metadata.tables["daily_bars"].indexes
+
+
+def test_coverage_index_contains_only_symbol_and_date() -> None:
+    index = next(
+        item
+        for item in cast(Table, DailyBarModel.__table__).indexes
+        if item.name == "ix_daily_bars_coverage"
+    )
+    assert [column.name for column in index.columns] == ["symbol", "trading_day"]
+    assert "CREATE INDEX ix_daily_bars_coverage" in str(
+        CreateIndex(index).compile(dialect=mysql.dialect())
+    )
+    statement = str(bar_coverage_statement().compile(dialect=mysql.dialect()))
+    assert "FORCE INDEX (ix_daily_bars_coverage)" in statement
+    assert "daily_bars.open" not in statement

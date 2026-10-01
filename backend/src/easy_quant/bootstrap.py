@@ -40,6 +40,18 @@ from easy_quant.infrastructure.persistence.session import (
 )
 from easy_quant.infrastructure.security import SecretBox
 
+_DAILY_BARS_DESCRIPTION = "日线行情；公开接口提供前复权，通达信全量导入为不复权"
+
+
+def _refresh_dataset_description(datasets: Any) -> None:
+    for index, dataset in enumerate(datasets):
+        if (
+            dataset.get("key") == "daily-bars"
+            and dataset.get("description") == "前复权日线开高低收与成交量"
+        ):
+            dataset["description"] = _DAILY_BARS_DESCRIPTION
+            datasets[index] = dataset
+
 
 def _default_datasets() -> list[dict[str, Any]]:
     return [
@@ -55,7 +67,7 @@ def _default_datasets() -> list[dict[str, Any]]:
         {
             "key": "daily-bars",
             "name": "日线 K 线",
-            "description": "日线行情；公开接口提供前复权，通达信全量导入为不复权",
+            "description": _DAILY_BARS_DESCRIPTION,
             "sources": [
                 {"key": "akshare", "name": "AKShare", "enabled": True},
                 {"key": "eastmoney", "name": "东方财富", "enabled": True},
@@ -155,6 +167,7 @@ def build_container(settings: Settings | None = None) -> Container:
     if not datasets:
         for dataset in _default_datasets():
             datasets.append(dataset)
+    _refresh_dataset_description(datasets)
     state = PlatformState(
         strategies=strategies,
         datasets=datasets,
