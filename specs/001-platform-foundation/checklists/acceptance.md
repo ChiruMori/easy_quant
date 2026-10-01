@@ -29,10 +29,19 @@ Playwright 不拦截 `/api/v1`，启动专用本地 Flask 与 Vite：
 
 ## 质量门禁
 
-- 后端：Ruff format/check、Pyright 通过，Pytest 80 项通过。
+- 后端：Ruff format/check、Pyright 通过，Pytest 86 项通过，包含会话隔离、请求清理和持久化列表序列化回归测试。
 - 前端：Prettier、ESLint、TypeScript 通过，Vitest 7 项通过，Vite production build 成功。
 - 浏览器：Chrome Playwright 三条真实本地前后端旅程通过；使用独立测试端口和显式注入的离线 fake 容器。
 - 部署：单一 `0001_initial` 基线的 Alembic 离线 SQL 生成与 `docker compose config` 通过。
+
+## 本地真实运行复查（2026-10-01）
+
+- macOS 本地启动 Vite `5173`、Flask `5000` 和 worker；浏览器验收入口改用 uv/pnpm，可在无 PowerShell 的环境运行。
+- 实际连接 MariaDB 10.6.5，迁移版本为 `0001_initial`；只读核对发现当前模型没有缺失表或字段。
+- 真实 API 登录成功；并发读取健康、因子、策略、回测、实盘、数据集、覆盖、调度、作业、审计和通知共 12 个接口，均返回 200。
+- 当前真实业务库有 6 个数据集配置、8 个平台因子，尚无行情、策略、回测、实盘或通知订阅；此次未向业务库导入测试行情。
+- 真实运行发现并修复了共享 SQLAlchemy Session 的并发连接错误，以及持久化列表直接 JSON 序列化失败；完整 `pnpm check` 与三条离线 Playwright 旅程复查通过。
+- 额外离线内存探针确认：初始现金不足的确认请求返回 409，但操作、账本条目和建议确认状态已写入。现有离线验收通过不代表实际操作具备事务原子性。
 
 ## 明确边界
 

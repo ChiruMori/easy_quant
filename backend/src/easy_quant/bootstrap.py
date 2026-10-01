@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
+
+from sqlalchemy.orm import Session
 
 from easy_quant.application.services.acquisition import AcquisitionService, ExponentialRetry
 from easy_quant.application.services.authentication import AuthenticationService
@@ -33,6 +35,7 @@ from easy_quant.infrastructure.persistence.repositories.strategies import (
 )
 from easy_quant.infrastructure.persistence.session import (
     create_database_engine,
+    create_scoped_session,
     create_session_factory,
 )
 from easy_quant.infrastructure.security import SecretBox
@@ -144,7 +147,8 @@ def build_container(settings: Settings | None = None) -> Container:
 
     settings = settings or get_settings()
     engine = create_database_engine(settings.database_url.get_secret_value())
-    session = create_session_factory(engine)()
+    scoped = create_scoped_session(create_session_factory(engine))
+    session = cast(Session, scoped)
     identity = SqlAlchemyIdentityRepository(session)
     strategies = SqlAlchemyStrategyRepository(session)
     datasets = SqlJsonList(session, "datasets")
@@ -172,7 +176,7 @@ def build_container(settings: Settings | None = None) -> Container:
         state=state,
         market_data=SqlAlchemyMarketDataStore(session),
         backtests=SqlAlchemyBacktestStore(session),
-        database_session=session,
+        database_session=scoped,
         jobs=SqlAlchemyJobRepository(session),
     )
     raw_cache = SqlAlchemyCompressedRawCache(session)
@@ -188,6 +192,7 @@ def build_container(settings: Settings | None = None) -> Container:
         container.authentication.initialize_admin(
             settings.initial_admin_username, settings.initial_admin_password.get_secret_value()
         )
+    scoped.remove()
     return container
 
 
@@ -331,6 +336,8 @@ def build_worker():
         container.state.schedules[schedule_id] = schedule
 
     def pump_schedules() -> None:
+        if container.database_session is not None:
+            container.database_session.remove()
         now = container.authentication.clock.now()
         for schedule_id, schedule in list(container.state.schedules.items()):
             if not schedule.get("enabled", True):

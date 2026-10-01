@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from sqlalchemy import Engine, create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
 
 def create_database_engine(database_url: str, *, echo: bool = False) -> Engine:
@@ -12,6 +12,10 @@ def create_database_engine(database_url: str, *, echo: bool = False) -> Engine:
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+
+
+def create_scoped_session(factory: sessionmaker[Session]) -> scoped_session[Session]:
+    return scoped_session(factory)
 
 
 class SqlAlchemyUnitOfWork:

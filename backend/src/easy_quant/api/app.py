@@ -32,6 +32,13 @@ def create_app(*, settings: Settings | None = None, container: Container | None 
         JSON_AS_ASCII=False,
     )
     app.extensions["easy_quant_container"] = container or build_container(settings)
+
+    @app.teardown_appcontext
+    def release_database_session(_error: BaseException | None) -> None:
+        database_session = app.extensions["easy_quant_container"].database_session
+        if database_session is not None:
+            database_session.remove()
+
     app.extensions["id_generator"] = UuidGenerator()
     register_request_context(app)
     register_request_logging(app)
