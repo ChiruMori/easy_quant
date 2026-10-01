@@ -1,6 +1,7 @@
 """Easy Quant 首个数据库结构基线。"""
 
 from alembic import op
+from sqlalchemy import Column, Date, DateTime, MetaData, Numeric, String, Table
 
 from easy_quant.infrastructure.persistence.base import Base
 from easy_quant.infrastructure.persistence.models.audit import AuditEventModel
@@ -95,10 +96,31 @@ def upgrade() -> None:
     """在全新空数据库中创建当前完整结构。"""
 
     assert _SCHEMA_MODELS
-    Base.metadata.create_all(bind=op.get_bind(), checkfirst=False)
+    initial_metadata().create_all(bind=op.get_bind(), checkfirst=False)
+
+
+def initial_metadata() -> MetaData:
+    """固定已发布基线，避免后来模型字段被提前创建。"""
+    metadata = MetaData(naming_convention=Base.metadata.naming_convention)
+    for model in _SCHEMA_MODELS:
+        if model is not DailyBarModel:
+            model.__table__.to_metadata(metadata)
+    Table(
+        "daily_bars",
+        metadata,
+        Column("symbol", String(20), primary_key=True),
+        Column("trading_day", Date(), primary_key=True),
+        *(
+            Column(name, Numeric(20, 6), nullable=False)
+            for name in ("open", "high", "low", "close")
+        ),
+        Column("volume", Numeric(28, 4), nullable=False),
+        Column("available_at", DateTime(), nullable=False),
+    )
+    return metadata
 
 
 def downgrade() -> None:
     """删除本基线创建的全部业务表。"""
 
-    Base.metadata.drop_all(bind=op.get_bind(), checkfirst=False)
+    initial_metadata().drop_all(bind=op.get_bind(), checkfirst=False)

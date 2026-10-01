@@ -6,9 +6,10 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.infrastructure.persistence.models.backtesting import (
     BacktestMetricModel,
     BacktestPeriodModel,
@@ -39,6 +40,11 @@ class InMemoryMarketDataStore:
         self.market_records = market_records if market_records is not None else {}
 
     def upsert_bars(self, rows: list[dict[str, Any]]) -> int:
+        incoming = {str(row["symbol"]): str(row.get("adjustment", "unknown")) for row in rows}
+        for existing in self.daily_bars.values():
+            symbol = str(existing["symbol"])
+            if symbol in incoming and existing.get("adjustment", "unknown") != incoming[symbol]:
+                raise StateConflictError("日线复权口径冲突，拒绝混合写入", {"symbol": symbol})
         overwritten = 0
         for row in rows:
             key = (str(row["symbol"]), str(row["trading_day"]))
@@ -46,6 +52,17 @@ class InMemoryMarketDataStore:
             self.daily_bars[key] = row
             self.trading_days.add(str(row["trading_day"]))
         return overwritten
+
+    def bar_coverage(self) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for row in self.daily_bars.values():
+            symbol = str(row["symbol"])
+            day = date.fromisoformat(str(row["trading_day"]))
+            item = result.setdefault(symbol, {"first_day": day, "last_day": day, "count": 0})
+            item["first_day"] = min(item["first_day"], day)
+            item["last_day"] = max(item["last_day"], day)
+            item["count"] += 1
+        return result
 
     def upsert_instruments(self, rows: list[dict[str, Any]]) -> None:
         for row in rows:
@@ -89,6 +106,16 @@ class SqlAlchemyMarketDataStore:
         self.session = session
 
     def upsert_bars(self, rows: list[dict[str, Any]]) -> int:
+        incoming = {str(row["symbol"]): str(row.get("adjustment", "unknown")) for row in rows}
+        if incoming:
+            existing = self.session.execute(
+                select(DailyBarModel.symbol, DailyBarModel.adjustment)
+                .where(DailyBarModel.symbol.in_(incoming))
+                .distinct()
+            )
+            for symbol, adjustment in existing:
+                if adjustment != incoming[symbol]:
+                    raise StateConflictError("日线复权口径冲突，拒绝混合写入", {"symbol": symbol})
         overwritten = 0
         for item in rows:
             symbol, day = str(item["symbol"]), date.fromisoformat(str(item["trading_day"]))
@@ -102,11 +129,27 @@ class SqlAlchemyMarketDataStore:
                 close=Decimal(str(item["close"])),
                 volume=Decimal(str(item["volume"])),
                 available_at=datetime.fromisoformat(str(item["available_at"])),
+                source=str(item.get("source", "unknown")),
+                adjustment=str(item.get("adjustment", "unknown")),
+                amount=Decimal(str(item["amount"])) if item.get("amount") is not None else None,
+                archive_sha256=item.get("archive_sha256"),
             )
             self.session.merge(row)
             self.session.merge(TradingDayModel(trading_day=day))
         self.session.commit()
         return overwritten
+
+    def bar_coverage(self) -> dict[str, dict[str, Any]]:
+        statement = select(
+            DailyBarModel.symbol,
+            func.min(DailyBarModel.trading_day),
+            func.max(DailyBarModel.trading_day),
+            func.count(),
+        ).group_by(DailyBarModel.symbol)
+        return {
+            symbol: {"first_day": first, "last_day": last, "count": count}
+            for symbol, first, last, count in self.session.execute(statement)
+        }
 
     def upsert_instruments(self, rows: list[dict[str, Any]]) -> None:
         for item in rows:
@@ -138,6 +181,10 @@ class SqlAlchemyMarketDataStore:
                 "close": str(row.close),
                 "volume": str(row.volume),
                 "available_at": row.available_at.isoformat(),
+                "amount": str(row.amount) if row.amount is not None else None,
+                "source": row.source,
+                "adjustment": row.adjustment,
+                "archive_sha256": row.archive_sha256,
             }
             for row in self.session.scalars(statement)
         ]

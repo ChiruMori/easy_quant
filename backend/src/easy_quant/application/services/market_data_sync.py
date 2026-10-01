@@ -206,7 +206,10 @@ class MarketDataSyncService:
             value, attempts, source, _ = self._acquire("daily-bars", parameters, force, source_keys)
             all_attempts.extend({**item, "symbol": symbol} for item in attempts)
             sources.add(source)
-            normalized.extend(self._normalize_bars(symbol, value))
+            normalized.extend(
+                {**row, "source": source, "adjustment": "qfq"}
+                for row in self._normalize_bars(symbol, value)
+            )
         overwritten = self.store.upsert_bars(normalized)
         existing = {str(item["symbol"]) for item in self.store.list_instruments()}
         self.store.upsert_instruments(

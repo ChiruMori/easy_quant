@@ -55,7 +55,7 @@ def _default_datasets() -> list[dict[str, Any]]:
         {
             "key": "daily-bars",
             "name": "日线 K 线",
-            "description": "前复权日线开高低收与成交量",
+            "description": "日线行情；公开接口提供前复权，通达信全量导入为不复权",
             "sources": [
                 {"key": "akshare", "name": "AKShare", "enabled": True},
                 {"key": "eastmoney", "name": "东方财富", "enabled": True},
