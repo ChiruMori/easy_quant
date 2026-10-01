@@ -6,4 +6,4 @@
 - [x] T004 新增日期检查点迁移与当日事务写库，验证回滚和 SQL 契约。
 - [x] T005 接入 CLI、worker 和现有定时任务页面，补充 API/调度回归。
 - [x] T006 完成真实单日重放、缺口/休市验证，更新当前文档及验收记录。
-- [ ] T007 通过格式、pnpm check、Playwright 和 pre-commit，使用指定身份推送并更新 PR。
+- [x] T007 通过格式、pnpm check、Playwright 和 pre-commit，使用指定身份推送并更新 PR。
