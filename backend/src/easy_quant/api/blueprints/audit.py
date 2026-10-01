@@ -10,4 +10,4 @@ blueprint = Blueprint("audit", __name__, url_prefix="/api/v1/admin/audit-events"
 @blueprint.get("")
 @require_admin
 def list_audit_events():
-    return success(get_container().state.audit_events)
+    return success(list(get_container().state.audit_events))

@@ -43,7 +43,7 @@ def _coverage_status(first_day: date | None, last_day: date | None) -> str:
 @blueprint.get("/datasets")
 @require_admin
 def list_datasets():
-    return success(get_container().state.datasets)
+    return success(list(get_container().state.datasets))
 
 
 @blueprint.put("/datasets/<dataset_key>/sources")

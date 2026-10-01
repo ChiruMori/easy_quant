@@ -18,7 +18,13 @@ def test_database_url_is_required(monkeypatch) -> None:
 
 
 def test_runtime_container_always_uses_configured_database(monkeypatch) -> None:
-    session = object()
+    class ScopedSession:
+        remove_calls = 0
+
+        def remove(self) -> None:
+            self.remove_calls += 1
+
+    session = ScopedSession()
     seen_urls: list[str] = []
 
     class Identity:
@@ -31,6 +37,7 @@ def test_runtime_container_always_uses_configured_database(monkeypatch) -> None:
         lambda url: seen_urls.append(url) or "engine",
     )
     monkeypatch.setattr(bootstrap, "create_session_factory", lambda _engine: lambda: session)
+    monkeypatch.setattr(bootstrap, "create_scoped_session", lambda _factory: session)
     monkeypatch.setattr(bootstrap, "SqlAlchemyIdentityRepository", lambda _session: Identity())
     monkeypatch.setattr(bootstrap, "SqlAlchemyStrategyRepository", lambda _session: object())
     monkeypatch.setattr(bootstrap, "SqlAlchemyMarketDataStore", lambda _session: object())
@@ -49,3 +56,4 @@ def test_runtime_container_always_uses_configured_database(monkeypatch) -> None:
 
     assert seen_urls == ["mysql+pymysql://configured/db"]
     assert container.database_session is session
+    assert session.remove_calls == 1

@@ -88,7 +88,7 @@ def update_schedule(schedule_id: str):
 def jobs():
     repository = get_container().jobs
     if repository is None:
-        return success(get_container().state.jobs)
+        return success(list(get_container().state.jobs))
     return success(
         [
             {
