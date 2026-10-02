@@ -66,3 +66,22 @@ def test_sync_normalizes_securities_calendar_and_daily_bars() -> None:
     assert date(2026, 9, 30) in store.list_trading_days()
     assert bars[("000001", "2026-09-30")]["close"] == "10.5"
     assert result["record_count"] == 1
+
+
+def test_sync_cannot_mix_qfq_with_existing_unadjusted_history() -> None:
+    import pytest
+
+    from easy_quant.domain.shared.errors import StateConflictError
+
+    rows = {
+        ("000001", "2026-09-29"): {
+            "symbol": "000001",
+            "trading_day": "2026-09-29",
+            "close": "10",
+            "adjustment": "none",
+        }
+    }
+    store = InMemoryMarketDataStore(rows, {}, set())
+    with pytest.raises(StateConflictError, match="复权口径冲突"):
+        store.upsert_bars([{"symbol": "000001", "trading_day": "2026-09-30", "adjustment": "qfq"}])
+    assert len(rows) == 1

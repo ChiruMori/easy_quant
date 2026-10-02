@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "packageManager": "pnpm@10.15.1",
   "scripts": {
+    "data:tdx": "uv run --project backend python -m easy_quant.history_cli",
+    "data:tdx:update": "uv run --project backend python -m easy_quant.incremental_cli",
     "dev": "concurrently -n api,web -c blue,green \"pnpm dev:backend\" \"pnpm dev:frontend\"",
     "dev:backend": "uv run --project backend flask --app easy_quant.api.app:create_app run --debug --host 127.0.0.1 --port 5000",
     "dev:worker": "uv run --project backend easy-quant-worker",

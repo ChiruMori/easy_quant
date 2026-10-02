@@ -1,0 +1,9 @@
+{
+  "format_version": "tdx-md1-v1",
+  "day": "2026-09-30",
+  "markets": {
+    "sh": {"symbol": "600000", "prices": [10.0, 11.0, 9.0, 10.5], "volume": 4500000017, "amount": 123456789.125},
+    "sz": {"symbol": "000001", "prices": [8.21, 8.4, 8.1, 8.3], "volume": 10000, "amount": 83112.125},
+    "bj": {"symbol": "920001", "prices": [20.0, 22.0, 19.0, 21.0], "volume": 0, "amount": 0}
+  }
+}

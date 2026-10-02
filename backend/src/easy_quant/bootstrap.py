@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from easy_quant.application.services.acquisition import AcquisitionService, ExponentialRetry
 from easy_quant.application.services.authentication import AuthenticationService
 from easy_quant.application.services.market_data_sync import MarketDataSyncService
-from easy_quant.config import Settings, get_settings
+from easy_quant.config import BACKEND_ROOT, Settings, get_settings
 from easy_quant.infrastructure.core import SystemClock, SystemSleeper, UuidGenerator
 from easy_quant.infrastructure.data_sources.akshare.adapters import AkShareSource
 from easy_quant.infrastructure.data_sources.eastmoney.adapters import EastMoneySource
@@ -40,6 +40,18 @@ from easy_quant.infrastructure.persistence.session import (
 )
 from easy_quant.infrastructure.security import SecretBox
 
+_DAILY_BARS_DESCRIPTION = "日线行情；公开接口提供前复权，通达信全量导入为不复权"
+
+
+def _refresh_dataset_description(datasets: Any) -> None:
+    for index, dataset in enumerate(datasets):
+        if (
+            dataset.get("key") == "daily-bars"
+            and dataset.get("description") == "前复权日线开高低收与成交量"
+        ):
+            dataset["description"] = _DAILY_BARS_DESCRIPTION
+            datasets[index] = dataset
+
 
 def _default_datasets() -> list[dict[str, Any]]:
     return [
@@ -55,7 +67,7 @@ def _default_datasets() -> list[dict[str, Any]]:
         {
             "key": "daily-bars",
             "name": "日线 K 线",
-            "description": "前复权日线开高低收与成交量",
+            "description": _DAILY_BARS_DESCRIPTION,
             "sources": [
                 {"key": "akshare", "name": "AKShare", "enabled": True},
                 {"key": "eastmoney", "name": "东方财富", "enabled": True},
@@ -119,6 +131,7 @@ class Container:
     backtests: Any = None
     database_session: Any = None
     data_sync: MarketDataSyncService | None = None
+    tdx_daily: Any = None
     jobs: Any = None
     secret_box: SecretBox | None = None
     notification_channels: dict[str, Any] = field(default_factory=dict)
@@ -155,6 +168,7 @@ def build_container(settings: Settings | None = None) -> Container:
     if not datasets:
         for dataset in _default_datasets():
             datasets.append(dataset)
+    _refresh_dataset_description(datasets)
     state = PlatformState(
         strategies=strategies,
         datasets=datasets,
@@ -181,6 +195,20 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     raw_cache = SqlAlchemyCompressedRawCache(session)
     container.data_sync = _build_market_data_sync(container, raw_cache)
+    import httpx
+
+    from easy_quant.application.services.tdx_incremental import TdxDailyUpdateService
+    from easy_quant.infrastructure.imports.tdx_daily import OfficialDailyFeed
+    from easy_quant.infrastructure.persistence.repositories.tdx_daily import SqlDailyStore
+
+    container.tdx_daily = TdxDailyUpdateService(
+        OfficialDailyFeed(
+            httpx.Client(timeout=60, follow_redirects=True, trust_env=False),
+            BACKEND_ROOT / ".local-data/tdx/daily",
+        ),
+        SqlDailyStore(create_session_factory(engine), SystemClock().now),
+        SystemClock().now,
+    )
     encryption_secret = (
         settings.credential_encryption_key.get_secret_value()
         if settings.credential_encryption_key is not None

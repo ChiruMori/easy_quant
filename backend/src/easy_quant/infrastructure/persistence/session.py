@@ -6,8 +6,15 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
 
-def create_database_engine(database_url: str, *, echo: bool = False) -> Engine:
-    return create_engine(database_url, echo=echo, pool_pre_ping=True)
+def create_database_engine(
+    database_url: str, *, echo: bool = False, local_infile: bool = False
+) -> Engine:
+    return create_engine(
+        database_url,
+        echo=echo,
+        pool_pre_ping=True,
+        connect_args={"local_infile": True} if local_infile else {},
+    )
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:

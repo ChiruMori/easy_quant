@@ -8,6 +8,18 @@ def test_package_imports() -> None:
     assert __version__ == "0.1.0"
 
 
+def test_legacy_dataset_label_is_updated_without_changing_source_configuration() -> None:
+    sources = [{"key": "eastmoney", "enabled": False}]
+    datasets = [
+        {"key": "daily-bars", "description": "前复权日线开高低收与成交量", "sources": sources},
+        {"key": "daily-bars", "description": "自定义说明", "sources": sources},
+    ]
+    bootstrap._refresh_dataset_description(datasets)
+    assert "不复权" in datasets[0]["description"]
+    assert datasets[0]["sources"] == sources
+    assert datasets[1]["description"] == "自定义说明"
+
+
 def test_database_url_is_required(monkeypatch) -> None:
     monkeypatch.delenv("EASY_QUANT_DATABASE_URL", raising=False)
     try:

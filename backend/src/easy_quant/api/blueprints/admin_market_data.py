@@ -78,17 +78,15 @@ def update_source_order(dataset_key: str):
 def market_data_coverage():
     store = get_container().market_data
     instruments = {str(item["symbol"]): item for item in store.list_instruments()}
-    bars = store.list_bars()
-    symbols = sorted(set(instruments) | {str(row["symbol"]) for row in bars})
+    coverage = store.bar_coverage()
+    symbols = sorted(set(instruments) | set(coverage))
     rows = []
     calendar = TradingCalendar(store.list_trading_days() or None)
     now = get_container().authentication.clock.now()
     for symbol in symbols:
-        days = sorted(
-            date.fromisoformat(str(row["trading_day"])) for row in bars if row["symbol"] == symbol
-        )
-        first_day = days[0] if days else None
-        last_day = days[-1] if days else None
+        summary = coverage.get(symbol, {})
+        first_day = summary.get("first_day")
+        last_day = summary.get("last_day")
         instrument = instruments.get(symbol, {})
         freshness = calendar.freshness(first_day=first_day, last_day=last_day, now=now)
         rows.append(
@@ -99,7 +97,7 @@ def market_data_coverage():
                 "listed_on": instrument.get("listed_on"),
                 "first_trading_day": first_day.isoformat() if first_day else None,
                 "last_trading_day": last_day.isoformat() if last_day else None,
-                "record_count": len(days),
+                "record_count": summary.get("count", 0),
                 "sync_status": _coverage_status(first_day, last_day),
                 "freshness_status": freshness.status.value,
                 "updated": freshness.status.value == "updated",

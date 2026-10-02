@@ -80,3 +80,35 @@ def test_csv_commit_updates_market_data_coverage() -> None:
     coverage = client.get("/api/v1/admin/market-data/coverage").get_json()["data"]
     assert coverage["instrument_count"] == 1
     assert coverage["items"][0]["sync_status"] == "数据不足"
+
+
+def test_coverage_uses_aggregate_without_loading_daily_rows(monkeypatch) -> None:
+    from datetime import date
+
+    from tests.fakes.platform import make_test_container
+
+    container = make_test_container(initialize_admin=True)
+    monkeypatch.setattr(
+        container.market_data,
+        "list_bars",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("不得加载全部日线")),
+    )
+    monkeypatch.setattr(
+        container.market_data,
+        "bar_coverage",
+        lambda: {
+            "000001": {"first_day": date(1991, 4, 3), "last_day": date(2026, 9, 30), "count": 8000}
+        },
+    )
+    client = create_app(settings=container.settings, container=container).test_client()
+    client.post(
+        "/api/v1/auth/login",
+        json={
+            "username": "admin",
+            "password": container.settings.initial_admin_password.get_secret_value(),
+        },
+    )
+    data = client.get("/api/v1/admin/market-data/coverage").get_json()["data"]
+    assert data["instrument_count"] == 1
+    assert data["items"][0]["record_count"] == 8000
+    assert data["items"][0]["sync_status"] == "完全同步"

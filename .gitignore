@@ -31,3 +31,5 @@ frontend/playwright-report/
 backups/
 
 ref/
+backend/.local-data/
+.pnpm-store/

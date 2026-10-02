@@ -12,7 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -79,10 +79,16 @@ export function SchedulesPage() {
                   <SelectContent>
                     <SelectGroup>
                       <SelectItem value="market-data-acquisition">数据拉取</SelectItem>
+                      <SelectItem value="tdx-daily-update">通达信 A 股盘后增量</SelectItem>
                       <SelectItem value="live-analysis">实盘分析</SelectItem>
                     </SelectGroup>
                   </SelectContent>
                 </Select>
+                {taskType === "tdx-daily-update" && (
+                  <FieldDescription>
+                    需先完成通达信全量导入。盘后补齐缺日，保留不复权口径；请保持后台任务进程运行。
+                  </FieldDescription>
+                )}
               </Field>
               <Field>
                 <FieldLabel htmlFor="expression">Cron 表达式</FieldLabel>

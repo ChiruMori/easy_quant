@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, Numeric, String
+from sqlalchemy import Date, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from easy_quant.infrastructure.persistence.base import Base, UtcDateTime
@@ -11,6 +11,7 @@ from easy_quant.infrastructure.persistence.base import Base, UtcDateTime
 
 class DailyBarModel(Base):
     __tablename__ = "daily_bars"
+    __table_args__ = (Index("ix_daily_bars_coverage", "symbol", "trading_day"),)
     symbol: Mapped[str] = mapped_column(String(20), primary_key=True)
     trading_day: Mapped[date] = mapped_column(Date, primary_key=True)
     open: Mapped[Decimal] = mapped_column(Numeric(20, 6))
@@ -19,6 +20,30 @@ class DailyBarModel(Base):
     close: Mapped[Decimal] = mapped_column(Numeric(20, 6))
     volume: Mapped[Decimal] = mapped_column(Numeric(28, 4))
     available_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(28, 4))
+    source: Mapped[str] = mapped_column(String(40), server_default="unknown", nullable=False)
+    adjustment: Mapped[str] = mapped_column(String(20), server_default="unknown", nullable=False)
+    archive_sha256: Mapped[str | None] = mapped_column(String(64))
+
+
+class HistoryImportStockModel(Base):
+    __tablename__ = "history_import_stocks"
+    archive_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True)
+    row_count: Mapped[int]
+    first_day: Mapped[date] = mapped_column(Date)
+    last_day: Mapped[date] = mapped_column(Date)
+    completed_at: Mapped[datetime] = mapped_column(UtcDateTime())
+
+
+class TdxDailyCheckpointModel(Base):
+    __tablename__ = "tdx_daily_checkpoints"
+    trading_day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(20))
+    archive_sha256: Mapped[str | None] = mapped_column(String(64))
+    row_count: Mapped[int] = mapped_column(default=0)
+    checked_at: Mapped[datetime] = mapped_column(UtcDateTime())
+    reason: Mapped[str] = mapped_column(String(200), default="")
 
 
 class InstrumentModel(Base):
