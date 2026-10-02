@@ -1,16 +1,8 @@
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 
-from pydantic import SecretStr
-
 from easy_quant.api.app import create_app
-from easy_quant.application.services.authentication import AuthenticationService
-from easy_quant.bootstrap import Container
-from easy_quant.config import Settings
-from easy_quant.infrastructure.persistence.repositories.in_memory_identity import (
-    InMemoryIdentityRepository,
-)
-from tests.fakes.core import FixedClock, SequentialIdGenerator
+from tests.fakes.platform import make_test_container
 
 
 def test_backtest_schema_rejects_reversed_dates() -> None:
@@ -31,24 +23,17 @@ def test_backtest_schema_rejects_reversed_dates() -> None:
     raise AssertionError("应拒绝倒序日期")
 
 
-def test_backtest_is_blocked_when_market_data_is_missing() -> None:
-    settings = Settings(
-        database_url=SecretStr("mysql+pymysql://test-only.invalid/easy_quant"),
-        secret_key=SecretStr("test-secret"),
-    )
-    authentication = AuthenticationService(
-        InMemoryIdentityRepository(),
-        FixedClock(datetime(2026, 9, 29, tzinfo=UTC)),
-        SequentialIdGenerator(),
-    )
-    app = create_app(settings=settings, container=Container(settings, authentication))
+def test_backtest_missing_data_is_reported_by_worker() -> None:
+    container = make_test_container(initialize_admin=True)
+    app = create_app(settings=container.settings, container=container)
     app.config.update(TESTING=True)
     client = app.test_client()
-    client.post(
-        "/api/v1/auth/initialize", json={"username": "admin", "password": "very-secure-password"}
-    )
     login = client.post(
-        "/api/v1/auth/login", json={"username": "admin", "password": "very-secure-password"}
+        "/api/v1/auth/login",
+        json={
+            "username": container.settings.initial_admin_username,
+            "password": container.settings.initial_admin_password.get_secret_value(),
+        },
     )
     headers = {"X-CSRF-Token": login.get_json()["data"]["csrf_token"]}
     strategy = client.post(
@@ -74,8 +59,24 @@ def test_backtest_is_blocked_when_market_data_is_missing() -> None:
         },
         headers=headers,
     )
-    assert response.status_code == 409
-    error = response.get_json()["error"]
-    assert error["code"] == "state_conflict"
-    assert error["details"]["action_url"] == "/admin/data"
-    assert "模拟行情" not in error["message"]
+    assert response.status_code == 202
+    run = response.get_json()["data"]
+    assert run["status"] == "queued"
+
+    from easy_quant.infrastructure.core import SystemSleeper
+    from easy_quant.worker.handlers.backtests import register_backtest_handlers
+    from easy_quant.worker.registry import JobHandlerRegistry
+    from easy_quant.worker.runner import Worker
+
+    registry = JobHandlerRegistry()
+    register_backtest_handlers(registry, container)
+    Worker(
+        "test-worker",
+        container.jobs,
+        registry,
+        container.authentication.clock,
+        SystemSleeper(),
+    ).run_once()
+    failed = client.get(f"/api/v1/backtests/{run['id']}").get_json()["data"]
+    assert failed["status"] == "failed"
+    assert "行情数据尚未同步" in failed["error"]

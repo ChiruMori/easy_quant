@@ -222,6 +222,9 @@ REST API 使用 `/api/v1` 前缀，Pydantic schema 生成稳定请求/响应定�
 - 使用 shadcn/ui 现有组件组合页面；表单采用 `FieldGroup`/`Field`，状态使用 `Badge`，空状态使用 `Empty`，加载使用 `Skeleton`/`Spinner`，危险确认使用 `AlertDialog`。
 - shadcn 初始化后，以 `components.json` 的 `base`、别名、图标库和路径为准；添加组件前使用 CLI 查询与阅读对应文档，不手写替代已有组件。
 - 数据表使用服务端分页和筛选；长任务页面通过短轮询查询任务状态，首期不引入 WebSocket。
+- 数据拉取、策略单日快速测试和回测的 API 只做参数/权限校验、创建业务占位记录与 job；外部 I/O、策略子进程和回测循环全部由单 worker handler 执行。策略快速测试按选定交易日依次执行三个阶段并把阶段化结果写入 job 摘要；回测在入队时写入排队记录，worker 原位更新该记录。
+- 证券覆盖查询在仓储层完成名称/代码搜索、同步状态筛选、排序和分页；单证券日线接口按日期范围查询，前端使用现有 Recharts 依赖组合 K 线图，不额外引入图表服务。
+- 大范围运行结果和策略源码在 MariaDB 使用 `LONGTEXT`；不可变快照压缩后切成不超过 60 KB 的 BLOB 块，避免单条记录超过普通 `TEXT`/`BLOB` 容量。已部署数据库通过增量迁移升级。
 
 ## Persistence Design
 

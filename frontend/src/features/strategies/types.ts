@@ -14,8 +14,15 @@ export interface Strategy {
 export interface StrategyRun {
   id: string
   status: string
-  signals: Array<{ symbol: string; action: string; quantity: string; reason: string }>
-  stdout: string
+  strategy_version_id: string
+  trading_day: string
+  phase_results: Array<{
+    phase: string
+    status: string
+    signals: Array<{ symbol: string; action: string; quantity: string; reason: string }>
+    stdout: string
+    error?: string
+  }>
   error?: string
 }
 export interface StrategyTemplate {

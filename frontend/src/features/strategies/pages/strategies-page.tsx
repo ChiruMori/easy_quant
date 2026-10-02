@@ -30,6 +30,7 @@ import {
   addStrategyVersion,
   createStrategy,
   listStrategies,
+  listStrategyRuns,
   listStrategyTemplates,
   runStrategy,
 } from "../api"
@@ -69,6 +70,8 @@ export function StrategiesPage() {
   const [description, setDescription] = useState(draft.description ?? "")
   const [source, setSource] = useState(draft.source ?? FALLBACK)
   const [result, setResult] = useState<StrategyRun | null>(null)
+  const [tab, setTab] = useState("editor")
+  const [tradingDay, setTradingDay] = useState("")
   const [message, setMessage] = useState("")
   useEffect(() => {
     localStorage.setItem("strategy-draft", JSON.stringify({ name, description, source }))
@@ -90,6 +93,18 @@ export function StrategiesPage() {
     },
     onError: (error) => setMessage(error.message),
   })
+  const runs = useQuery({
+    queryKey: ["strategy-runs", selected],
+    queryFn: () => listStrategyRuns(selected),
+    enabled: selected !== "new",
+    refetchInterval: (query) =>
+      query.state.data?.some((item) => ["queued", "running"].includes(item.status)) ? 1000 : false,
+  })
+  useEffect(() => {
+    if (!result) return
+    const refreshed = runs.data?.find((item) => item.id === result.id)
+    if (refreshed) setResult(refreshed)
+  }, [result, runs.data])
   if (strategies.isLoading || templates.isLoading)
     return <LoadingState label="正在加载策略工作台" />
   if (strategies.error || templates.error)
@@ -99,6 +114,7 @@ export function StrategiesPage() {
         message={(strategies.error ?? templates.error)?.message ?? "未知错误"}
       />
     )
+  const visibleRun = result ?? runs.data?.[0] ?? null
   const choose = (value: string) => {
     setSelected(value)
     setResult(null)
@@ -124,7 +140,7 @@ export function StrategiesPage() {
           使用平台因子选股并返回交易信号；每次保存都会创建不可变版本。
         </p>
       </div>
-      <Tabs defaultValue="editor">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="editor">编辑策略</TabsTrigger>
           <TabsTrigger value="result">最近运行</TabsTrigger>
@@ -207,15 +223,35 @@ export function StrategiesPage() {
                     ? "验证并创建策略"
                     : "验证并保存新版本"}
               </Button>
-              <Button
-                variant="outline"
-                disabled={selected === "new"}
-                onClick={async () => {
-                  if (selected !== "new") setResult(await runStrategy(selected, { quantity: 100 }))
-                }}
-              >
-                运行当前版本
-              </Button>
+              <div className="flex flex-wrap items-end gap-2">
+                <Field>
+                  <FieldLabel htmlFor="strategy-run-day">快速测试交易日</FieldLabel>
+                  <Input
+                    id="strategy-run-day"
+                    type="date"
+                    value={tradingDay}
+                    onChange={(event) => setTradingDay(event.target.value)}
+                  />
+                </Field>
+                <Button
+                  variant="outline"
+                  disabled={selected === "new" || !tradingDay}
+                  onClick={async () => {
+                    try {
+                      if (selected === "new") return
+                      const queued = await runStrategy(selected, tradingDay, { quantity: 100 })
+                      setResult(queued)
+                      setMessage(`快速测试任务 ${queued.id} 已进入队列`)
+                      setTab("result")
+                      await runs.refetch()
+                    } catch (error) {
+                      setMessage(error instanceof Error ? error.message : "无法创建快速测试任务")
+                    }
+                  }}
+                >
+                  运行当前版本
+                </Button>
+              </div>
             </CardFooter>
           </Card>
         </TabsContent>
@@ -226,21 +262,47 @@ export function StrategiesPage() {
               <CardDescription>运行只生成信号，不会执行真实交易。</CardDescription>
             </CardHeader>
             <CardContent>
-              {result ? (
+              {runs.error && (
+                <Alert variant="destructive">
+                  <AlertTitle>无法加载运行记录</AlertTitle>
+                  <AlertDescription>{runs.error.message}</AlertDescription>
+                </Alert>
+              )}
+              {runs.data && runs.data.length > 1 && (
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {runs.data.slice(0, 10).map((run) => (
+                    <Button key={run.id} size="sm" variant="outline" onClick={() => setResult(run)}>
+                      {run.trading_day} · {localizedLabel(run.status)}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {visibleRun ? (
                 <div className="flex flex-col gap-3">
-                  <Badge variant={result.status === "succeeded" ? "secondary" : "destructive"}>
-                    {localizedLabel(result.status)}
+                  <Badge variant={visibleRun.status === "failed" ? "destructive" : "secondary"}>
+                    {localizedLabel(visibleRun.status)}
                   </Badge>
-                  {result.error && (
+                  {visibleRun.error && (
                     <Alert variant="destructive">
                       <AlertTitle>运行失败</AlertTitle>
-                      <AlertDescription>{result.error}</AlertDescription>
+                      <AlertDescription>{visibleRun.error}</AlertDescription>
                     </Alert>
                   )}
-                  <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-                    {JSON.stringify(result.signals, null, 2)}
-                  </pre>
-                  {result.stdout && <pre>{result.stdout}</pre>}
+                  <p className="text-sm text-muted-foreground">
+                    交易日 {visibleRun.trading_day} · 任务 {visibleRun.id}
+                  </p>
+                  {visibleRun.phase_results.map((phase) => (
+                    <div className="flex flex-col gap-2" key={phase.phase}>
+                      <h3 className="font-medium">{localizedLabel(phase.phase)}</h3>
+                      <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
+                        {JSON.stringify(phase.signals, null, 2)}
+                      </pre>
+                      {phase.stdout && <pre>{phase.stdout}</pre>}
+                    </div>
+                  ))}
+                  {["queued", "running"].includes(visibleRun.status) && (
+                    <p className="text-muted-foreground">worker 正在处理，页面会自动刷新结果。</p>
+                  )}
                 </div>
               ) : (
                 <p className="text-muted-foreground">尚未运行策略。</p>

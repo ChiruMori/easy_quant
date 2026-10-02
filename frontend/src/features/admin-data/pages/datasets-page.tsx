@@ -1,11 +1,21 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { Link } from "react-router-dom"
+import { toast } from "sonner"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -20,19 +30,42 @@ import { SourceToggleForm } from "../components/source-toggle-form"
 
 export function DatasetsPage() {
   const query = useDatasets()
-  const coverage = useMarketDataCoverage()
   const queryClient = useQueryClient()
+  const [page, setPage] = useState(1)
+  const [searchInput, setSearchInput] = useState("")
+  const [search, setSearch] = useState("")
+  const [status, setStatus] = useState("all")
   const [syncingSymbol, setSyncingSymbol] = useState("")
+  const coverage = useMarketDataCoverage({
+    page,
+    search,
+    status: status === "all" ? undefined : status,
+  })
   if (query.isLoading) return <LoadingState label="正在加载数据集" />
   if (query.error) return <ErrorState title="无法加载数据集" message={query.error.message} />
+
+  async function enqueueSync(symbol: string, endDay: string, startDay: string) {
+    setSyncingSymbol(symbol)
+    try {
+      const task = await startAcquisition("daily-bars", true, {
+        symbols: [symbol],
+        start_day: startDay,
+        end_day: endDay,
+      })
+      toast.success(`同步任务 ${task.id} 已进入队列`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "无法创建同步任务")
+    } finally {
+      setSyncingSymbol("")
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">数据集与来源</h1>
-          <p className="text-muted-foreground">
-            查看平台数据覆盖并创建同步任务。系统自动选择可用数据来源。
-          </p>
+          <p className="text-muted-foreground">查看平台数据覆盖并创建同步任务。</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" asChild>
@@ -50,24 +83,22 @@ export function DatasetsPage() {
               <CardTitle>{dataset.name}</CardTitle>
               <CardDescription>{dataset.description}</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-col gap-4">
               <p className="text-sm text-muted-foreground">
                 已配置 {dataset.sources.filter((source) => source.enabled).length}{" "}
-                个可用来源；失败时自动切换，全部失败后才报告。
+                个可用来源；失败时自动切换。
               </p>
-              <div className="mt-4">
-                <SourceToggleForm
-                  sources={dataset.sources}
-                  onSave={async (sources) => {
-                    await updateDatasetSources(
-                      dataset.key,
-                      sources.map((source) => source.key),
-                      sources.filter((source) => source.enabled).map((source) => source.key),
-                    )
-                    await queryClient.invalidateQueries({ queryKey: ["admin", "datasets"] })
-                  }}
-                />
-              </div>
+              <SourceToggleForm
+                sources={dataset.sources}
+                onSave={async (sources) => {
+                  await updateDatasetSources(
+                    dataset.key,
+                    sources.map((source) => source.key),
+                    sources.filter((source) => source.enabled).map((source) => source.key),
+                  )
+                  await queryClient.invalidateQueries({ queryKey: ["admin", "datasets"] })
+                }}
+              />
             </CardContent>
           </Card>
         ))}
@@ -76,10 +107,57 @@ export function DatasetsPage() {
         <CardHeader>
           <CardTitle>股票数据覆盖</CardTitle>
           <CardDescription>
-            当前已维护 {coverage.data?.instrument_count ?? 0}{" "}
-            只沪深京股票。十年以上为完全同步，三年以上为部分同步。
+            当前已维护 {coverage.data?.instrument_count ?? 0} 只沪深京股票；列表按服务端分页加载。
           </CardDescription>
         </CardHeader>
+        <CardContent>
+          <form
+            className="flex flex-wrap items-end gap-3"
+            onSubmit={(event) => {
+              event.preventDefault()
+              setPage(1)
+              setSearch(searchInput.trim())
+            }}
+          >
+            <div className="min-w-64 flex-1">
+              <label className="text-sm font-medium" htmlFor="instrument-search">
+                名称或代码
+              </label>
+              <Input
+                id="instrument-search"
+                placeholder="例如 平安银行 或 000001"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+              />
+            </div>
+            <div className="w-44">
+              <label className="text-sm font-medium" htmlFor="coverage-status">
+                同步状态
+              </label>
+              <Select
+                value={status}
+                onValueChange={(value) => {
+                  setStatus(value)
+                  setPage(1)
+                }}
+              >
+                <SelectTrigger className="w-full" id="coverage-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="all">全部状态</SelectItem>
+                    <SelectItem value="完全同步">完全同步</SelectItem>
+                    <SelectItem value="部分同步">部分同步</SelectItem>
+                    <SelectItem value="数据不足">数据不足</SelectItem>
+                    <SelectItem value="未同步">未同步</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button type="submit">搜索</Button>
+          </form>
+        </CardContent>
         <CardContent className="overflow-x-auto">
           {coverage.isLoading ? (
             <p>正在统计数据覆盖…</p>
@@ -101,7 +179,12 @@ export function DatasetsPage() {
                 {coverage.data.items.map((item) => (
                   <TableRow key={item.symbol}>
                     <TableCell className="max-w-48 truncate font-medium" title={item.name}>
-                      {item.symbol} {item.name}
+                      <Link
+                        className="underline-offset-4 hover:underline"
+                        to={`/admin/data/instruments/${item.symbol}`}
+                      >
+                        {item.symbol} {item.name}
+                      </Link>
                     </TableCell>
                     <TableCell>{item.exchange}</TableCell>
                     <TableCell>{item.first_trading_day ?? "—"}</TableCell>
@@ -119,46 +202,28 @@ export function DatasetsPage() {
                             size="sm"
                             variant="outline"
                             disabled={syncingSymbol === item.symbol}
-                            onClick={async () => {
-                              setSyncingSymbol(item.symbol)
-                              try {
-                                await startAcquisition("daily-bars", true, {
-                                  symbols: [item.symbol],
-                                  start_day: item.last_trading_day ?? item.previous_trading_day,
-                                  end_day: item.previous_trading_day,
-                                })
-                                await queryClient.invalidateQueries({
-                                  queryKey: ["admin", "market-data", "coverage"],
-                                })
-                              } finally {
-                                setSyncingSymbol("")
-                              }
-                            }}
+                            onClick={() =>
+                              void enqueueSync(
+                                item.symbol,
+                                item.previous_trading_day,
+                                item.last_trading_day ?? item.previous_trading_day,
+                              )
+                            }
                           >
-                            {syncingSymbol === item.symbol
-                              ? "正在创建任务…"
-                              : `更新至 ${item.previous_trading_day}`}
+                            更新至 {item.previous_trading_day}
                           </Button>
                         )}
                         {item.stale && item.recommended_end_day !== item.previous_trading_day && (
                           <Button
                             size="sm"
                             disabled={syncingSymbol === item.symbol}
-                            onClick={async () => {
-                              setSyncingSymbol(item.symbol)
-                              try {
-                                await startAcquisition("daily-bars", true, {
-                                  symbols: [item.symbol],
-                                  start_day: item.last_trading_day ?? item.previous_trading_day,
-                                  end_day: item.recommended_end_day,
-                                })
-                                await queryClient.invalidateQueries({
-                                  queryKey: ["admin", "market-data", "coverage"],
-                                })
-                              } finally {
-                                setSyncingSymbol("")
-                              }
-                            }}
+                            onClick={() =>
+                              void enqueueSync(
+                                item.symbol,
+                                item.recommended_end_day,
+                                item.last_trading_day ?? item.previous_trading_day,
+                              )
+                            }
                           >
                             更新至今日
                           </Button>
@@ -170,9 +235,38 @@ export function DatasetsPage() {
               </TableBody>
             </Table>
           ) : (
-            <p className="text-muted-foreground">尚无股票数据，请先上传 CSV 或创建同步任务。</p>
+            <p className="text-muted-foreground">没有符合条件的股票。</p>
           )}
         </CardContent>
+        {coverage.data && coverage.data.total > 0 && (
+          <CardContent className="flex items-center justify-between gap-3 border-t pt-4">
+            <p className="text-sm text-muted-foreground">
+              第 {coverage.data.page} /{" "}
+              {Math.max(1, Math.ceil(coverage.data.total / coverage.data.page_size))} 页，共{" "}
+              {coverage.data.total.toLocaleString("zh-CN")} 条
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page <= 1 || coverage.isFetching}
+                onClick={() => setPage((value) => Math.max(1, value - 1))}
+              >
+                上一页
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={
+                  page * coverage.data.page_size >= coverage.data.total || coverage.isFetching
+                }
+                onClick={() => setPage((value) => value + 1)}
+              >
+                下一页
+              </Button>
+            </div>
+          </CardContent>
+        )}
       </Card>
     </div>
   )

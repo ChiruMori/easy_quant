@@ -15,7 +15,7 @@ from easy_quant.api.responses import success
 from easy_quant.api.schemas.market_data import AcquisitionRequest, SourceOrderRequest
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.domain.market_data.calendar import TradingCalendar
-from easy_quant.domain.shared.errors import DomainError
+from easy_quant.domain.scheduling.entities import Job
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("admin_market_data", __name__, url_prefix="/api/v1/admin/market-data")
@@ -77,24 +77,27 @@ def update_source_order(dataset_key: str):
 @require_admin
 def market_data_coverage():
     store = get_container().market_data
-    instruments = {str(item["symbol"]): item for item in store.list_instruments()}
-    coverage = store.bar_coverage()
-    symbols = sorted(set(instruments) | set(coverage))
+    search = request.args.get("search", "").strip()
+    sync_status = request.args.get("status", "").strip()
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    page_size = min(100, max(10, request.args.get("page_size", 50, type=int) or 50))
+    instrument_count, total, summaries = store.coverage_page(
+        page=page, page_size=page_size, search=search, status=sync_status
+    )
     rows = []
     calendar = TradingCalendar(store.list_trading_days() or None)
     now = get_container().authentication.clock.now()
-    for symbol in symbols:
-        summary = coverage.get(symbol, {})
+    for summary in summaries:
+        symbol = str(summary["symbol"])
         first_day = summary.get("first_day")
         last_day = summary.get("last_day")
-        instrument = instruments.get(symbol, {})
         freshness = calendar.freshness(first_day=first_day, last_day=last_day, now=now)
         rows.append(
             {
                 "symbol": symbol,
-                "name": instrument.get("name", ""),
-                "exchange": instrument.get("exchange", _exchange(symbol)),
-                "listed_on": instrument.get("listed_on"),
+                "name": summary.get("name", ""),
+                "exchange": summary.get("exchange", _exchange(symbol)),
+                "listed_on": summary.get("listed_on"),
                 "first_trading_day": first_day.isoformat() if first_day else None,
                 "last_trading_day": last_day.isoformat() if last_day else None,
                 "record_count": summary.get("count", 0),
@@ -106,7 +109,39 @@ def market_data_coverage():
                 "recommended_end_day": freshness.recommended_end_day.isoformat(),
             }
         )
-    return success({"instrument_count": len(symbols), "items": rows})
+    return success(
+        {
+            "instrument_count": instrument_count,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "items": rows,
+        }
+    )
+
+
+@blueprint.get("/instruments/<symbol>")
+@require_admin
+def get_instrument(symbol: str):
+    normalized = symbol.strip().zfill(6)
+    instrument = get_container().market_data.get_instrument(normalized)
+    if instrument is None:
+        return success(None, status=404)
+    return success(instrument)
+
+
+@blueprint.get("/instruments/<symbol>/daily-bars")
+@require_admin
+def get_instrument_daily_bars(symbol: str):
+    normalized = symbol.strip().zfill(6)
+    start_day = request.args.get("start_day", type=date.fromisoformat)
+    end_day = request.args.get("end_day", type=date.fromisoformat)
+    rows = get_container().market_data.list_bars(start_day, end_day, normalized)
+    if start_day is None and end_day is None:
+        rows = rows[-180:]
+    elif len(rows) > 1000:
+        rows = rows[-1000:]
+    return success(rows)
 
 
 @blueprint.post("/acquisitions")
@@ -126,47 +161,31 @@ def create_acquisition():
         "record_count": 0,
     }
     tasks[str(task["id"])] = task
-    service = get_container().data_sync
-    if service is not None:
-        task["status"] = "running"
-        try:
-            dataset = next(
-                (
-                    item
-                    for item in get_container().state.datasets
-                    if item["key"] == payload.dataset_key
-                ),
-                None,
-            )
-            enabled_sources = (
-                {str(item["key"]) for item in dataset["sources"] if item.get("enabled", True)}
-                if dataset
-                else None
-            )
-            result = service.sync(
-                payload.dataset_key,
-                symbols=payload.symbols,
-                start_day=date.fromisoformat(payload.start_day) if payload.start_day else None,
-                end_day=date.fromisoformat(payload.end_day) if payload.end_day else None,
-                force=payload.force,
-                source_keys=enabled_sources,
-            )
-            task.update(result)
-            task["status"] = "succeeded"
-        except (DomainError, ValueError) as error:
-            task["status"] = "failed"
-            task["message"] = str(error)
-            details = getattr(error, "details", None)
-            if isinstance(details, dict):
-                task["attempts"] = details.get("attempts", [])
-        tasks[str(task["id"])] = task
+    job_id = f"job-{UuidGenerator().new()}"
+    task["job_id"] = job_id
+    get_container().jobs.enqueue(
+        Job(
+            job_id,
+            "market-data-acquisition",
+            f"market-data:{task['id']}",
+            {
+                "task_id": task["id"],
+                "dataset_key": payload.dataset_key,
+                "symbols": payload.symbols,
+                "start_day": payload.start_day,
+                "end_day": payload.end_day,
+                "force": payload.force,
+            },
+            get_container().authentication.clock.now(),
+        )
+    )
     record_audit(
         get_container(),
         actor_user_id=g.current_user.id,
         action="execute",
         resource_type="data-acquisition",
         resource_id=str(task["id"]),
-        after={"dataset_key": payload.dataset_key, "status": str(task["status"])},
+        after={"dataset_key": payload.dataset_key, "status": str(task["status"]), "job_id": job_id},
     )
     return success(task, status=202)
 

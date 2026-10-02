@@ -25,6 +25,9 @@ export interface ImportPreview {
 
 export interface MarketDataCoverage {
   instrument_count: number
+  total: number
+  page: number
+  page_size: number
   items: Array<{
     symbol: string
     name: string
@@ -40,4 +43,22 @@ export interface MarketDataCoverage {
     previous_trading_day: string
     recommended_end_day: string
   }>
+}
+
+export interface Instrument {
+  symbol: string
+  name: string
+  exchange: string
+  listed_on: string | null
+  status: string
+}
+
+export interface DailyBar {
+  symbol: string
+  trading_day: string
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
 }

@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from easy_quant.domain.shared.errors import StateConflictError
@@ -38,6 +38,11 @@ def bar_coverage_statement():
         .with_hint(DailyBarModel, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql")
         .group_by(DailyBarModel.symbol)
     )
+
+
+def snapshot_chunks(payload: bytes) -> list[bytes]:
+    compressed = gzip.compress(payload, mtime=0)
+    return [compressed[offset : offset + 60_000] for offset in range(0, len(compressed), 60_000)]
 
 
 class InMemoryMarketDataStore:
@@ -82,16 +87,56 @@ class InMemoryMarketDataStore:
         for row in rows:
             self.instruments[str(row["symbol"])] = row
 
-    def list_bars(self, start_day: date | None = None, end_day: date | None = None):
+    def list_bars(
+        self,
+        start_day: date | None = None,
+        end_day: date | None = None,
+        symbol: str | None = None,
+    ):
         return [
             row
             for row in self.daily_bars.values()
             if (start_day is None or date.fromisoformat(str(row["trading_day"])) >= start_day)
             and (end_day is None or date.fromisoformat(str(row["trading_day"])) <= end_day)
+            and (symbol is None or str(row["symbol"]) == symbol)
         ]
 
     def list_instruments(self):
         return list(self.instruments.values())
+
+    def get_instrument(self, symbol: str):
+        return self.instruments.get(symbol)
+
+    def coverage_page(self, *, page: int, page_size: int, search: str = "", status: str = ""):
+        coverage = self.bar_coverage()
+        symbols = sorted(set(self.instruments) | set(coverage))
+        if search:
+            needle = search.casefold()
+            symbols = [
+                symbol
+                for symbol in symbols
+                if needle in symbol.casefold()
+                or needle in str(self.instruments.get(symbol, {}).get("name", "")).casefold()
+            ]
+
+        def sync_status(summary):
+            if not summary:
+                return "未同步"
+            days = (summary["last_day"] - summary["first_day"]).days
+            return "完全同步" if days >= 3652 else "部分同步" if days >= 1095 else "数据不足"
+
+        if status:
+            symbols = [symbol for symbol in symbols if sync_status(coverage.get(symbol)) == status]
+        total = len(symbols)
+        selected = symbols[(page - 1) * page_size : page * page_size]
+        return (
+            len(set(self.instruments) | set(coverage)),
+            total,
+            [
+                {**self.instruments.get(symbol, {"symbol": symbol}), **coverage.get(symbol, {})}
+                for symbol in selected
+            ],
+        )
 
     def list_trading_days(self) -> set[date]:
         return {date.fromisoformat(item) for item in self.trading_days}
@@ -174,12 +219,20 @@ class SqlAlchemyMarketDataStore:
             )
         self.session.commit()
 
-    def list_bars(self, start_day: date | None = None, end_day: date | None = None):
+    def list_bars(
+        self,
+        start_day: date | None = None,
+        end_day: date | None = None,
+        symbol: str | None = None,
+    ):
         statement = select(DailyBarModel)
         if start_day is not None:
             statement = statement.where(DailyBarModel.trading_day >= start_day)
         if end_day is not None:
             statement = statement.where(DailyBarModel.trading_day <= end_day)
+        if symbol is not None:
+            statement = statement.where(DailyBarModel.symbol == symbol)
+        statement = statement.order_by(DailyBarModel.trading_day)
         return [
             {
                 "symbol": row.symbol,
@@ -209,6 +262,132 @@ class SqlAlchemyMarketDataStore:
             }
             for row in self.session.scalars(select(InstrumentModel))
         ]
+
+    def get_instrument(self, symbol: str):
+        row = self.session.get(InstrumentModel, symbol)
+        return (
+            None
+            if row is None
+            else {
+                "symbol": row.symbol,
+                "name": row.name,
+                "exchange": row.exchange,
+                "listed_on": row.listed_on.isoformat() if row.listed_on else None,
+                "status": row.status,
+            }
+        )
+
+    def coverage_page(self, *, page: int, page_size: int, search: str = "", status: str = ""):
+        if not status:
+            instruments = select(InstrumentModel)
+            if search:
+                pattern = f"%{search}%"
+                instruments = instruments.where(
+                    or_(InstrumentModel.symbol.like(pattern), InstrumentModel.name.like(pattern))
+                )
+            total = (
+                self.session.scalar(select(func.count()).select_from(instruments.subquery())) or 0
+            )
+            instrument_count = (
+                self.session.scalar(select(func.count()).select_from(InstrumentModel)) or 0
+            )
+            selected = list(
+                self.session.scalars(
+                    instruments.order_by(InstrumentModel.symbol)
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            symbols = [row.symbol for row in selected]
+            coverage_rows = (
+                self.session.execute(
+                    select(
+                        DailyBarModel.symbol,
+                        func.min(DailyBarModel.trading_day),
+                        func.max(DailyBarModel.trading_day),
+                        func.count(),
+                    )
+                    .where(DailyBarModel.symbol.in_(symbols))
+                    .group_by(DailyBarModel.symbol)
+                )
+                if symbols
+                else []
+            )
+            coverage = {
+                symbol: {"first_day": first, "last_day": last, "count": count}
+                for symbol, first, last, count in coverage_rows
+            }
+            return (
+                instrument_count,
+                total,
+                [
+                    {
+                        "symbol": row.symbol,
+                        "name": row.name,
+                        "exchange": row.exchange,
+                        "listed_on": row.listed_on.isoformat() if row.listed_on else None,
+                        **coverage.get(row.symbol, {}),
+                    }
+                    for row in selected
+                ],
+            )
+
+        coverage = (
+            select(
+                DailyBarModel.symbol.label("symbol"),
+                func.min(DailyBarModel.trading_day).label("first_day"),
+                func.max(DailyBarModel.trading_day).label("last_day"),
+                func.count().label("count"),
+            )
+            .group_by(DailyBarModel.symbol)
+            .subquery()
+        )
+        days = func.datediff(coverage.c.last_day, coverage.c.first_day)
+        status_expr = case(
+            (coverage.c.count.is_(None), "未同步"),
+            (days >= 3652, "完全同步"),
+            (days >= 1095, "部分同步"),
+            else_="数据不足",
+        )
+        base = select(
+            InstrumentModel.symbol,
+            InstrumentModel.name,
+            InstrumentModel.exchange,
+            InstrumentModel.listed_on,
+            coverage.c.first_day,
+            coverage.c.last_day,
+            coverage.c.count,
+        ).outerjoin(coverage, InstrumentModel.symbol == coverage.c.symbol)
+        if search:
+            pattern = f"%{search}%"
+            base = base.where(
+                or_(InstrumentModel.symbol.like(pattern), InstrumentModel.name.like(pattern))
+            )
+        if status:
+            base = base.where(status_expr == status)
+        total = self.session.scalar(select(func.count()).select_from(base.subquery())) or 0
+        instrument_count = (
+            self.session.scalar(select(func.count()).select_from(InstrumentModel)) or 0
+        )
+        rows = self.session.execute(
+            base.order_by(InstrumentModel.symbol).offset((page - 1) * page_size).limit(page_size)
+        )
+        return (
+            instrument_count,
+            total,
+            [
+                {
+                    "symbol": symbol,
+                    "name": name,
+                    "exchange": exchange,
+                    "listed_on": listed_on.isoformat() if listed_on else None,
+                    "first_day": first_day,
+                    "last_day": last_day,
+                    "count": count or 0,
+                }
+                for symbol, name, exchange, listed_on, first_day, last_day, count in rows
+            ],
+        )
 
     def list_trading_days(self) -> set[date]:
         return set(self.session.scalars(select(TradingDayModel.trading_day)))
@@ -254,6 +433,13 @@ class InMemoryBacktestStore:
     def get(self, run_id: str) -> dict[str, Any] | None:
         return self.rows.get(run_id)
 
+    def mark_failed(self, run_id: str, message: str) -> None:
+        run = self.rows[run_id]
+        run.update({"status": "failed", "progress": 100, "error": message})
+
+    def mark_running(self, run_id: str) -> None:
+        self.rows[run_id].update({"status": "running", "progress": 5})
+
     def list_for_owner(self, owner_id: str) -> list[dict[str, Any]]:
         return [row for row in self.rows.values() if row["owner_id"] == owner_id]
 
@@ -272,15 +458,17 @@ class SqlAlchemyBacktestStore:
                     record_count=len(json.loads(snapshot_payload)),
                 )
             )
-            self.session.add(
-                DataSnapshotChunkModel(
-                    snapshot_id=snapshot_id,
-                    sequence=0,
-                    payload=gzip.compress(snapshot_payload, mtime=0),
+            for sequence, chunk in enumerate(snapshot_chunks(snapshot_payload)):
+                self.session.add(
+                    DataSnapshotChunkModel(
+                        snapshot_id=snapshot_id,
+                        sequence=sequence,
+                        payload=chunk,
+                    )
                 )
-            )
-        self.session.add(
-            BacktestRunModel(
+        row = self.session.get(BacktestRunModel, str(run["id"]))
+        if row is None:
+            row = BacktestRunModel(
                 id=str(run["id"]),
                 owner_id=str(run["owner_id"]),
                 strategy_version_id=str(run["strategy_version_id"]),
@@ -291,8 +479,23 @@ class SqlAlchemyBacktestStore:
                 payload_json=json.dumps(run, ensure_ascii=False, default=str),
                 created_at=datetime.fromisoformat(str(run["created_at"])),
             )
-        )
-        for item in run["periods"]:
+            self.session.add(row)
+        else:
+            row.snapshot_id = snapshot_id
+            row.status = str(run["status"])
+            row.progress = int(run["progress"])
+            row.config_json = json.dumps(run["config"], ensure_ascii=False, default=str)
+            row.payload_json = json.dumps(run, ensure_ascii=False, default=str)
+            self.session.execute(
+                delete(BacktestPeriodModel).where(BacktestPeriodModel.run_id == row.id)
+            )
+            self.session.execute(
+                delete(SimulatedTradeModel).where(SimulatedTradeModel.run_id == row.id)
+            )
+            self.session.execute(
+                delete(BacktestMetricModel).where(BacktestMetricModel.run_id == row.id)
+            )
+        for item in run.get("periods", []):
             self.session.add(
                 BacktestPeriodModel(
                     run_id=str(run["id"]),
@@ -301,7 +504,7 @@ class SqlAlchemyBacktestStore:
                     cash=Decimal(item["cash"]),
                 )
             )
-        for sequence, item in enumerate(run["trades"]):
+        for sequence, item in enumerate(run.get("trades", [])):
             self.session.add(
                 SimulatedTradeModel(
                     run_id=str(run["id"]),
@@ -310,7 +513,7 @@ class SqlAlchemyBacktestStore:
                     payload_json=json.dumps(item, ensure_ascii=False),
                 )
             )
-        for name, value in run["metrics"].items():
+        for name, value in run.get("metrics", {}).items():
             self.session.add(
                 BacktestMetricModel(
                     run_id=str(run["id"]),
@@ -318,6 +521,28 @@ class SqlAlchemyBacktestStore:
                     value=Decimal(value) if value is not None else None,
                 )
             )
+        self.session.commit()
+
+    def mark_failed(self, run_id: str, message: str) -> None:
+        row = self.session.get(BacktestRunModel, run_id)
+        if row is None:
+            return
+        payload = json.loads(row.payload_json)
+        payload.update({"status": "failed", "progress": 100, "error": message})
+        row.status = "failed"
+        row.progress = 100
+        row.payload_json = json.dumps(payload, ensure_ascii=False, default=str)
+        self.session.commit()
+
+    def mark_running(self, run_id: str) -> None:
+        row = self.session.get(BacktestRunModel, run_id)
+        if row is None:
+            return
+        payload = json.loads(row.payload_json)
+        payload.update({"status": "running", "progress": 5})
+        row.status = "running"
+        row.progress = 5
+        row.payload_json = json.dumps(payload, ensure_ascii=False, default=str)
         self.session.commit()
 
     def get(self, run_id: str) -> dict[str, Any] | None:

@@ -88,7 +88,9 @@ def test_zip_paths_and_duplicates_without_extracting_to_storage() -> None:
     stream.seek(0)
     with zipfile.ZipFile(stream) as archive:
         reader = TdxArchive(archive)
-        assert reader.members() == [("sz\\lday\\sz000001.day", "000001")]
+        assert [(path.replace("\\", "/"), symbol) for path, symbol in reader.members()] == [
+            ("sz/lday/sz000001.day", "000001")
+        ]
         assert len(reader.read_bars(*reader.members()[0])) == 2
     with zipfile.ZipFile(stream, "a") as archive:
         archive.writestr("sz000001.day", fixture_bytes())

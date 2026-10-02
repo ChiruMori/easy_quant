@@ -2,6 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import Date, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from easy_quant.infrastructure.persistence.base import Base, UtcDateTime
@@ -31,7 +32,9 @@ class BacktestRunModel(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     progress: Mapped[int] = mapped_column(Integer, nullable=False)
     config_json: Mapped[str] = mapped_column(Text, nullable=False)
-    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_json: Mapped[str] = mapped_column(
+        Text().with_variant(LONGTEXT(), "mysql"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
 
 

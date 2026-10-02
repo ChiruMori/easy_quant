@@ -8,13 +8,9 @@ from easy_quant.api.responses import success
 from easy_quant.api.schemas.strategies import StrategyCreateRequest, StrategyRunRequest
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.strategies import StrategyService
-from easy_quant.application.services.strategy_validation import (
-    PythonStrategyValidator,
-    extract_factor_dependencies,
-)
-from easy_quant.domain.shared.errors import StateConflictError
+from easy_quant.application.services.strategy_validation import PythonStrategyValidator
+from easy_quant.domain.scheduling.entities import Job
 from easy_quant.infrastructure.core import UuidGenerator
-from easy_quant.infrastructure.strategy_runtime.runner import SubprocessStrategyRunner
 
 blueprint = Blueprint("strategies", __name__, url_prefix="/api/v1/strategies")
 MOVING_AVERAGE_TEMPLATE = '''def before_market(context, parameters):
@@ -90,37 +86,6 @@ def repository():
 
 def strategy_service() -> StrategyService:
     return StrategyService(repository(), PythonStrategyValidator(), ApiClock(), UuidGenerator())
-
-
-def runtime_context(source_code: str) -> dict[str, object]:
-    dependencies = extract_factor_dependencies(source_code)
-    bars = get_container().market_data.list_bars()
-    if "daily-bars" in dependencies and not bars:
-        raise StateConflictError(
-            "策略运行所需日线尚未同步",
-            {"recommended_action": "请先前往数据管理同步行情。", "action_url": "/admin/data"},
-        )
-    prices: dict[str, list[float]] = {}
-    for row in sorted(bars, key=lambda item: str(item["trading_day"])):
-        prices.setdefault(str(row["symbol"]), []).append(float(str(row["close"])))
-    records: dict[str, dict[str, list[dict[str, object]]]] = {}
-    for dataset in dependencies - {"daily-bars"}:
-        dataset_rows = get_container().market_data.list_records(dataset)
-        if not dataset_rows:
-            raise StateConflictError(
-                f"策略运行依赖的数据集 {dataset} 尚未同步",
-                {"dataset": dataset, "action_url": "/admin/data/acquisitions"},
-            )
-        for row in dataset_rows:
-            records.setdefault(dataset, {}).setdefault(str(row.get("symbol", "")), []).append(row)
-    return {
-        "universe": sorted(prices),
-        "prices": prices,
-        "market_values": {},
-        "records": records,
-        "positions": {},
-        "current_prices": {},
-    }
 
 
 class ApiClock:
@@ -212,9 +177,22 @@ def run_strategy(strategy_id: str):
     strategy = repository().get_definition(strategy_id)
     if strategy is None or strategy.owner_id != g.current_user.id:
         return success(None, status=404)
-    versions = repository().versions(strategy_id)
-    result = SubprocessStrategyRunner().run(
-        versions[-1], payload.parameters, runtime_context(versions[-1].source_code)
+    version = repository().versions(strategy_id)[-1]
+    identifier = f"job-{UuidGenerator().new()}"
+    job = get_container().jobs.enqueue(
+        Job(
+            identifier,
+            "strategy.run",
+            f"strategy-run:{identifier}",
+            {
+                "owner_id": g.current_user.id,
+                "strategy_id": strategy_id,
+                "strategy_version_id": version.id,
+                "trading_day": payload.trading_day.isoformat(),
+                "parameters": payload.parameters,
+            },
+            get_container().authentication.clock.now(),
+        )
     )
     record_audit(
         get_container(),
@@ -222,25 +200,42 @@ def run_strategy(strategy_id: str):
         action="run",
         resource_type="strategy",
         resource_id=strategy_id,
-        after={"status": result.status.value, "version_id": versions[-1].id},
+        after={"status": job.status.value, "version_id": version.id, "job_id": job.id},
     )
     return success(
         {
-            "id": result.id,
-            "status": result.status,
-            "signals": [
-                {
-                    "symbol": signal.symbol,
-                    "action": signal.action,
-                    "quantity": str(signal.quantity),
-                    "reason": signal.reason,
-                }
-                for signal in result.signals
-            ],
-            "stdout": result.stdout,
-            "error": result.error,
-        }
+            "id": job.id,
+            "status": job.status.value,
+            "strategy_version_id": version.id,
+            "trading_day": payload.trading_day.isoformat(),
+            "phase_results": [],
+        },
+        status=202,
     )
+
+
+@blueprint.get("/<strategy_id>/runs")
+@require_user
+def list_strategy_runs(strategy_id: str):
+    strategy = repository().get_definition(strategy_id)
+    if strategy is None or strategy.owner_id != g.current_user.id:
+        return success(None, status=404)
+    rows = []
+    for job in get_container().jobs.list_all():
+        if job.job_type != "strategy.run" or job.payload.get("strategy_id") != strategy_id:
+            continue
+        rows.append(
+            {
+                "id": job.id,
+                "status": job.status.value,
+                "strategy_version_id": job.payload.get("strategy_version_id"),
+                "trading_day": job.payload.get("trading_day"),
+                "phase_results": job.result_summary.get("phase_results")
+                or job.error_summary.get("details", {}).get("phase_results", []),
+                "error": job.error_summary.get("message"),
+            }
+        )
+    return success(list(reversed(rows)))
 
 
 @blueprint.get("/templates")

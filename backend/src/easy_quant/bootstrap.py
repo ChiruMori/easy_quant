@@ -343,9 +343,11 @@ def build_worker():
     from easy_quant.application.services.scheduled_tasks import next_run
     from easy_quant.domain.market_data.calendar import TradingCalendar
     from easy_quant.domain.scheduling.entities import ScheduledTask, ScheduleKind
+    from easy_quant.worker.handlers.backtests import register_backtest_handlers
     from easy_quant.worker.handlers.live_tracking import register_live_handlers
     from easy_quant.worker.handlers.market_data import register_market_data_handlers
     from easy_quant.worker.handlers.notifications import register_notification_handlers
+    from easy_quant.worker.handlers.strategies import register_strategy_handlers
     from easy_quant.worker.registry import JobHandlerRegistry
     from easy_quant.worker.runner import Worker
 
@@ -353,6 +355,8 @@ def build_worker():
     container = build_container(settings)
     registry = JobHandlerRegistry()
     register_market_data_handlers(registry, container)
+    register_strategy_handlers(registry, container)
+    register_backtest_handlers(registry, container)
     register_live_handlers(registry, container)
     register_notification_handlers(registry, container)
 

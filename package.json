@@ -6,7 +6,7 @@
   "scripts": {
     "data:tdx": "uv run --project backend python -m easy_quant.history_cli",
     "data:tdx:update": "uv run --project backend python -m easy_quant.incremental_cli",
-    "dev": "concurrently -n api,web -c blue,green \"pnpm dev:backend\" \"pnpm dev:frontend\"",
+    "dev": "concurrently -n api,web,worker -c blue,green,yellow \"pnpm dev:backend\" \"pnpm dev:frontend\" \"pnpm dev:worker\"",
     "dev:backend": "uv run --project backend flask --app easy_quant.api.app:create_app run --debug --host 127.0.0.1 --port 5000",
     "dev:worker": "uv run --project backend easy-quant-worker",
     "dev:frontend": "pnpm --dir frontend dev",
