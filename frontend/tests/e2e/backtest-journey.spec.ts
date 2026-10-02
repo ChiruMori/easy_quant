@@ -24,6 +24,14 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await page.getByRole("button", { name: "确认导入" }).click()
   await expect(page.getByText(/已导入/)).toBeVisible()
 
+  await page.goto("/admin/data")
+  await page.getByLabel("名称或代码").fill("000001")
+  await page.getByRole("button", { name: "搜索" }).click()
+  await page.getByRole("link", { name: /000001/ }).click()
+  await expect(page.getByText("日线 K 线", { exact: true })).toBeVisible()
+  await expect(page.locator("main .recharts-surface")).toBeVisible()
+  await expect(page.locator("main .recharts-bar-rectangle rect").first()).toBeVisible()
+
   await page.goto("/factors")
   await expect(page.getByRole("heading", { name: "因子目录" })).toBeVisible()
   await expect(page.getByText(/5 日均线/).first()).toBeVisible()
@@ -35,8 +43,8 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await page.getByLabel("说明").fill("通过 5 日均线因子选股")
   await page.getByRole("button", { name: "验证并创建策略" }).click()
   await expect(page.getByText("策略版本已保存")).toBeVisible()
+  await page.getByLabel("快速测试交易日").fill("2026-01-30")
   await page.getByRole("button", { name: "运行当前版本" }).click()
-  await page.getByRole("tab", { name: "最近运行" }).click()
   await expect(page.getByText("已成功")).toBeVisible()
 
   await page.goto("/backtests/new")
@@ -46,7 +54,7 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await page.getByLabel("结束日期").fill("2026-01-31")
   await page.getByRole("button", { name: "开始回测" }).click()
   await expect(page.getByRole("heading", { name: "回测详情" })).toBeVisible()
-  await expect(page.getByText(/状态：已完成/)).toBeVisible()
+  await expect(page.getByText(/状态：已完成/)).toBeVisible({ timeout: 30000 })
   await page.getByRole("button", { name: "开启实盘跟踪" }).click()
   await expect(page.getByRole("heading", { name: /实盘实例/ })).toBeVisible()
 })

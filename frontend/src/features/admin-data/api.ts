@@ -2,7 +2,14 @@ import { useQuery } from "@tanstack/react-query"
 
 import { apiRequest } from "@/lib/api/client"
 
-import type { Acquisition, Dataset, ImportPreview, MarketDataCoverage } from "./types"
+import type {
+  Acquisition,
+  DailyBar,
+  Dataset,
+  ImportPreview,
+  Instrument,
+  MarketDataCoverage,
+} from "./types"
 
 export function useDatasets() {
   return useQuery({
@@ -11,11 +18,30 @@ export function useDatasets() {
   })
 }
 
-export function useMarketDataCoverage() {
+export function useMarketDataCoverage(params: { page: number; search?: string; status?: string }) {
+  const query = new URLSearchParams({ page: String(params.page), page_size: "50" })
+  if (params.search) query.set("search", params.search)
+  if (params.status) query.set("status", params.status)
   return useQuery({
-    queryKey: ["admin", "market-data", "coverage"],
-    queryFn: () => apiRequest<MarketDataCoverage>("/admin/market-data/coverage"),
+    queryKey: ["admin", "market-data", "coverage", params],
+    queryFn: () =>
+      apiRequest<MarketDataCoverage>(`/admin/market-data/coverage?${query.toString()}`),
   })
+}
+
+export const getAcquisition = (id: string) =>
+  apiRequest<Acquisition>(`/admin/market-data/acquisitions/${id}`)
+
+export const getInstrument = (symbol: string) =>
+  apiRequest<Instrument>(`/admin/market-data/instruments/${symbol}`)
+
+export const getInstrumentDailyBars = (symbol: string, startDay?: string, endDay?: string) => {
+  const query = new URLSearchParams()
+  if (startDay) query.set("start_day", startDay)
+  if (endDay) query.set("end_day", endDay)
+  return apiRequest<DailyBar[]>(
+    `/admin/market-data/instruments/${symbol}/daily-bars?${query.toString()}`,
+  )
 }
 
 export function startAcquisition(

@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic import BaseModel, Field
 
 
@@ -8,4 +10,5 @@ class StrategyCreateRequest(BaseModel):
 
 
 class StrategyRunRequest(BaseModel):
+    trading_day: date
     parameters: dict[str, object] = Field(default_factory=dict)

@@ -13,9 +13,10 @@ export const addStrategyVersion = (id: string, sourceCode: string) =>
     method: "POST",
     body: JSON.stringify({ source_code: sourceCode }),
   })
-export const runStrategy = (id: string, parameters: Record<string, unknown>) =>
+export const runStrategy = (id: string, tradingDay: string, parameters: Record<string, unknown>) =>
   apiRequest<StrategyRun>(`/strategies/${id}/run`, {
     method: "POST",
-    body: JSON.stringify({ parameters }),
+    body: JSON.stringify({ trading_day: tradingDay, parameters }),
   })
+export const listStrategyRuns = (id: string) => apiRequest<StrategyRun[]>(`/strategies/${id}/runs`)
 export const listStrategyTemplates = () => apiRequest<StrategyTemplate[]>("/strategies/templates")

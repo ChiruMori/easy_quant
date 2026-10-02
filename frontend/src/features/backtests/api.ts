@@ -2,6 +2,7 @@ import { apiRequest } from "@/lib/api/client"
 
 export interface Backtest {
   id: string
+  job_id?: string
   strategy_version_id: string
   status: string
   progress: number
@@ -19,6 +20,7 @@ export interface Backtest {
     slippage?: string
   }>
   assumptions: Record<string, string>
+  error?: string
 }
 
 export const createBacktest = (payload: Record<string, unknown>) =>

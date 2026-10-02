@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -13,7 +14,7 @@ import {
 } from "@/components/ui/select"
 import { localizedLabel } from "@/lib/labels"
 
-import { startAcquisition } from "../api"
+import { getAcquisition, startAcquisition } from "../api"
 import type { Acquisition } from "../types"
 
 export function AcquisitionsPage() {
@@ -22,6 +23,14 @@ export function AcquisitionsPage() {
   const [singleSymbol, setSingleSymbol] = useState("")
   const [syncDataset, setSyncDataset] = useState("daily-bars")
   const [lastTask, setLastTask] = useState<Acquisition | null>(null)
+  const taskQuery = useQuery({
+    queryKey: ["acquisition", lastTask?.id],
+    queryFn: () => getAcquisition(lastTask!.id),
+    enabled: Boolean(lastTask?.id),
+    refetchInterval: (query) =>
+      ["queued", "running"].includes(query.state.data?.status ?? "queued") ? 1000 : false,
+  })
+  const currentTask = taskQuery.data ?? lastTask
 
   async function run(task: Promise<{ id: string; status: string; record_count?: number }>) {
     setRunning(true)
@@ -141,15 +150,21 @@ export function AcquisitionsPage() {
           </form>
         </CardContent>
       </Card>
-      <p aria-live="polite">最近任务：{message}</p>
-      {lastTask?.attempts?.length ? (
+      <p aria-live="polite">
+        最近任务：
+        {currentTask
+          ? `${currentTask.id} · ${localizedLabel(currentTask.status)} · ${currentTask.record_count ?? 0} 条${currentTask.message ? ` · ${currentTask.message}` : ""}`
+          : message}
+      </p>
+      {taskQuery.error && <p role="alert">任务状态刷新失败：{taskQuery.error.message}</p>}
+      {currentTask?.attempts?.length ? (
         <Card>
           <CardHeader>
             <CardTitle>来源尝试明细</CardTitle>
             <CardDescription>成功后立即停止，不比较不同来源的数据。</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2 text-sm">
-            {lastTask.attempts.map((attempt, index) => (
+            {currentTask.attempts.map((attempt, index) => (
               <p className="break-words" key={`${attempt.source_key}-${attempt.attempt}-${index}`}>
                 {attempt.source_key} · 第 {attempt.attempt || "缓存"} 次 ·{" "}
                 {localizedLabel(attempt.status)}

@@ -1,9 +1,11 @@
+import { useQuery } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom"
 
 import { AcquisitionsPage } from "@/features/admin-data/pages/acquisitions-page"
 import { DatasetsPage } from "@/features/admin-data/pages/datasets-page"
 import { ImportPage } from "@/features/admin-data/pages/import-page"
+import { InstrumentDetailPage } from "@/features/admin-data/pages/instrument-detail-page"
 import { AdminDashboardPage } from "@/features/admin-scheduling/pages/admin-dashboard-page"
 import { AuditPage } from "@/features/admin-scheduling/pages/audit-page"
 import { JobsPage } from "@/features/admin-scheduling/pages/jobs-page"
@@ -12,7 +14,7 @@ import { InvitationsPage } from "@/features/admin-users/pages/invitations-page"
 import { UsersPage } from "@/features/admin-users/pages/users-page"
 import { LoginPage } from "@/features/auth/pages/login-page"
 import { RegisterPage } from "@/features/auth/pages/register-page"
-import { type Backtest, getBacktest } from "@/features/backtests/api"
+import { getBacktest } from "@/features/backtests/api"
 import { BacktestCreatePage } from "@/features/backtests/pages/backtest-create-page"
 import { BacktestDetailPage } from "@/features/backtests/pages/backtest-detail-page"
 import { BacktestListPage } from "@/features/backtests/pages/backtest-list-page"
@@ -46,11 +48,14 @@ function LiveDetailRoute() {
 
 function BacktestDetailRoute() {
   const { runId = "" } = useParams()
-  const [run, setRun] = useState<Backtest | null>(null)
-  useEffect(() => {
-    void getBacktest(runId).then(setRun)
-  }, [runId])
-  return run ? <BacktestDetailPage run={run} /> : <p>正在加载回测结果…</p>
+  const query = useQuery({
+    queryKey: ["backtest", runId],
+    queryFn: () => getBacktest(runId),
+    refetchInterval: (result) =>
+      ["queued", "running"].includes(result.state.data?.status ?? "") ? 1000 : false,
+  })
+  if (query.error) return <p role="alert">无法加载回测：{query.error.message}</p>
+  return query.data ? <BacktestDetailPage run={query.data} /> : <p>正在加载回测结果…</p>
 }
 
 const router = createBrowserRouter([
@@ -94,6 +99,14 @@ const router = createBrowserRouter([
         element: (
           <AdminGuard>
             <ImportPage />
+          </AdminGuard>
+        ),
+      },
+      {
+        path: "admin/data/instruments/:symbol",
+        element: (
+          <AdminGuard>
+            <InstrumentDetailPage />
           </AdminGuard>
         ),
       },

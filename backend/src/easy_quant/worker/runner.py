@@ -5,9 +5,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from easy_quant.application.ports.core import Clock, Sleeper
 from easy_quant.application.ports.jobs import JobRepository
+from easy_quant.domain.shared.errors import DomainError
 from easy_quant.worker.registry import JobHandlerRegistry
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,11 @@ class Worker:
             job.succeed(self.worker_id, dict(summary))
         except Exception as exc:
             logger.exception("任务执行失败", extra={"job_id": job.id, "job_type": job.job_type})
-            job.fail(self.worker_id, {"code": "job_failed", "message": str(exc)})
+            error: dict[str, Any] = {"code": "job_failed", "message": str(exc)}
+            if isinstance(exc, DomainError):
+                error["code"] = exc.code
+                error["details"] = dict(exc.details)
+            job.fail(self.worker_id, error)
         self.jobs.save(job)
         return True
 

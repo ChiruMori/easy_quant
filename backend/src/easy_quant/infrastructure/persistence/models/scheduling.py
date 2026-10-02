@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, Index, Integer, String, Text
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from easy_quant.infrastructure.persistence.base import Base, UtcDateTime
@@ -18,8 +19,12 @@ class JobModel(Base):
     lease_owner: Mapped[str | None] = mapped_column(String(80))
     lease_until: Mapped[datetime | None] = mapped_column(UtcDateTime(), index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    result_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    error_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    result_json: Mapped[str] = mapped_column(
+        Text().with_variant(LONGTEXT(), "mysql"), nullable=False, default="{}"
+    )
+    error_json: Mapped[str] = mapped_column(
+        Text().with_variant(LONGTEXT(), "mysql"), nullable=False, default="{}"
+    )
 
 
 class ScheduledTaskModel(Base):

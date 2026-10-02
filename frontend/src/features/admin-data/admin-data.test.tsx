@@ -55,7 +55,7 @@ describe("数据管理主旅程", () => {
     expect(screen.getByText("日线 K 线")).toBeInTheDocument()
     expect(screen.getByText(/已配置 2 个可用来源/)).toBeInTheDocument()
     expect(screen.getByText(/000001 平安银行/)).toBeInTheDocument()
-    expect(screen.getByText("完全同步")).toBeInTheDocument()
+    expect(screen.getAllByText("完全同步").length).toBeGreaterThan(0)
     expect(screen.getByText("已更新")).toBeInTheDocument()
   })
 })

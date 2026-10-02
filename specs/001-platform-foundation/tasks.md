@@ -447,3 +447,12 @@ Foundation → US7 Identity/Admin ── integrates with every completed resourc
 - [x] T206 将 Playwright 与 API 测试的 fake 容器改为测试代码显式注入，确保其不构成应用运行模式
 - [x] T207 将尚未发布的数据库演进脚本整理为单一 `0001_initial` 全新结构基线，并移除旧策略入口兼容
 - [x] T208 同步宪章、规格、计划、验收证据、README 与 Living Docs，明确所有运行环境持久化和当前无历史数据迁移
+
+## Phase 15: 后台任务接线、策略快测与证券分页详情
+
+- [x] T209 CRITICAL 将数据同步、策略单日快速测试和回测 API 改为持久 job 入队并快速响应，注册真实 worker handlers，修复任务状态与关联业务记录的成功/失败迁移 per FR-074–076、SC-021
+- [x] T210 实现策略指定交易日完整 Tick 的时间一致上下文、阶段化信号/标准输出结果及最近运行轮询页面 per FR-033、FR-064、FR-074
+- [x] T211 实现回测排队记录、worker 原位执行与失败持久化，前端创建后跳转并轮询状态 per FR-039、FR-067、FR-075–076
+- [x] T212 实现证券覆盖服务端分页、代码/名称搜索和同步状态筛选，并更新数据管理页面 per FR-060、FR-077、SC-022
+- [x] T213 实现证券详情与按日期范围查询日线 API、路由和 K 线图页面 per FR-078、SC-023
+- [x] T214 添加 API、worker、前端与离线 E2E 回归测试，并同步 OpenAPI、README 和 Living Docs

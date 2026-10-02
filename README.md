@@ -27,7 +27,7 @@ pnpm migrate
 pnpm dev
 ```
 
-后端位于 `http://127.0.0.1:5000`，前端位于 `http://127.0.0.1:5173`。启动前必须确保 MariaDB 可用并执行一次 `pnpm migrate`。VS Code 可直接运行“全栈开发（双端热更新）”。worker 使用 `pnpm dev:worker`。初始管理员来自 `EASY_QUANT_INITIAL_ADMIN_USERNAME`、`EASY_QUANT_INITIAL_ADMIN_PASSWORD`，首次启动前必须修改示例值。完整验证见 [quickstart](specs/001-platform-foundation/quickstart.md)。
+后端位于 `http://127.0.0.1:5000`，前端位于 `http://127.0.0.1:5173`。启动前必须确保 MariaDB 可用并执行一次 `pnpm migrate`。`pnpm dev` 同时启动 API、前端和单 worker；也可单独运行 `pnpm dev:worker`。初始管理员来自 `EASY_QUANT_INITIAL_ADMIN_USERNAME`、`EASY_QUANT_INITIAL_ADMIN_PASSWORD`，首次启动前必须修改示例值。完整验证见 [quickstart](specs/001-platform-foundation/quickstart.md)。
 
 ## 质量检查与部署
 

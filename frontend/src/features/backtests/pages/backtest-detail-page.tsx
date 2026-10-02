@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom"
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -38,6 +39,23 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
           开启实盘跟踪
         </Button>
       </div>
+      {["queued", "running"].includes(run.status) && (
+        <Alert>
+          <AlertTitle>回测已进入后台任务</AlertTitle>
+          <AlertDescription>
+            {run.job_id
+              ? `任务 ${run.job_id} 正在${run.status === "queued" ? "排队" : "运行"}`
+              : "正在处理"}
+            ，页面会自动刷新。
+          </AlertDescription>
+        </Alert>
+      )}
+      {run.status === "failed" && (
+        <Alert variant="destructive">
+          <AlertTitle>回测失败</AlertTitle>
+          <AlertDescription>{run.error ?? "请在后台任务中查看失败原因。"}</AlertDescription>
+        </Alert>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>回测指标</CardTitle>
@@ -59,20 +77,22 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
           </dl>
         </CardContent>
       </Card>
-      <div className="h-72">
-        <ResponsiveContainer>
-          <LineChart data={run.periods}>
-            <XAxis dataKey="trading_day" />
-            <YAxis />
-            <Tooltip
-              formatter={(value) =>
-                Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 })
-              }
-            />
-            <Line dataKey="equity" name="组合权益" dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      {run.periods.length > 0 && (
+        <div className="h-72">
+          <ResponsiveContainer>
+            <LineChart data={run.periods}>
+              <XAxis dataKey="trading_day" />
+              <YAxis />
+              <Tooltip
+                formatter={(value) =>
+                  Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 })
+                }
+              />
+              <Line dataKey="equity" name="组合权益" dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>交易与假设披露</CardTitle>
