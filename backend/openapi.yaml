@@ -30,7 +30,7 @@
     "/live-instances/{instance_id}/pause": {"post": {"operationId": "pauseLiveInstance", "responses": {"200": {"description": "paused"}}}},
     "/live-instances/{instance_id}/terminate": {"post": {"operationId": "terminateLiveInstance", "responses": {"200": {"description": "terminated"}}}},
     "/live-instances/{instance_id}/analyze/{phase}": {"post": {"operationId": "analyzeLiveInstance", "responses": {"200": {"description": "已执行策略阶段"}}}},
-    "/recommendations/{recommendation_id}/{kind}": {"post": {"operationId": "actOnRecommendation", "responses": {"200": {"description": "recorded"}}}},
+    "/recommendations/{recommendation_id}/{kind}": {"post": {"operationId": "actOnRecommendation", "responses": {"200": {"description": "已处理或幂等重放"}, "400": {"description": "未知动作或 CSRF 无效"}, "401": {"description": "未登录"}, "404": {"description": "资源不存在或不属于当前用户"}, "409": {"description": "建议已处理、键复用、资金不足或持仓不足；本次请求不写入业务状态"}, "422": {"description": "请求字段无效"}, "500": {"description": "服务器异常，事务回滚；可用相同键安全重试"}}, "description": "确认、拒绝或修正建议；用户隔离幂等键，校验候选账本后原子保存状态与审计；重复同一请求返回相同结果。"}},
     "/recommendations/portfolio/{live_instance_id}": {"get": {"operationId": "getPortfolio", "responses": {"200": {"description": "portfolio"}}}},
     "/notifications/subscriptions": {"get": {"operationId": "listSubscriptions", "responses": {"200": {"description": "subscriptions"}}}, "post": {"operationId": "createSubscription", "responses": {"201": {"description": "created"}}}},
     "/notifications/subscriptions/{subscription_id}": {"patch": {"operationId": "updateSubscription", "responses": {"200": {"description": "updated"}}}},

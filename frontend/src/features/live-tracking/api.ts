@@ -18,6 +18,12 @@ export interface Recommendation {
   version: number
   suggested_price?: string
 }
+export interface RecommendationActionResult {
+  id: string
+  kind: "confirm" | "reject" | "correct"
+  recommendation_status: string
+  version: number
+}
 export const startLive = (backtestId: string, strategyVersionId: string) =>
   apiRequest<LiveInstance>("/live-instances", {
     method: "POST",
@@ -34,11 +40,12 @@ export const actOnRecommendation = (
   kind: "confirm" | "reject" | "correct",
   expectedVersion: number,
   values: Record<string, string> = {},
+  idempotencyKey: string = crypto.randomUUID(),
 ) =>
-  apiRequest(`/recommendations/${id}/${kind}`, {
+  apiRequest<RecommendationActionResult>(`/recommendations/${id}/${kind}`, {
     method: "POST",
     body: JSON.stringify({
-      idempotency_key: crypto.randomUUID(),
+      idempotency_key: idempotencyKey,
       expected_version: expectedVersion,
       ...values,
     }),

@@ -13,19 +13,27 @@ import {
 
 export function RecommendationActions({
   onSubmit,
+  disabled = false,
 }: {
   onSubmit: (kind: "confirm" | "reject" | "correct", values?: Record<string, string>) => void
+  disabled?: boolean
 }) {
   const [showCorrection, setShowCorrection] = useState(false)
   const [actualAction, setActualAction] = useState("buy")
   return (
     <div className="flex flex-col gap-4">
       <div className="flex gap-2">
-        <Button onClick={() => onSubmit("confirm")}>快速确认</Button>
-        <Button variant="outline" onClick={() => onSubmit("reject")}>
+        <Button disabled={disabled} onClick={() => onSubmit("confirm")}>
+          快速确认
+        </Button>
+        <Button disabled={disabled} variant="outline" onClick={() => onSubmit("reject")}>
           拒绝建议
         </Button>
-        <Button variant="outline" onClick={() => setShowCorrection((value) => !value)}>
+        <Button
+          disabled={disabled}
+          variant="outline"
+          onClick={() => setShowCorrection((value) => !value)}
+        >
           修正成交
         </Button>
       </div>
@@ -34,6 +42,7 @@ export function RecommendationActions({
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault()
+            if (disabled) return
             const data = new FormData(event.currentTarget)
             onSubmit("correct", {
               ...(Object.fromEntries(data) as Record<string, string>),
@@ -71,7 +80,9 @@ export function RecommendationActions({
               <Input id="price" name="price" type="number" min="0.0001" step="any" required />
             </Field>
           </FieldGroup>
-          <Button type="submit">提交修正</Button>
+          <Button disabled={disabled} type="submit">
+            提交修正
+          </Button>
         </form>
       )}
     </div>

@@ -16,6 +16,10 @@ from easy_quant.infrastructure.data_sources.eastmoney.adapters import EastMoneyS
 from easy_quant.infrastructure.data_sources.eastmoney.client import EastMoneyClient
 from easy_quant.infrastructure.persistence.repositories.identity import SqlAlchemyIdentityRepository
 from easy_quant.infrastructure.persistence.repositories.jobs import SqlAlchemyJobRepository
+from easy_quant.infrastructure.persistence.repositories.live_actions import (
+    InMemoryLiveTrackingStore,
+    SqlLiveTrackingStore,
+)
 from easy_quant.infrastructure.persistence.repositories.raw_cache import (
     SqlAlchemyCompressedRawCache,
 )
@@ -135,8 +139,11 @@ class Container:
     jobs: Any = None
     secret_box: SecretBox | None = None
     notification_channels: dict[str, Any] = field(default_factory=dict)
+    live_tracking: Any = None
 
     def __post_init__(self) -> None:
+        if self.live_tracking is None:
+            self.live_tracking = InMemoryLiveTrackingStore(self.state)
         if self.secret_box is None:
             secret = (
                 self.settings.credential_encryption_key.get_secret_value()
@@ -192,6 +199,7 @@ def build_container(settings: Settings | None = None) -> Container:
         backtests=SqlAlchemyBacktestStore(session),
         database_session=scoped,
         jobs=SqlAlchemyJobRepository(session),
+        live_tracking=SqlLiveTrackingStore(create_session_factory(engine)),
     )
     raw_cache = SqlAlchemyCompressedRawCache(session)
     container.data_sync = _build_market_data_sync(container, raw_cache)
