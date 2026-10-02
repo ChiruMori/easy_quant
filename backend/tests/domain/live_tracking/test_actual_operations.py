@@ -66,3 +66,32 @@ def test_negative_cash_and_position_are_rejected(fixed_now) -> None:
                 )
             ],
         )
+
+
+@pytest.mark.parametrize(
+    "field,value", [("quantity", "NaN"), ("price", "Infinity"), ("fee", "-0.01"), ("fee", "NaN")]
+)
+def test_non_finite_values_and_negative_fee_cannot_enter_ledger(field, value, fixed_now):
+    from dataclasses import replace
+
+    operation = ActualOperation(
+        "o",
+        "r",
+        "u",
+        OperationKind.CONFIRM,
+        "key",
+        fixed_now,
+        "000001",
+        "buy",
+        Decimal(1),
+        Decimal(10),
+        Decimal(0),
+    )
+    with pytest.raises(StateConflictError):
+        entry_for_operation("e", "l", replace(operation, **{field: Decimal(value)}))
+
+
+@pytest.mark.parametrize("initial_cash", [Decimal("NaN"), Decimal("Infinity"), Decimal("-1")])
+def test_invalid_initial_cash_is_rejected(initial_cash):
+    with pytest.raises(StateConflictError):
+        rebuild_portfolio(initial_cash, [])

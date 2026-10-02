@@ -8,6 +8,8 @@ from easy_quant.api.middleware.auth import require_user
 from easy_quant.api.responses import success
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.live_runtime import analyze_live_instance
+from easy_quant.application.services.recommendation_actions import audit_row
+from easy_quant.domain.shared.errors import NotFoundError
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("live_tracking", __name__, url_prefix="/api/v1/live-instances")
@@ -110,48 +112,41 @@ def live_detail(instance_id: str):
 @blueprint.post("/<instance_id>/pause")
 @require_user
 def pause_live(instance_id: str):
-    instances = get_container().state.live_instances
-    item = instances.get(instance_id)
-    if item is None or item["owner_id"] != g.current_user.id:
-        return success(None, status=404)
-    previous_status = str(item["status"])
-    item["status"] = "paused"
-    instances[instance_id] = item
-    record_audit(
-        get_container(),
-        actor_user_id=g.current_user.id,
-        action="pause",
-        resource_type="live_instance",
-        resource_id=instance_id,
-        before={"status": previous_status},
-        after={"status": "paused"},
-    )
-    return success(item)
+    return success(_set_status(instance_id, "paused", "pause"))
+
+
+def _set_status(instance_id: str, status: str, action: str):
+    container = get_container()
+    with container.live_tracking.transaction() as state:
+        item = state.instances.get(instance_id)
+        if item is None or item["owner_id"] != g.current_user.id:
+            raise NotFoundError("live_instance")
+        previous_status = str(item["status"])
+        item = {**item, "status": status}
+        state.instances[instance_id] = item
+        state.audit.append(
+            audit_row(
+                UuidGenerator(),
+                container.authentication.clock.now(),
+                g.current_user.id,
+                action,
+                "live_instance",
+                instance_id,
+                {"status": previous_status},
+                {"status": status},
+            )
+        )
+        return item
 
 
 @blueprint.post("/<instance_id>/terminate")
 @require_user
 def terminate_live(instance_id: str):
-    instances = get_container().state.live_instances
-    item = instances.get(instance_id)
-    if item is None or item["owner_id"] != g.current_user.id:
-        return success(None, status=404)
-    previous_status = str(item["status"])
-    item["status"] = "terminated"
-    instances[instance_id] = item
+    item = _set_status(instance_id, "terminated", "terminate")
     for schedule_id, schedule in list(get_container().state.schedules.items()):
         if schedule.get("configuration", {}).get("instance_id") == instance_id:
             schedule["enabled"] = False
             get_container().state.schedules[schedule_id] = schedule
-    record_audit(
-        get_container(),
-        actor_user_id=g.current_user.id,
-        action="terminate",
-        resource_type="live_instance",
-        resource_id=instance_id,
-        before={"status": previous_status},
-        after={"status": "terminated"},
-    )
     return success(item)
 
 

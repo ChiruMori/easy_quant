@@ -11,8 +11,15 @@ from easy_quant.infrastructure.persistence.models.runtime_state import RuntimeDo
 
 
 class SqlJsonDict(MutableMapping[str, dict[str, Any]]):
-    def __init__(self, session: Session, namespace: str) -> None:
+    def __init__(self, session: Session, namespace: str, *, commit_on_write: bool = True) -> None:
         self.session, self.namespace = session, namespace
+        self.commit_on_write = commit_on_write
+
+    def _write(self) -> None:
+        if self.commit_on_write:
+            self.session.commit()
+        else:
+            self.session.flush()
 
     def __getitem__(self, key: str) -> dict[str, Any]:
         row = self.session.get(RuntimeDocumentModel, (self.namespace, key))
@@ -28,7 +35,7 @@ class SqlJsonDict(MutableMapping[str, dict[str, Any]]):
                 payload_json=json.dumps(value, ensure_ascii=False, default=str),
             )
         )
-        self.session.commit()
+        self._write()
 
     def __delitem__(self, key: str) -> None:
         self.session.execute(
@@ -37,7 +44,7 @@ class SqlJsonDict(MutableMapping[str, dict[str, Any]]):
                 RuntimeDocumentModel.key == key,
             )
         )
-        self.session.commit()
+        self._write()
 
     def __iter__(self) -> Iterator[str]:
         return iter(
@@ -55,8 +62,8 @@ class SqlJsonDict(MutableMapping[str, dict[str, Any]]):
 class SqlJsonList:
     """小规模受限部署使用的持久 JSON 列表。"""
 
-    def __init__(self, session: Session, namespace: str) -> None:
-        self._mapping = SqlJsonDict(session, namespace)
+    def __init__(self, session: Session, namespace: str, *, commit_on_write: bool = True) -> None:
+        self._mapping = SqlJsonDict(session, namespace, commit_on_write=commit_on_write)
 
     def _keys(self) -> list[str]:
         return sorted(self._mapping)

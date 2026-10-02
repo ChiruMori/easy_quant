@@ -39,6 +39,7 @@ class PortfolioLedgerEntry:
     symbol: str | None = None
     quantity_delta: Decimal = Decimal(0)
     price: Decimal = Decimal(0)
+    sequence: int = 0
 
 
 @dataclass(slots=True)
@@ -56,8 +57,12 @@ def entry_for_operation(
     if (
         not operation.symbol
         or operation.action not in {"buy", "sell"}
+        or any(
+            not value.is_finite() for value in (operation.quantity, operation.price, operation.fee)
+        )
         or operation.quantity <= 0
         or operation.price <= 0
+        or operation.fee < 0
     ):
         raise StateConflictError("实际成交字段无效")
     direction = Decimal(1) if operation.action == "buy" else Decimal(-1)
@@ -81,8 +86,16 @@ def entry_for_operation(
 def rebuild_portfolio(
     initial_cash: Decimal, entries: list[PortfolioLedgerEntry]
 ) -> ActualPortfolio:
+    if not initial_cash.is_finite() or initial_cash < 0:
+        raise StateConflictError("初始现金必须为有限非负数")
     portfolio = ActualPortfolio(initial_cash)
-    for entry in sorted(entries, key=lambda item: (item.occurred_at, item.id)):
+    for entry in sorted(
+        entries, key=lambda item: (item.sequence > 0, item.sequence, item.occurred_at, item.id)
+    ):
+        if any(
+            not value.is_finite() for value in (entry.cash_delta, entry.quantity_delta, entry.price)
+        ):
+            raise StateConflictError("账本包含非有限数值")
         next_cash = portfolio.cash + entry.cash_delta
         if next_cash < 0:
             raise StateConflictError("账本产生负现金")

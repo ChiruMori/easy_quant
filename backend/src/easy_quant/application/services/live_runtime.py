@@ -4,8 +4,11 @@ import hashlib
 from datetime import UTC, date, datetime
 from typing import Any
 
-from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.notification_runtime import notify_owner
+from easy_quant.application.services.recommendation_actions import (
+    actual_portfolio,
+    audit_row,
+)
 from easy_quant.application.services.strategy_validation import extract_factor_dependencies
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.infrastructure.core import UuidGenerator
@@ -21,10 +24,17 @@ def analyze_live_instance(
 ) -> dict[str, object]:
     if phase not in {"before_market", "on_market", "after_market"}:
         raise ValueError("未知策略阶段")
-    instances = container.state.live_instances
-    instance = instances.get(instance_id)
-    if instance is None or instance.get("status") != "active":
-        raise StateConflictError("实盘实例不存在或未运行")
+    with container.live_tracking.transaction() as state:
+        instance = state.instances.get(instance_id)
+        if instance is None or instance.get("status") != "active":
+            raise StateConflictError("实盘实例不存在或未运行")
+        portfolio = actual_portfolio(state, instance_id)
+        instance = {
+            **instance,
+            "positions": {key: str(value) for key, value in portfolio.positions.items()},
+            "cash": str(portfolio.cash),
+            "costs": {key: str(value) for key, value in portfolio.costs.items()},
+        }
     repository = container.state.strategies
     version = next(
         (
@@ -82,6 +92,8 @@ def analyze_live_instance(
             "market_values": {},
             "current_prices": current_prices or {},
             "positions": instance.get("positions", {}),
+            "cash": instance["cash"],
+            "costs": instance["costs"],
             "trading_day": trading_day.isoformat(),
             "phase": phase,
             "records": records,
@@ -93,82 +105,96 @@ def analyze_live_instance(
             "实盘策略运行失败", {"phase": phase, "strategy_error": result.error}
         )
 
-    recommendations = list(container.state.recommendations.get(instance_id, []))
     created: list[dict[str, object]] = []
-    if phase != "after_market":
-        for signal in result.signals:
-            if phase == "on_market" and not _intraday_triggered(
-                signal.action,
-                signal.trigger_price,
-                (current_prices or {}).get(signal.symbol),
-                instance.get("positions", {}).get(signal.symbol, 0),
-            ):
-                continue
-            business_key = hashlib.sha256(
-                (
-                    f"{instance_id}|{version.id}|{trading_day.isoformat()}|"
-                    f"{phase}|{signal.symbol}|{signal.action}"
-                ).encode()
-            ).hexdigest()
-            existing = next(
-                (item for item in recommendations if item["business_key"] == business_key), None
-            )
-            if existing:
-                continue
-            item: dict[str, object] = {
-                "id": f"recommendation-{UuidGenerator().new()}",
-                "live_instance_id": instance_id,
-                "owner_id": instance["owner_id"],
-                "strategy_version_id": version.id,
-                "decision_at": decision_at.isoformat(),
-                "instrument_id": signal.symbol,
-                "signal_key": phase,
-                "action": signal.action,
-                "quantity": str(signal.quantity),
-                "reason": signal.reason,
-                "trigger_price": str(signal.trigger_price) if signal.trigger_price else None,
-                "suggested_price": str(
-                    (current_prices or {}).get(signal.symbol)
-                    or (prices.get(signal.symbol) or [None])[-1]
-                    or ""
-                ),
-                "business_key": business_key,
-                "status": "pending",
-                "version": 0,
-            }
-            recommendations.append(item)
-            created.append(item)
-            record_audit(
-                container,
-                actor_user_id=None,
-                action="create",
-                resource_type="recommendation",
-                resource_id=str(item["id"]),
-                after={"phase": phase, "action": signal.action, "symbol": signal.symbol},
-                trigger_source="worker",
-            )
-            notify_owner(
-                container,
-                str(instance["owner_id"]),
-                str(item["id"]),
-                "Easy Quant 操作建议",
-                f"{signal.symbol} {signal.action} {signal.quantity}：{signal.reason}",
-            )
-    else:
-        today_items = [
-            item
-            for item in recommendations
-            if str(item.get("decision_at", ""))[:10] == trading_day.isoformat()
-        ]
-        if today_items:
-            notify_owner(
-                container,
-                str(instance["owner_id"]),
-                f"{instance_id}:{trading_day.isoformat()}:position-reminder",
-                "Easy Quant 盘后持仓核对",
-                f"今日产生 {len(today_items)} 条操作建议，请登录平台确认实际成交并更新持仓。",
-            )
-    container.state.recommendations[instance_id] = recommendations
+    notifications: list[tuple[str, str, str]] = []
+    with container.live_tracking.transaction() as state:
+        current_instance = state.instances.get(instance_id)
+        if current_instance is None or current_instance.get("status") != "active":
+            raise StateConflictError("实盘实例已暂停或终止")
+        latest_portfolio = actual_portfolio(state, instance_id)
+        instance["positions"] = latest_portfolio.positions
+        recommendations = list(state.recommendations.get(instance_id, []))
+        if phase != "after_market":
+            for signal in result.signals:
+                if phase == "on_market" and not _intraday_triggered(
+                    signal.action,
+                    signal.trigger_price,
+                    (current_prices or {}).get(signal.symbol),
+                    instance.get("positions", {}).get(signal.symbol, 0),
+                ):
+                    continue
+                business_key = hashlib.sha256(
+                    (
+                        f"{instance_id}|{version.id}|{trading_day.isoformat()}|"
+                        f"{phase}|{signal.symbol}|{signal.action}"
+                    ).encode()
+                ).hexdigest()
+                existing = next(
+                    (item for item in recommendations if item["business_key"] == business_key), None
+                )
+                if existing:
+                    continue
+                item: dict[str, object] = {
+                    "id": f"recommendation-{UuidGenerator().new()}",
+                    "live_instance_id": instance_id,
+                    "owner_id": instance["owner_id"],
+                    "strategy_version_id": version.id,
+                    "decision_at": decision_at.isoformat(),
+                    "instrument_id": signal.symbol,
+                    "signal_key": phase,
+                    "action": signal.action,
+                    "quantity": str(signal.quantity),
+                    "reason": signal.reason,
+                    "trigger_price": str(signal.trigger_price) if signal.trigger_price else None,
+                    "suggested_price": str(
+                        (current_prices or {}).get(signal.symbol)
+                        or (prices.get(signal.symbol) or [None])[-1]
+                        or ""
+                    ),
+                    "business_key": business_key,
+                    "status": "pending",
+                    "version": 0,
+                }
+                recommendations.append(item)
+                created.append(item)
+                state.audit.append(
+                    audit_row(
+                        UuidGenerator(),
+                        container.authentication.clock.now(),
+                        None,
+                        "create",
+                        "recommendation",
+                        str(item["id"]),
+                        {},
+                        {"phase": phase, "action": signal.action, "symbol": signal.symbol},
+                        trigger_source="worker",
+                    )
+                )
+                notifications.append(
+                    (
+                        str(item["id"]),
+                        "Easy Quant 操作建议",
+                        f"{signal.symbol} {signal.action} {signal.quantity}：{signal.reason}",
+                    )
+                )
+        else:
+            today_items = [
+                item
+                for item in recommendations
+                if str(item.get("decision_at", ""))[:10] == trading_day.isoformat()
+            ]
+            if today_items:
+                notifications.append(
+                    (
+                        f"{instance_id}:{trading_day.isoformat()}:position-reminder",
+                        "Easy Quant 盘后持仓核对",
+                        f"今日产生 {len(today_items)} 条操作建议，"
+                        "请登录平台确认实际成交并更新持仓。",
+                    )
+                )
+        state.recommendations[instance_id] = recommendations
+    for notification_id, title, body in notifications:
+        notify_owner(container, str(instance["owner_id"]), notification_id, title, body)
     return {
         "phase": phase,
         "trading_day": trading_day.isoformat(),
