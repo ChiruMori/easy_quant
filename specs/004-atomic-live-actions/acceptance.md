@@ -12,3 +12,5 @@
 不执行真实人工成交，不更改已有金融账本；MariaDB 并发与事务隔离本次只进行 SQL 编译及 fake 故障验收，未进行真实数据库人工操作验收。无新增 schema 迁移；发布时须同时重启 API 与 worker，使所有建议写入方使用同一事务端口。
 
 质量门禁：`pnpm check` 通过（Ruff、Pyright、205 个后端测试、Prettier、ESLint、TypeScript、11 个前端测试、生产构建）；`pnpm test:e2e` 全部 3 条通过。构建仍有已有的大 chunk 提示，未影响通过。
+
+交付：代码提交 `de4b347`，作者为用户指定的 Cloudkkk；独立 PR [#3](https://github.com/ChiruMori/easy_quant/pull/3) 已创建，目标为包含已合并数据 PR #2 的 master。未执行合并。本地 API 5000 已重启并健康，前端 5173 返回 200；检查时未发现运行中的项目 worker。定时任务要自动执行仍需启动 worker。
