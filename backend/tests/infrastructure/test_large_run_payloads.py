@@ -23,6 +23,12 @@ def test_large_run_columns_use_mysql_longtext() -> None:
         assert f"{column} LONGTEXT" in ddl
 
 
+def test_prefixed_job_identifier_fits_mysql_column() -> None:
+    ddl = str(CreateTable(cast(Table, JobModel.__table__)).compile(dialect=mysql.dialect()))
+    assert "id VARCHAR(64) NOT NULL" in ddl
+    assert len("job-" + "00000000-0000-0000-0000-000000000000") <= 64
+
+
 def test_snapshot_chunks_fit_blob_limit_and_reassemble() -> None:
     payload = random.Random(20261002).randbytes(160_000)
     chunks = snapshot_chunks(payload)

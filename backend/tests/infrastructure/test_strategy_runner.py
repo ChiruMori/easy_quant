@@ -34,3 +34,30 @@ def test_subprocess_timeout_and_output_limit(fixed_now) -> None:
         {},
     )
     assert noisy.status is StrategyRunStatus.FAILED
+
+
+def test_many_signals_do_not_count_as_standard_output(fixed_now) -> None:
+    source = (
+        "def before_market(context, parameters):\n"
+        " return [{'symbol': symbol, 'action': 'buy', 'quantity': 100} "
+        "for symbol in context.universe()]"
+    )
+    symbols = [f"{index:06d}" for index in range(6000)]
+    result = SubprocessStrategyRunner().run(version(source, fixed_now), {}, {"universe": symbols})
+    assert result.status is StrategyRunStatus.SUCCEEDED
+    assert len(result.signals) == 6000
+    assert result.stdout == ""
+
+
+def test_transport_limit_is_distinct_and_never_echoes_json(fixed_now) -> None:
+    source = (
+        "def before_market(context, parameters):\n"
+        " return [{'symbol': symbol, 'action': 'buy', 'quantity': 100} "
+        "for symbol in context.universe()]"
+    )
+    result = SubprocessStrategyRunner(result_limit=100).run(
+        version(source, fixed_now), {}, {"universe": ["000001", "000002"]}
+    )
+    assert result.status is StrategyRunStatus.FAILED
+    assert result.error == "策略结果超过传输限制"
+    assert result.stdout == ""

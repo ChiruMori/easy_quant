@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
 
@@ -18,7 +18,10 @@ from easy_quant.infrastructure.persistence.repositories.history_import import (
     bar_values,
     bars_upsert,
 )
-from easy_quant.infrastructure.persistence.repositories.runtime import bar_coverage_statement
+from easy_quant.infrastructure.persistence.repositories.runtime import (
+    SqlAlchemyMarketDataStore,
+    bar_coverage_statement,
+)
 from tests.infrastructure.test_tdx_archive import fixture_bytes
 
 
@@ -86,3 +89,28 @@ def test_coverage_index_contains_only_symbol_and_date() -> None:
     statement = str(bar_coverage_statement().compile(dialect=mysql.dialect()))
     assert "FORCE INDEX (ix_daily_bars_coverage)" in statement
     assert "daily_bars.open" not in statement
+
+
+def test_day_range_uses_date_leading_index_without_loading_full_history() -> None:
+    index = next(
+        item
+        for item in cast(Table, DailyBarModel.__table__).indexes
+        if item.name == "ix_daily_bars_day_symbol"
+    )
+    assert [column.name for column in index.columns] == ["trading_day", "symbol"]
+
+    class FakeSession:
+        statement = None
+
+        def scalars(self, statement):
+            self.statement = statement
+            return []
+
+    session = FakeSession()
+    store = SqlAlchemyMarketDataStore(cast(Session, session))
+    assert store.list_bars(date(2026, 6, 1), date(2026, 9, 29)) == []
+    assert session.statement is not None
+    statement = str(session.statement.compile(dialect=mysql.dialect()))
+    assert "FORCE INDEX (ix_daily_bars_day_symbol)" in statement
+    assert "daily_bars.trading_day >= %s" in statement
+    assert "daily_bars.trading_day <= %s" in statement

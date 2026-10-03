@@ -15,8 +15,15 @@ from easy_quant.domain.strategies.entities import (
 
 
 class SubprocessStrategyRunner:
-    def __init__(self, timeout_seconds: float = 5, output_limit: int = 65536) -> None:
-        self.timeout_seconds, self.output_limit = timeout_seconds, output_limit
+    def __init__(
+        self,
+        timeout_seconds: float = 5,
+        output_limit: int = 65536,
+        result_limit: int = 8 * 1024 * 1024,
+    ) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.output_limit = output_limit
+        self.result_limit = result_limit
 
     def run(
         self,
@@ -69,11 +76,9 @@ class SubprocessStrategyRunner:
             for run in runs:
                 run.status, run.error = StrategyRunStatus.TIMED_OUT, "策略运行超时"
             return runs
-        transport_limit = max(1, len(calls)) * (self.output_limit + 4096)
-        if len(completed.stdout) > transport_limit:
+        if len(completed.stdout.encode("utf-8")) > self.result_limit:
             for run in runs:
-                run.status, run.error = StrategyRunStatus.FAILED, "策略输出超过限制"
-                run.stdout = completed.stdout[: self.output_limit]
+                run.status, run.error = StrategyRunStatus.FAILED, "策略结果超过传输限制"
             return runs
         try:
             payload = json.loads(completed.stdout)
@@ -96,9 +101,11 @@ class SubprocessStrategyRunner:
             run.status, run.error = StrategyRunStatus.FAILED, "策略子进程返回无效结果"
             return
         raw_stdout = str(payload.get("stdout", ""))
-        if len(raw_stdout) > self.output_limit:
+        if len(raw_stdout.encode("utf-8")) > self.output_limit:
             run.status, run.error = StrategyRunStatus.FAILED, "策略输出超过限制"
-            run.stdout = raw_stdout[: self.output_limit]
+            run.stdout = raw_stdout.encode("utf-8")[: self.output_limit].decode(
+                "utf-8", errors="ignore"
+            )
             return
         run.stdout = raw_stdout
         run.error = str(payload["error"]) if payload.get("error") else None

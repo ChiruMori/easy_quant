@@ -7,6 +7,7 @@ import { ErrorState, LoadingState } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -32,6 +33,8 @@ export function DatasetsPage() {
   const query = useDatasets()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
+  const [pageInput, setPageInput] = useState("1")
+  const [cursor, setCursor] = useState<{ after?: string; before?: string }>({})
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("all")
@@ -40,6 +43,7 @@ export function DatasetsPage() {
     page,
     search,
     status: status === "all" ? undefined : status,
+    ...cursor,
   })
   if (query.isLoading) return <LoadingState label="正在加载数据集" />
   if (query.error) return <ErrorState title="无法加载数据集" message={query.error.message} />
@@ -116,6 +120,8 @@ export function DatasetsPage() {
             onSubmit={(event) => {
               event.preventDefault()
               setPage(1)
+              setPageInput("1")
+              setCursor({})
               setSearch(searchInput.trim())
             }}
           >
@@ -139,6 +145,8 @@ export function DatasetsPage() {
                 onValueChange={(value) => {
                   setStatus(value)
                   setPage(1)
+                  setPageInput("1")
+                  setCursor({})
                 }}
               >
                 <SelectTrigger className="w-full" id="coverage-status">
@@ -239,31 +247,71 @@ export function DatasetsPage() {
           )}
         </CardContent>
         {coverage.data && coverage.data.total > 0 && (
-          <CardContent className="flex items-center justify-between gap-3 border-t pt-4">
+          <CardContent className="flex flex-col gap-3 border-t pt-4 lg:flex-row lg:items-center lg:justify-between">
             <p className="text-sm text-muted-foreground">
               第 {coverage.data.page} /{" "}
               {Math.max(1, Math.ceil(coverage.data.total / coverage.data.page_size))} 页，共{" "}
               {coverage.data.total.toLocaleString("zh-CN")} 条
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
-                size="sm"
                 variant="outline"
                 disabled={page <= 1 || coverage.isFetching}
-                onClick={() => setPage((value) => Math.max(1, value - 1))}
+                onClick={() => {
+                  setCursor({ before: coverage.data.previous_cursor ?? undefined })
+                  setPage((value) => value - 1)
+                  setPageInput(String(page - 1))
+                }}
               >
                 上一页
               </Button>
               <Button
-                size="sm"
                 variant="outline"
                 disabled={
                   page * coverage.data.page_size >= coverage.data.total || coverage.isFetching
                 }
-                onClick={() => setPage((value) => value + 1)}
+                onClick={() => {
+                  setCursor({ after: coverage.data.next_cursor ?? undefined })
+                  setPage((value) => value + 1)
+                  setPageInput(String(page + 1))
+                }}
               >
                 下一页
               </Button>
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  const target = Number(pageInput)
+                  const lastPage = Math.ceil(coverage.data.total / coverage.data.page_size)
+                  if (!Number.isSafeInteger(target) || target < 1 || target > lastPage) {
+                    toast.error(`请输入 1 到 ${lastPage} 之间的页码`)
+                    return
+                  }
+                  setCursor({})
+                  setPage(target)
+                }}
+              >
+                <FieldGroup className="w-24 shrink-0 gap-0">
+                  <Field className="gap-0">
+                    <FieldLabel className="sr-only" htmlFor="coverage-page">
+                      页码
+                    </FieldLabel>
+                    <Input
+                      id="coverage-page"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      aria-label="页码"
+                      value={pageInput}
+                      onChange={(event) => setPageInput(event.target.value)}
+                    />
+                  </Field>
+                </FieldGroup>
+                <Button type="submit" disabled={coverage.isFetching}>
+                  跳转
+                </Button>
+              </form>
             </div>
           </CardContent>
         )}

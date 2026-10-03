@@ -21,6 +21,8 @@ class Base(DeclarativeBase):
 
 
 class UtcDateTime(TypeDecorator[datetime]):
+    """Store timezone-aware instants as UTC in timezone-naive SQL DATETIME columns."""
+
     impl = DateTime
     cache_ok = True
 

@@ -62,6 +62,7 @@ def test_backtest_missing_data_is_reported_by_worker() -> None:
     assert response.status_code == 202
     run = response.get_json()["data"]
     assert run["status"] == "queued"
+    assert 36 < len(run["job_id"]) <= 64
 
     from easy_quant.infrastructure.core import SystemSleeper
     from easy_quant.worker.handlers.backtests import register_backtest_handlers

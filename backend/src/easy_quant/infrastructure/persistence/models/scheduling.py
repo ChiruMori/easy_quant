@@ -10,7 +10,7 @@ from easy_quant.infrastructure.persistence.base import Base, UtcDateTime
 class JobModel(Base):
     __tablename__ = "jobs"
     __table_args__ = (Index("ix_jobs_claim", "status", "available_at", "lease_until"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
     job_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     business_key: Mapped[str] = mapped_column(String(180), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)

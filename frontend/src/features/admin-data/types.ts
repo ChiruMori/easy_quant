@@ -28,6 +28,8 @@ export interface MarketDataCoverage {
   total: number
   page: number
   page_size: number
+  next_cursor: string | null
+  previous_cursor: string | null
   items: Array<{
     symbol: string
     name: string
