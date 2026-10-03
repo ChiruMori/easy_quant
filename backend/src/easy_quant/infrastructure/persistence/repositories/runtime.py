@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+from bisect import bisect_left, bisect_right
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -107,7 +108,16 @@ class InMemoryMarketDataStore:
     def get_instrument(self, symbol: str):
         return self.instruments.get(symbol)
 
-    def coverage_page(self, *, page: int, page_size: int, search: str = "", status: str = ""):
+    def coverage_page(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        search: str = "",
+        status: str = "",
+        after_symbol: str = "",
+        before_symbol: str = "",
+    ):
         coverage = self.bar_coverage()
         symbols = sorted(set(self.instruments) | set(coverage))
         if search:
@@ -128,10 +138,17 @@ class InMemoryMarketDataStore:
         if status:
             symbols = [symbol for symbol in symbols if sync_status(coverage.get(symbol)) == status]
         total = len(symbols)
-        selected = symbols[(page - 1) * page_size : page * page_size]
+        page = min(page, max(1, (total + page_size - 1) // page_size))
+        if after_symbol:
+            selected = [symbol for symbol in symbols if symbol > after_symbol][:page_size]
+        elif before_symbol:
+            selected = [symbol for symbol in symbols if symbol < before_symbol][-page_size:]
+        else:
+            selected = symbols[(page - 1) * page_size : page * page_size]
         return (
             len(set(self.instruments) | set(coverage)),
             total,
+            page,
             [
                 {**self.instruments.get(symbol, {"symbol": symbol}), **coverage.get(symbol, {})}
                 for symbol in selected
@@ -277,117 +294,113 @@ class SqlAlchemyMarketDataStore:
             }
         )
 
-    def coverage_page(self, *, page: int, page_size: int, search: str = "", status: str = ""):
-        if not status:
-            instruments = select(InstrumentModel)
-            if search:
-                pattern = f"%{search}%"
-                instruments = instruments.where(
-                    or_(InstrumentModel.symbol.like(pattern), InstrumentModel.name.like(pattern))
+    def coverage_page(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        search: str = "",
+        status: str = "",
+        after_symbol: str = "",
+        before_symbol: str = "",
+    ):
+        # 页码跳转仅跳过主键；详情和日线聚合只读取选中的一页。
+        symbols = select(InstrumentModel.symbol)
+        if status:
+            coverage = (
+                select(
+                    DailyBarModel.symbol.label("symbol"),
+                    func.min(DailyBarModel.trading_day).label("first_day"),
+                    func.max(DailyBarModel.trading_day).label("last_day"),
                 )
-            total = (
-                self.session.scalar(select(func.count()).select_from(instruments.subquery())) or 0
-            )
-            instrument_count = (
-                self.session.scalar(select(func.count()).select_from(InstrumentModel)) or 0
-            )
-            selected = list(
-                self.session.scalars(
-                    instruments.order_by(InstrumentModel.symbol)
-                    .offset((page - 1) * page_size)
-                    .limit(page_size)
+                .with_hint(
+                    DailyBarModel, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql"
                 )
+                .group_by(DailyBarModel.symbol)
+                .subquery()
             )
-            symbols = [row.symbol for row in selected]
-            coverage_rows = (
-                self.session.execute(
-                    select(
-                        DailyBarModel.symbol,
-                        func.min(DailyBarModel.trading_day),
-                        func.max(DailyBarModel.trading_day),
-                        func.count(),
-                    )
-                    .where(DailyBarModel.symbol.in_(symbols))
-                    .group_by(DailyBarModel.symbol)
-                )
-                if symbols
-                else []
+            days = func.datediff(coverage.c.last_day, coverage.c.first_day)
+            status_expr = case(
+                (coverage.c.first_day.is_(None), "未同步"),
+                (days >= 3652, "完全同步"),
+                (days >= 1095, "部分同步"),
+                else_="数据不足",
             )
-            coverage = {
-                symbol: {"first_day": first, "last_day": last, "count": count}
-                for symbol, first, last, count in coverage_rows
-            }
-            return (
-                instrument_count,
-                total,
-                [
-                    {
-                        "symbol": row.symbol,
-                        "name": row.name,
-                        "exchange": row.exchange,
-                        "listed_on": row.listed_on.isoformat() if row.listed_on else None,
-                        **coverage.get(row.symbol, {}),
-                    }
-                    for row in selected
-                ],
-            )
-
-        coverage = (
-            select(
-                DailyBarModel.symbol.label("symbol"),
-                func.min(DailyBarModel.trading_day).label("first_day"),
-                func.max(DailyBarModel.trading_day).label("last_day"),
-                func.count().label("count"),
-            )
-            .group_by(DailyBarModel.symbol)
-            .subquery()
-        )
-        days = func.datediff(coverage.c.last_day, coverage.c.first_day)
-        status_expr = case(
-            (coverage.c.count.is_(None), "未同步"),
-            (days >= 3652, "完全同步"),
-            (days >= 1095, "部分同步"),
-            else_="数据不足",
-        )
-        base = select(
-            InstrumentModel.symbol,
-            InstrumentModel.name,
-            InstrumentModel.exchange,
-            InstrumentModel.listed_on,
-            coverage.c.first_day,
-            coverage.c.last_day,
-            coverage.c.count,
-        ).outerjoin(coverage, InstrumentModel.symbol == coverage.c.symbol)
+            symbols = symbols.outerjoin(
+                coverage, InstrumentModel.symbol == coverage.c.symbol
+            ).where(status_expr == status)
         if search:
             pattern = f"%{search}%"
-            base = base.where(
+            symbols = symbols.where(
                 or_(InstrumentModel.symbol.like(pattern), InstrumentModel.name.like(pattern))
             )
-        if status:
-            base = base.where(status_expr == status)
-        total = self.session.scalar(select(func.count()).select_from(base.subquery())) or 0
         instrument_count = (
             self.session.scalar(select(func.count()).select_from(InstrumentModel)) or 0
         )
-        rows = self.session.execute(
-            base.order_by(InstrumentModel.symbol).offset((page - 1) * page_size).limit(page_size)
+        if status:
+            # 状态由日线首末日期决定；单次查询取至多约 6,000 个代码，避免重复聚合。
+            matching = list(self.session.scalars(symbols.order_by(InstrumentModel.symbol)))
+            total = len(matching)
+            page = min(page, max(1, (total + page_size - 1) // page_size))
+            if after_symbol:
+                selected_symbols = matching[bisect_right(matching, after_symbol) :][:page_size]
+            elif before_symbol:
+                selected_symbols = matching[: bisect_left(matching, before_symbol)][-page_size:]
+            else:
+                selected_symbols = matching[(page - 1) * page_size : page * page_size]
+        else:
+            total = self.session.scalar(select(func.count()).select_from(symbols.subquery())) or 0
+            page = min(page, max(1, (total + page_size - 1) // page_size))
+            if after_symbol:
+                page_query = symbols.where(InstrumentModel.symbol > after_symbol).order_by(
+                    InstrumentModel.symbol
+                )
+            elif before_symbol:
+                page_query = symbols.where(InstrumentModel.symbol < before_symbol).order_by(
+                    InstrumentModel.symbol.desc()
+                )
+            else:
+                page_query = symbols.order_by(InstrumentModel.symbol).offset((page - 1) * page_size)
+            selected_symbols = list(self.session.scalars(page_query.limit(page_size)))
+            if before_symbol:
+                selected_symbols.reverse()
+        if not selected_symbols:
+            return instrument_count, total, page, []
+
+        selected = {
+            row.symbol: row
+            for row in self.session.scalars(
+                select(InstrumentModel).where(InstrumentModel.symbol.in_(selected_symbols))
+            )
+        }
+        coverage_rows = self.session.execute(
+            select(
+                DailyBarModel.symbol,
+                func.min(DailyBarModel.trading_day),
+                func.max(DailyBarModel.trading_day),
+                func.count(),
+            )
+            .with_hint(DailyBarModel, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql")
+            .where(DailyBarModel.symbol.in_(selected_symbols))
+            .group_by(DailyBarModel.symbol)
         )
-        return (
-            instrument_count,
-            total,
-            [
+        selected_coverage = {
+            symbol: {"first_day": first, "last_day": last, "count": count}
+            for symbol, first, last, count in coverage_rows
+        }
+        rows = []
+        for symbol in selected_symbols:
+            instrument = selected[symbol]
+            rows.append(
                 {
                     "symbol": symbol,
-                    "name": name,
-                    "exchange": exchange,
-                    "listed_on": listed_on.isoformat() if listed_on else None,
-                    "first_day": first_day,
-                    "last_day": last_day,
-                    "count": count or 0,
+                    "name": instrument.name,
+                    "exchange": instrument.exchange,
+                    "listed_on": instrument.listed_on.isoformat() if instrument.listed_on else None,
+                    **selected_coverage.get(symbol, {}),
                 }
-                for symbol, name, exchange, listed_on, first_day, last_day, count in rows
-            ],
-        )
+            )
+        return instrument_count, total, page, rows
 
     def list_trading_days(self) -> set[date]:
         return set(self.session.scalars(select(TradingDayModel.trading_day)))

@@ -159,6 +159,23 @@ def test_coverage_is_paginated_and_searchable_with_status_filter() -> None:
     assert len(first["items"]) == 50
     second = client.get("/api/v1/admin/market-data/coverage?page=2&page_size=50").get_json()["data"]
     assert second["items"][0]["symbol"] == "000050"
+    via_cursor = client.get(
+        "/api/v1/admin/market-data/coverage?page=2&page_size=50&after=000049"
+    ).get_json()["data"]
+    assert via_cursor["items"][0]["symbol"] == "000050"
+    backward = client.get(
+        "/api/v1/admin/market-data/coverage?page=1&page_size=50&before=000050"
+    ).get_json()["data"]
+    assert backward["items"][0]["symbol"] == "000000"
+    jumped = client.get("/api/v1/admin/market-data/coverage?page=121&page_size=50").get_json()[
+        "data"
+    ]
+    assert [item["symbol"] for item in jumped["items"]] == ["006000"]
+    oversized = client.get(
+        "/api/v1/admin/market-data/coverage?page=999999&page_size=50"
+    ).get_json()["data"]
+    assert oversized["page"] == 121
+    assert client.get("/api/v1/admin/market-data/coverage?after=1&before=2").status_code == 400
     searched = client.get("/api/v1/admin/market-data/coverage?search=平安银行").get_json()["data"]
     assert searched["total"] == 1
     assert searched["items"][0]["symbol"] == "000001"
@@ -214,6 +231,7 @@ def test_sync_request_creates_job_before_data_source_runs() -> None:
     assert response.status_code == 202
     task = response.get_json()["data"]
     assert task["status"] == "queued"
+    assert 36 < len(task["job_id"]) <= 64
     assert service.called is False
     registry = JobHandlerRegistry()
     register_market_data_handlers(registry, container)

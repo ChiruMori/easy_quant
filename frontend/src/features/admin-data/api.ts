@@ -18,10 +18,18 @@ export function useDatasets() {
   })
 }
 
-export function useMarketDataCoverage(params: { page: number; search?: string; status?: string }) {
+export function useMarketDataCoverage(params: {
+  page: number
+  search?: string
+  status?: string
+  after?: string
+  before?: string
+}) {
   const query = new URLSearchParams({ page: String(params.page), page_size: "50" })
   if (params.search) query.set("search", params.search)
   if (params.status) query.set("status", params.status)
+  if (params.after) query.set("after", params.after)
+  if (params.before) query.set("before", params.before)
   return useQuery({
     queryKey: ["admin", "market-data", "coverage", params],
     queryFn: () =>

@@ -16,6 +16,7 @@ from easy_quant.api.schemas.market_data import AcquisitionRequest, SourceOrderRe
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.scheduling.entities import Job
+from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("admin_market_data", __name__, url_prefix="/api/v1/admin/market-data")
@@ -79,10 +80,19 @@ def market_data_coverage():
     store = get_container().market_data
     search = request.args.get("search", "").strip()
     sync_status = request.args.get("status", "").strip()
+    after_symbol = request.args.get("after", "").strip()
+    before_symbol = request.args.get("before", "").strip()
+    if after_symbol and before_symbol:
+        raise ValidationError("after 和 before 不能同时指定")
     page = max(1, request.args.get("page", 1, type=int) or 1)
     page_size = min(100, max(10, request.args.get("page_size", 50, type=int) or 50))
-    instrument_count, total, summaries = store.coverage_page(
-        page=page, page_size=page_size, search=search, status=sync_status
+    instrument_count, total, page, summaries = store.coverage_page(
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=sync_status,
+        after_symbol=after_symbol,
+        before_symbol=before_symbol,
     )
     rows = []
     calendar = TradingCalendar(store.list_trading_days() or None)
@@ -115,6 +125,8 @@ def market_data_coverage():
             "total": total,
             "page": page,
             "page_size": page_size,
+            "next_cursor": rows[-1]["symbol"] if rows else None,
+            "previous_cursor": rows[0]["symbol"] if rows else None,
             "items": rows,
         }
     )

@@ -71,6 +71,7 @@ def test_create_and_run_strategy_api_uses_worker_job() -> None:
     )
     assert queued.status_code == 202
     assert queued.get_json()["data"]["status"] == "queued"
+    assert 36 < len(queued.get_json()["data"]["id"]) <= 64
     assert len(container.jobs.list_all()) == 1
 
     _run_worker_once(container)

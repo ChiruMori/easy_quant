@@ -37,7 +37,7 @@
     "/notifications/subscriptions/{subscription_id}": {"patch": {"operationId": "updateSubscription", "responses": {"200": {"description": "updated"}}}},
     "/notifications/deliveries": {"get": {"operationId": "listDeliveries", "responses": {"200": {"description": "deliveries"}}}},
     "/admin/market-data/datasets": {"get": {"operationId": "listDatasets", "responses": {"200": {"description": "datasets"}}}},
-    "/admin/market-data/coverage": {"get": {"operationId": "getMarketDataCoverage", "responses": {"200": {"description": "股票日线覆盖状态"}}}},
+    "/admin/market-data/coverage": {"get": {"operationId": "getMarketDataCoverage", "description": "直接页码跳转使用窄代码投影；前后翻页可分别传 after 或 before 股票代码游标，不可同时传入。响应包含页码、总数及 next_cursor/previous_cursor。", "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1}}, {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 10, "maximum": 100}}, {"name": "search", "in": "query", "schema": {"type": "string"}}, {"name": "status", "in": "query", "schema": {"type": "string"}}, {"name": "after", "in": "query", "schema": {"type": "string"}}, {"name": "before", "in": "query", "schema": {"type": "string"}}], "responses": {"200": {"description": "股票日线覆盖状态"}, "400": {"description": "游标参数冲突"}}}},
     "/admin/market-data/instruments/{symbol}": {"get": {"operationId": "getInstrument", "responses": {"200": {"description": "证券资料"}}}},
     "/admin/market-data/instruments/{symbol}/daily-bars": {"get": {"operationId": "getInstrumentDailyBars", "responses": {"200": {"description": "证券日线"}}}},
     "/admin/market-data/datasets/{dataset_key}/sources": {"put": {"operationId": "setSources", "responses": {"200": {"description": "updated"}}}},
