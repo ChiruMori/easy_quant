@@ -33,6 +33,12 @@ class Worker:
         job = self.jobs.claim_due(self.worker_id, now, now + self.lease_duration)
         if job is None:
             return False
+        logger.info(
+            "任务已领取 job_id=%s job_type=%s attempt=%s",
+            job.id,
+            job.job_type,
+            job.attempt_count,
+        )
         try:
             summary = self.handlers.get(job.job_type)(job) or {}
             job.succeed(self.worker_id, dict(summary))
@@ -44,11 +50,20 @@ class Worker:
                 error["details"] = dict(exc.details)
             job.fail(self.worker_id, error)
         self.jobs.save(job)
+        if job.status.value == "succeeded":
+            logger.info("任务已完成 job_id=%s job_type=%s", job.id, job.job_type)
         return True
 
     def run_forever(self) -> None:
+        logger.info("worker 已启动 worker_id=%s", self.worker_id)
         while True:
-            if not self.run_once():
+            try:
+                handled = self.run_once()
+            except Exception:
+                logger.exception("worker 轮询失败 worker_id=%s", self.worker_id)
+                self.sleeper.sleep(max(5.0, self.poll_seconds))
+                continue
+            if not handled:
                 self.sleeper.sleep(self.poll_seconds)
 
 
@@ -60,6 +75,9 @@ class SystemSleeper:
 def main() -> None:
     from easy_quant.bootstrap import build_worker
 
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     build_worker().run_forever()
 
 

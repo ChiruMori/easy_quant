@@ -11,7 +11,10 @@ from easy_quant.infrastructure.persistence.base import Base, UtcDateTime
 
 class DailyBarModel(Base):
     __tablename__ = "daily_bars"
-    __table_args__ = (Index("ix_daily_bars_coverage", "symbol", "trading_day"),)
+    __table_args__ = (
+        Index("ix_daily_bars_coverage", "symbol", "trading_day"),
+        Index("ix_daily_bars_day_symbol", "trading_day", "symbol"),
+    )
     symbol: Mapped[str] = mapped_column(String(20), primary_key=True)
     trading_day: Mapped[date] = mapped_column(Date, primary_key=True)
     open: Mapped[Decimal] = mapped_column(Numeric(20, 6))

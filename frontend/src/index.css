@@ -28,6 +28,8 @@
   --border: oklch(0.929 0.013 255.508);
   --input: oklch(0.929 0.013 255.508);
   --ring: oklch(0.704 0.04 256.788);
+  --market-up: #d92d36;
+  --market-down: #15935b;
   --sidebar: hsl(0 0% 98%);
   --sidebar-foreground: hsl(240 5.3% 26.1%);
   --sidebar-primary: hsl(240 5.9% 10%);
@@ -43,7 +45,7 @@
 }
 body {
   margin: 0;
-  min-width: 1024px;
+  min-width: 320px;
   min-height: 100vh;
 }
 button,
@@ -72,6 +74,8 @@ select {
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.551 0.027 264.364);
+  --market-up: #ff6670;
+  --market-down: #39bd82;
   --sidebar: hsl(240 5.9% 10%);
   --sidebar-foreground: hsl(240 4.8% 95.9%);
   --sidebar-primary: hsl(224.3 76.3% 48%);

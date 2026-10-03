@@ -1,10 +1,12 @@
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
 from sqlalchemy.orm import Session
 
 from easy_quant.api.app import create_app
+from easy_quant.domain.scheduling.entities import Job, JobStatus
 from easy_quant.infrastructure.persistence.models.runtime_state import RuntimeDocumentModel
 from easy_quant.infrastructure.persistence.repositories.runtime_documents import SqlJsonList
 from tests.fakes.platform import make_test_container
@@ -65,3 +67,29 @@ def test_request_teardown_releases_the_database_session() -> None:
     client = create_app(settings=container.settings, container=container).test_client()
     assert client.get("/api/v1/health").status_code == 200
     assert scope.removed == 1
+
+
+def test_admin_jobs_reports_expired_lease_without_exposing_payload() -> None:
+    container = make_test_container(initialize_admin=True)
+    now = datetime(2026, 9, 29, 8, 0, tzinfo=UTC)
+    container.jobs.enqueue(
+        Job(
+            "job-1",
+            "strategy.run",
+            "strategy-run:1",
+            {"secret": "must-not-be-returned"},
+            now - timedelta(minutes=10),
+            status=JobStatus.RUNNING,
+            lease_owner="stopped-worker",
+            lease_until=now - timedelta(minutes=1),
+        )
+    )
+    client = create_app(settings=container.settings, container=container).test_client()
+    client.post(
+        "/api/v1/auth/login", json={"username": "admin", "password": "change-this-admin-password"}
+    )
+    response = client.get("/api/v1/admin/jobs")
+    job = response.get_json()["data"][0]
+    assert job["lease_expired"] is True
+    assert job["lease_until"] == (now - timedelta(minutes=1)).isoformat()
+    assert "must-not-be-returned" not in response.get_data(as_text=True)

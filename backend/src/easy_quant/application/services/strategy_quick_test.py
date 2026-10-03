@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from easy_quant.application.services.strategy_validation import extract_factor_dependencies
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.infrastructure.strategy_runtime.runner import SubprocessStrategyRunner
+
+QUICK_TEST_HISTORY_DAYS = 120
 
 
 def _visible_records(rows: list[dict[str, object]], cutoff: datetime) -> list[dict[str, object]]:
@@ -40,7 +42,10 @@ def execute_strategy_tick(container: Any, payload: dict[str, Any]) -> dict[str, 
         raise StateConflictError("策略版本不存在")
 
     dependencies = extract_factor_dependencies(version.source_code)
-    bars = container.market_data.list_bars(end_day=trading_day)
+    bars = container.market_data.list_bars(
+        start_day=trading_day - timedelta(days=QUICK_TEST_HISTORY_DAYS),
+        end_day=trading_day,
+    )
     if not any(str(row["trading_day"]) == trading_day.isoformat() for row in bars):
         raise StateConflictError(
             "所选交易日没有日线数据",
@@ -60,11 +65,19 @@ def execute_strategy_tick(container: Any, payload: dict[str, Any]) -> dict[str, 
     contexts: list[tuple[dict[str, object], str]] = []
     for phase in phases:
         include_today = phase == "after_market"
+        cutoff = datetime.combine(
+            trading_day,
+            time(23, 59, 59) if include_today else time(9),
+            ZoneInfo("Asia/Shanghai"),
+        ).astimezone(UTC)
         visible_bars = [
             row
             for row in bars
-            if date.fromisoformat(str(row["trading_day"])) < trading_day
-            or (include_today and str(row["trading_day"]) == trading_day.isoformat())
+            if datetime.fromisoformat(str(row["available_at"])).astimezone(UTC) <= cutoff
+            and (
+                date.fromisoformat(str(row["trading_day"])) < trading_day
+                or (include_today and str(row["trading_day"]) == trading_day.isoformat())
+            )
         ]
         prices: dict[str, list[float]] = {}
         for row in sorted(visible_bars, key=lambda item: str(item["trading_day"])):
@@ -74,11 +87,6 @@ def execute_strategy_tick(container: Any, payload: dict[str, Any]) -> dict[str, 
             {str(row["symbol"]) for row in visible_bars}
             | ({str(row["symbol"]) for row in today_rows} if phase != "before_market" else set())
         )
-        cutoff = datetime.combine(
-            trading_day,
-            time(23, 59, 59) if include_today else time(9),
-            ZoneInfo("Asia/Shanghai"),
-        ).astimezone(UTC)
         records: dict[str, dict[str, list[dict[str, object]]]] = {}
         for dataset, rows in generic_records.items():
             for row in _visible_records(rows, cutoff):

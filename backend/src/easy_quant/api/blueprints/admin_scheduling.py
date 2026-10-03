@@ -89,6 +89,7 @@ def jobs():
     repository = get_container().jobs
     if repository is None:
         return success(list(get_container().state.jobs))
+    now = get_container().authentication.clock.now()
     return success(
         [
             {
@@ -96,6 +97,10 @@ def jobs():
                 "job_type": item.job_type,
                 "status": item.status.value,
                 "available_at": item.available_at.isoformat(),
+                "lease_until": item.lease_until.isoformat() if item.lease_until else None,
+                "lease_expired": bool(
+                    item.status.value == "running" and item.lease_until and item.lease_until <= now
+                ),
                 "attempt_count": item.attempt_count,
                 "result_summary": item.result_summary,
                 "error_summary": item.error_summary,

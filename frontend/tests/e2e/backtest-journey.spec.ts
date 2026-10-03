@@ -31,9 +31,8 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await page.getByLabel("名称或代码").fill("000001")
   await page.getByRole("button", { name: "搜索" }).click()
   await page.getByRole("link", { name: /000001/ }).click()
-  await expect(page.getByText("日线 K 线", { exact: true })).toBeVisible()
-  await expect(page.locator("main .recharts-surface")).toBeVisible()
-  await expect(page.locator("main .recharts-bar-rectangle rect").first()).toBeVisible()
+  await expect(page.getByText("K 线图", { exact: true })).toBeVisible()
+  await expect(page.getByRole("img", { name: "可缩放和拖动的 K 线图" })).toBeVisible()
 
   await page.goto("/factors")
   await expect(page.getByRole("heading", { name: "因子目录" })).toBeVisible()

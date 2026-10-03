@@ -232,6 +232,9 @@ export function StrategiesPage() {
                     value={tradingDay}
                     onChange={(event) => setTradingDay(event.target.value)}
                   />
+                  <FieldDescription>
+                    快测读取该日及此前 120 个自然日的行情；更长历史请使用回测。
+                  </FieldDescription>
                 </Field>
                 <Button
                   variant="outline"
@@ -300,7 +303,10 @@ export function StrategiesPage() {
                       {phase.stdout && <pre>{phase.stdout}</pre>}
                     </div>
                   ))}
-                  {["queued", "running"].includes(visibleRun.status) && (
+                  {visibleRun.status === "queued" && (
+                    <p className="text-muted-foreground">等待 worker 领取，页面会自动刷新结果。</p>
+                  )}
+                  {visibleRun.status === "running" && (
                     <p className="text-muted-foreground">worker 正在处理，页面会自动刷新结果。</p>
                   )}
                 </div>

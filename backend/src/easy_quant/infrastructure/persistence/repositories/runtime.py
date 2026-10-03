@@ -249,6 +249,10 @@ class SqlAlchemyMarketDataStore:
             statement = statement.where(DailyBarModel.trading_day <= end_day)
         if symbol is not None:
             statement = statement.where(DailyBarModel.symbol == symbol)
+        if start_day is not None and symbol is None:
+            statement = statement.with_hint(
+                DailyBarModel, "FORCE INDEX (ix_daily_bars_day_symbol)", dialect_name="mysql"
+            )
         statement = statement.order_by(DailyBarModel.trading_day)
         return [
             {

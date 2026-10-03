@@ -22,6 +22,8 @@ export interface JobRecord {
   job_type: string
   status: string
   available_at: string
+  lease_until?: string | null
+  lease_expired?: boolean
   attempt_count: number
   result_summary?: Record<string, unknown>
   error_summary?: { message?: string }

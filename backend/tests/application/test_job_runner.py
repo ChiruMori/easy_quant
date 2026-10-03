@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 
 from easy_quant.domain.scheduling.entities import Job, JobStatus
@@ -35,16 +36,19 @@ class InMemoryJobs:
         self.jobs[job.id] = job
 
 
-def test_worker_runs_due_job(fixed_now: datetime) -> None:
+def test_worker_runs_due_job(fixed_now: datetime, caplog) -> None:
     job = Job("job-1", "demo", "demo:1", {}, fixed_now)
     jobs = InMemoryJobs([job])
     handlers = JobHandlerRegistry()
     handlers.register("demo", lambda job: {"ok": bool(job.id)})
     worker = Worker("worker-1", jobs, handlers, FixedClock(fixed_now), VirtualSleeper())
 
-    assert worker.run_once() is True
+    with caplog.at_level(logging.INFO, logger="easy_quant.worker.runner"):
+        assert worker.run_once() is True
     assert job.status is JobStatus.SUCCEEDED
     assert job.result_summary == {"ok": True}
+    assert "任务已领取 job_id=job-1" in caplog.text
+    assert "任务已完成 job_id=job-1" in caplog.text
 
 
 def test_expired_lease_is_recovered(fixed_now: datetime) -> None:
