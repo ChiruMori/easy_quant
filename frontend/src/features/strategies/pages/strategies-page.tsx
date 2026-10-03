@@ -233,7 +233,7 @@ export function StrategiesPage() {
                     onChange={(event) => setTradingDay(event.target.value)}
                   />
                   <FieldDescription>
-                    快测读取该日及此前 120 个自然日的行情；更长历史请使用回测。
+                    快测只运行所选交易日，读取该日及此前最多 5 个交易日的行情；更长历史请使用回测。
                   </FieldDescription>
                 </Field>
                 <Button

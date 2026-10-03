@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -8,7 +8,16 @@ from easy_quant.application.services.strategy_validation import extract_factor_d
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.infrastructure.strategy_runtime.runner import SubprocessStrategyRunner
 
-QUICK_TEST_HISTORY_DAYS = 120
+QUICK_TEST_PRIOR_TRADING_DAYS = 5
+
+
+def quick_test_start_day(trading_days: set[date], trading_day: date) -> date:
+    previous_days = sorted(day for day in trading_days if day < trading_day)
+    return (
+        previous_days[-min(QUICK_TEST_PRIOR_TRADING_DAYS, len(previous_days))]
+        if previous_days
+        else trading_day
+    )
 
 
 def _visible_records(rows: list[dict[str, object]], cutoff: datetime) -> list[dict[str, object]]:
@@ -43,7 +52,7 @@ def execute_strategy_tick(container: Any, payload: dict[str, Any]) -> dict[str, 
 
     dependencies = extract_factor_dependencies(version.source_code)
     bars = container.market_data.list_bars(
-        start_day=trading_day - timedelta(days=QUICK_TEST_HISTORY_DAYS),
+        start_day=quick_test_start_day(container.market_data.list_trading_days(), trading_day),
         end_day=trading_day,
     )
     if not any(str(row["trading_day"]) == trading_day.isoformat() for row in bars):

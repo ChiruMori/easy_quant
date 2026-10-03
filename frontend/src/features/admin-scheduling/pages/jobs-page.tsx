@@ -14,6 +14,7 @@ import {
 import { localizedLabel } from "@/lib/labels"
 
 import { listJobs } from "../api"
+import { formatBeijingTime } from "../time"
 
 export function JobsPage() {
   const query = useQuery({ queryKey: ["admin", "jobs"], queryFn: listJobs, refetchInterval: 5000 })
@@ -28,7 +29,7 @@ export function JobsPage() {
             <TableRow>
               <TableHead>任务类型</TableHead>
               <TableHead>状态</TableHead>
-              <TableHead>计划时间</TableHead>
+              <TableHead>计划时间（北京时间）</TableHead>
               <TableHead className="text-right">尝试次数</TableHead>
               <TableHead>执行结果</TableHead>
             </TableRow>
@@ -41,7 +42,7 @@ export function JobsPage() {
                   <Badge variant="secondary">{localizedLabel(job.status)}</Badge>
                   {job.lease_expired && <Badge variant="destructive">租约已过期</Badge>}
                 </TableCell>
-                <TableCell>{new Date(job.available_at).toLocaleString("zh-CN")}</TableCell>
+                <TableCell>{formatBeijingTime(job.available_at)}</TableCell>
                 <TableCell className="text-right tabular-nums">{job.attempt_count}</TableCell>
                 <TableCell>
                   {job.error_summary?.message ||

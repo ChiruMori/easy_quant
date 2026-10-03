@@ -1,8 +1,8 @@
-from datetime import date, timedelta
+from datetime import date
 from unittest.mock import patch
 
 from easy_quant.api.app import create_app
-from easy_quant.application.services.strategy_quick_test import QUICK_TEST_HISTORY_DAYS
+from easy_quant.application.services.strategy_quick_test import quick_test_start_day
 from easy_quant.infrastructure.core import SystemSleeper
 from easy_quant.worker.handlers.strategies import register_strategy_handlers
 from easy_quant.worker.registry import JobHandlerRegistry
@@ -83,12 +83,53 @@ def test_create_and_run_strategy_api_uses_worker_job() -> None:
     ) as bars:
         _run_worker_once(container)
     bars.assert_called_once_with(
-        start_day=date(2026, 9, 29) - timedelta(days=QUICK_TEST_HISTORY_DAYS),
+        start_day=date(2026, 9, 29),
         end_day=date(2026, 9, 29),
     )
     runs = client.get(f"/api/v1/strategies/{strategy['id']}/runs").get_json()["data"]
     assert runs[0]["status"] == "succeeded"
     assert runs[0]["phase_results"][2]["stdout"] == "done\n"
+
+
+def test_quick_test_history_uses_five_previous_trading_days_across_weekend() -> None:
+    days = {date(2026, 9, day) for day in (18, 21, 22, 23, 24, 25, 28, 29)}
+    assert quick_test_start_day(days, date(2026, 9, 29)) == date(2026, 9, 22)
+    assert quick_test_start_day({date(2026, 9, 28)}, date(2026, 9, 29)) == date(2026, 9, 28)
+    assert quick_test_start_day(set(), date(2026, 9, 29)) == date(2026, 9, 29)
+
+
+def test_sample_moving_average_returns_many_signals_through_worker() -> None:
+    client, container, headers = _client_and_container()
+    days = ("2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-28")
+    container.market_data.upsert_bars(
+        [
+            {
+                "symbol": f"{index:06d}",
+                "trading_day": day,
+                "open": str(10 + offset),
+                "high": str(11 + offset),
+                "low": str(9 + offset),
+                "close": str(10 + offset),
+                "volume": "100",
+                "available_at": f"{day}T15:00:00+08:00",
+            }
+            for offset, day in enumerate(days)
+            for index in range(3000)
+        ]
+    )
+    template = client.get("/api/v1/strategies/templates").get_json()["data"][0]
+    strategy = _create_strategy(client, headers, template["source_code"])
+    queued = client.post(
+        f"/api/v1/strategies/{strategy['id']}/run",
+        headers=headers,
+        json={"trading_day": "2026-09-28", "parameters": {}},
+    )
+    assert queued.status_code == 202
+    _run_worker_once(container)
+    run = client.get(f"/api/v1/strategies/{strategy['id']}/runs").get_json()["data"][0]
+    assert run["status"] == "succeeded"
+    assert len(run["phase_results"][0]["signals"]) == 3000
+    assert run["phase_results"][0]["stdout"] == ""
 
 
 def test_built_in_template_failure_is_recorded_on_job() -> None:
