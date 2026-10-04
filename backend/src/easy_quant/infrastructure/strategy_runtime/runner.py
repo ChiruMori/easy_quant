@@ -4,7 +4,11 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from datetime import date
 from pathlib import Path
+from typing import Any
 
 from easy_quant.domain.strategies.entities import (
     Signal,
@@ -129,3 +133,153 @@ class SubprocessStrategyRunner:
             run.status, run.error = StrategyRunStatus.FAILED, "策略信号格式无效"
             return
         run.status = StrategyRunStatus.SUCCEEDED
+
+
+class StreamingStrategyRunner:
+    """单个回测任务复用受限子进程，逐日发送新增行情而非全量历史。"""
+
+    def __init__(
+        self,
+        version: StrategyVersion,
+        parameters: dict[str, object],
+        *,
+        timeout_seconds: float = 30,
+        output_limit: int = 65536,
+        result_limit: int = 8 * 1024 * 1024,
+    ) -> None:
+        self.version = version
+        self.parameters = parameters
+        self.timeout_seconds = timeout_seconds
+        self.result_limit = result_limit
+        self._decoder = SubprocessStrategyRunner(timeout_seconds, output_limit, result_limit)
+        child = Path(__file__).with_name("child.py")
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not any(token in key.upper() for token in ("SECRET", "TOKEN", "PASSWORD", "KEY"))
+        }
+        self._process = subprocess.Popen(
+            [sys.executable, "-I", str(child), "--stream"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+            env=environment,
+        )
+        self._reader = ThreadPoolExecutor(max_workers=1, thread_name_prefix="strategy-stream")
+        try:
+            ready = self._exchange({"source_code": version.source_code, "parameters": parameters})
+            if not ready.get("ok") or not ready.get("ready"):
+                raise RuntimeError(str(ready.get("error") or "策略子进程初始化失败"))
+        except Exception:
+            self.close()
+            raise
+
+    def __enter__(self) -> StreamingStrategyRunner:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        process = self._process
+        if process.poll() is None:
+            try:
+                assert process.stdin is not None
+                process.stdin.write('{"stop":true}\n')
+                process.stdin.flush()
+                process.wait(timeout=1)
+            except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
+                process.kill()
+                process.wait()
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.stdout is not None:
+            process.stdout.close()
+        self._reader.shutdown(wait=False, cancel_futures=True)
+
+    def _exchange(self, request: dict[str, object]) -> dict[str, Any]:
+        assert self._process.stdin is not None and self._process.stdout is not None
+        # Windows 子进程默认控制台编码未必是 UTF-8；行协议保持纯 ASCII。
+        self._process.stdin.write(json.dumps(request, ensure_ascii=True, default=str) + "\n")
+        self._process.stdin.flush()
+        future = self._reader.submit(self._process.stdout.readline)
+        try:
+            line = future.result(timeout=self.timeout_seconds)
+        except FutureTimeoutError:
+            self._process.kill()
+            self._process.wait()
+            raise
+        if not line:
+            raise RuntimeError("策略子进程已退出")
+        if len(line.encode("utf-8")) > self.result_limit:
+            raise RuntimeError("策略结果超过传输限制")
+        payload = json.loads(line)
+        if not isinstance(payload, dict):
+            raise RuntimeError("策略子进程返回无效结果")
+        return payload
+
+    def run_day(
+        self,
+        trading_day: date,
+        *,
+        expire_before: date,
+        prior_before: list[dict[str, object]],
+        prior_after: list[dict[str, object]],
+        today_after: list[dict[str, object]],
+        today_symbols: list[str],
+        current_prices: dict[str, float],
+        records: dict[str, object] | None = None,
+    ) -> list[StrategyRun]:
+        def price_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+            return [
+                {
+                    "symbol": row["symbol"],
+                    "trading_day": row["trading_day"],
+                    "close": row["close"],
+                }
+                for row in rows
+            ]
+
+        phases = ("before_market", "on_market", "after_market")
+        runs = [
+            StrategyRun(
+                f"run-{self.version.id}-{trading_day.isoformat()}-{phase}",
+                self.version.id,
+                StrategyRunStatus.RUNNING,
+                self.parameters,
+            )
+            for phase in phases
+        ]
+        try:
+            payload = self._exchange(
+                {
+                    "trading_day": trading_day.isoformat(),
+                    "expire_before": expire_before.isoformat(),
+                    "prior_before": price_rows(prior_before),
+                    "prior_after": price_rows(prior_after),
+                    "today_after": price_rows(today_after),
+                    "today_symbols": today_symbols,
+                    "current_prices": current_prices,
+                    "records": records or {},
+                }
+            )
+        except FutureTimeoutError:
+            for run in runs:
+                run.status, run.error = StrategyRunStatus.TIMED_OUT, "策略运行超时"
+            return runs
+        except (OSError, RuntimeError, json.JSONDecodeError) as error:
+            for run in runs:
+                run.status, run.error = StrategyRunStatus.FAILED, str(error)
+            return runs
+        results = payload.get("results", [])
+        if not payload.get("ok") or not isinstance(results, list) or len(results) != 3:
+            for run in runs:
+                run.status = StrategyRunStatus.FAILED
+                run.error = str(payload.get("error") or "策略子进程返回无效结果")
+            return runs
+        for run, result in zip(runs, results, strict=True):
+            self._decoder._apply_result(run, result)
+        return runs

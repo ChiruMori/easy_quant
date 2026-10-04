@@ -70,18 +70,38 @@ def run_phased_daily_backtest(
     盘后信号按收盘价成交。这样不会把盘中条件错误地统一按收盘价执行。
     """
 
-    portfolio = Portfolio(config.initial_cash)
-    periods: list[BacktestPeriod] = []
-    trades: list[SimulatedTrade] = []
     by_day: dict[date, list[MarketBar]] = {}
     for bar in bars:
         if config.start_day <= bar.trading_day <= config.end_day:
             by_day.setdefault(bar.trading_day, []).append(bar)
-
+    session = PhasedBacktestSession(config)
     for trading_day in sorted(by_day):
-        visible_bars = {bar.symbol: bar for bar in by_day[trading_day]}
+        session.advance(
+            trading_day,
+            by_day[trading_day],
+            lambda phase, day=trading_day: strategy(day, phase),
+        )
+    return session.finish()
+
+
+class PhasedBacktestSession:
+    """逐交易日推进的纯领域回测状态机。"""
+
+    def __init__(self, config: BacktestConfig) -> None:
+        self.config = config
+        self.portfolio = Portfolio(config.initial_cash)
+        self.periods: list[BacktestPeriod] = []
+        self.trades: list[SimulatedTrade] = []
+
+    def advance(
+        self,
+        trading_day: date,
+        day_bars: list[MarketBar],
+        strategy: Callable[[str], list[Signal]],
+    ) -> None:
+        visible_bars = {bar.symbol: bar for bar in day_bars}
         for phase in ("before_market", "on_market", "after_market"):
-            for signal in strategy(trading_day, phase):
+            for signal in strategy(phase):
                 bar = visible_bars.get(signal.symbol)
                 if bar is None:
                     continue
@@ -89,34 +109,43 @@ def run_phased_daily_backtest(
                 if reference_price is None:
                     continue
                 trade = execute_signal(
-                    portfolio,
+                    self.portfolio,
                     signal,
                     bar,
-                    config.fee_rate,
-                    config.slippage_rate,
+                    self.config.fee_rate,
+                    self.config.slippage_rate,
                     reference_price,
                 )
                 if trade is not None:
-                    trades.append(trade)
+                    self.trades.append(trade)
         positions_value = sum(
             (
                 visible_bars[symbol].close * quantity
-                for symbol, quantity in portfolio.positions.items()
+                for symbol, quantity in self.portfolio.positions.items()
                 if symbol in visible_bars
             ),
             Decimal(0),
         )
-        periods.append(
+        self.periods.append(
             BacktestPeriod(
-                trading_day, portfolio.cash + positions_value, portfolio.cash, positions_value
+                trading_day,
+                self.portfolio.cash + positions_value,
+                self.portfolio.cash,
+                positions_value,
             )
         )
 
-    turnover = (
-        sum((trade.price * trade.quantity for trade in trades), Decimal(0)) / config.initial_cash
-    )
-    metrics = calculate_metrics([period.equity for period in periods], turnover, len(trades))
-    return periods, trades, metrics
+    def finish(
+        self,
+    ) -> tuple[list[BacktestPeriod], list[SimulatedTrade], dict[str, Decimal | int | None]]:
+        turnover = (
+            sum((trade.price * trade.quantity for trade in self.trades), Decimal(0))
+            / self.config.initial_cash
+        )
+        metrics = calculate_metrics(
+            [period.equity for period in self.periods], turnover, len(self.trades)
+        )
+        return self.periods, self.trades, metrics
 
 
 def _phase_price(phase: str, signal: Signal, bar: MarketBar) -> Decimal | None:

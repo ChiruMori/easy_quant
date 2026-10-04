@@ -215,15 +215,15 @@ export function StrategiesPage() {
                 </Alert>
               )}
             </CardContent>
-            <CardFooter className="flex gap-2">
-              <Button disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
-                {save.isPending
-                  ? "保存中…"
-                  : selected === "new"
-                    ? "验证并创建策略"
-                    : "验证并保存新版本"}
-              </Button>
+            <CardFooter className="flex flex-col items-start gap-2">
               <div className="flex flex-wrap items-end gap-2">
+                <Button disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
+                  {save.isPending
+                    ? "保存中…"
+                    : selected === "new"
+                      ? "验证并创建策略"
+                      : "验证并保存新版本"}
+                </Button>
                 <Field>
                   <FieldLabel htmlFor="strategy-run-day">快速测试交易日</FieldLabel>
                   <Input
@@ -255,6 +255,11 @@ export function StrategiesPage() {
                   运行当前版本
                 </Button>
               </div>
+              <p className="text-sm text-muted-foreground">
+                实盘与回测中的策略因子默认可回溯此前 250
+                个交易日；需要更长历史时，在策略源码顶层声明 HISTORY_TRADING_DAYS（最多
+                2500），保存为新版本。快测仍固定为 5 日。
+              </p>
             </CardFooter>
           </Card>
         </TabsContent>

@@ -79,12 +79,14 @@ def test_create_and_run_strategy_api_uses_worker_job() -> None:
     assert len(container.jobs.list_all()) == 1
 
     with patch.object(
-        container.market_data, "list_bars", wraps=container.market_data.list_bars
+        container.market_data,
+        "list_runtime_bars",
+        wraps=container.market_data.list_runtime_bars,
     ) as bars:
         _run_worker_once(container)
     bars.assert_called_once_with(
-        start_day=date(2026, 9, 29),
-        end_day=date(2026, 9, 29),
+        date(2026, 9, 29),
+        date(2026, 9, 29),
     )
     runs = client.get(f"/api/v1/strategies/{strategy['id']}/runs").get_json()["data"]
     assert runs[0]["status"] == "succeeded"
