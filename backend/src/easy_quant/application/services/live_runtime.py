@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from easy_quant.application.services.notification_runtime import notify_owner
 from easy_quant.application.services.recommendation_actions import (
     actual_portfolio,
     audit_row,
 )
-from easy_quant.application.services.strategy_validation import extract_factor_dependencies
+from easy_quant.application.services.strategy_validation import (
+    extract_factor_dependencies,
+    extract_history_trading_days,
+)
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.infrastructure.core import UuidGenerator
+from easy_quant.infrastructure.persistence.market_data_pages import DailyBarPageCache
 from easy_quant.infrastructure.strategy_runtime.runner import SubprocessStrategyRunner
 
 
@@ -48,21 +53,34 @@ def analyze_live_instance(
     if version is None:
         raise StateConflictError("实盘实例引用的策略版本不存在")
 
-    trading_day = decision_at.date()
-    stored_rows = container.market_data.list_bars(end_day=trading_day)
+    trading_day = decision_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+    history_days = extract_history_trading_days(version.source_code)
+    previous_days = sorted(
+        day for day in container.market_data.list_trading_days() if day < trading_day
+    )[-history_days:]
+    page_cache = DailyBarPageCache(container.market_data)
     dependencies = extract_factor_dependencies(version.source_code)
-    if "daily-bars" in dependencies and not stored_rows:
+    cutoff = decision_at.astimezone(UTC)
+    universe_symbols: set[str] = set()
+    prices: dict[str, list[float]] = {}
+    found_bars = False
+    for day in (*previous_days, trading_day):
+        for row in page_cache.day(day):
+            found_bars = True
+            symbol = str(row["symbol"])
+            row_available_at = datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
+            include_today = day == trading_day and phase == "after_market"
+            if row_available_at <= cutoff and (day < trading_day or include_today):
+                universe_symbols.add(symbol)
+                prices.setdefault(symbol, []).append(float(str(row["close"])))
+            elif day == trading_day and phase == "on_market":
+                universe_symbols.add(symbol)
+    if "daily-bars" in dependencies and not found_bars:
         raise StateConflictError(
             "实盘分析所需日线尚未同步",
             {"dataset": "daily-bars", "recommended_action": "请先在数据管理中同步行情。"},
         )
-    universe = sorted({str(row["symbol"]) for row in stored_rows})
-    prices: dict[str, list[float]] = {}
-    for row in sorted(stored_rows, key=lambda item: str(item["trading_day"])):
-        row_day = date.fromisoformat(str(row["trading_day"]))
-        if row_day < trading_day or (phase == "after_market" and row_day == trading_day):
-            prices.setdefault(str(row["symbol"]), []).append(float(str(row["close"])))
-    cutoff = decision_at.astimezone(UTC)
+    universe = sorted(universe_symbols | set(current_prices or {}))
     records: dict[str, dict[str, list[dict[str, object]]]] = {}
     for dataset in dependencies - {"daily-bars"}:
         dataset_rows = container.market_data.list_records(dataset)

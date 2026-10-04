@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import sys
+from bisect import bisect_left
 from collections.abc import Callable
 from typing import cast
 
@@ -114,23 +115,7 @@ class RuntimeContext:
 
 def main() -> None:
     request = json.loads(sys.stdin.read())
-    namespace: dict[str, object] = {
-        "__builtins__": {
-            "abs": abs,
-            "bool": bool,
-            "dict": dict,
-            "float": float,
-            "int": int,
-            "len": len,
-            "list": list,
-            "max": max,
-            "min": min,
-            "print": print,
-            "range": range,
-            "str": str,
-            "sum": sum,
-        }
-    }
+    namespace: dict[str, object] = {"__builtins__": _safe_builtins()}
     try:
         initialization_output = io.StringIO()
         with contextlib.redirect_stdout(initialization_output):
@@ -157,6 +142,106 @@ def main() -> None:
             "error": f"{type(error).__name__}: {error}",
         }
     sys.stdout.write(json.dumps(response, ensure_ascii=False, default=str))
+
+
+def stream_main() -> None:
+    """回测专用行协议；一次子进程只服务一个策略版本。"""
+    try:
+        initialization = json.loads(sys.stdin.readline())
+        compiled = compile(initialization["source_code"], "<strategy>", "exec")
+        parameters = initialization.get("parameters", {})
+        _stream_reply({"ok": True, "ready": True})
+    except Exception as error:
+        _stream_reply({"ok": False, "error": f"{type(error).__name__}: {error}"})
+        return
+
+    price_days: dict[str, list[str]] = {}
+    prices: dict[str, list[float]] = {}
+
+    def add_prices(rows: list[dict[str, object]]) -> None:
+        for row in rows:
+            symbol, day = str(row["symbol"]), str(row["trading_day"])
+            days = price_days.setdefault(symbol, [])
+            values = prices.setdefault(symbol, [])
+            position = bisect_left(days, day)
+            if position < len(days) and days[position] == day:
+                values[position] = float(str(row["close"]))
+            else:
+                days.insert(position, day)
+                values.insert(position, float(str(row["close"])))
+
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+            if request.get("stop"):
+                break
+            expire_before = str(request["expire_before"])
+            for symbol, days in tuple(price_days.items()):
+                values = prices[symbol]
+                expired = bisect_left(days, expire_before)
+                if expired:
+                    del days[:expired]
+                    del values[:expired]
+                if not days:
+                    del price_days[symbol]
+                    del prices[symbol]
+            add_prices(request.get("prior_before", []))
+            namespace: dict[str, object] = {"__builtins__": _safe_builtins()}
+            with contextlib.redirect_stdout(io.StringIO()):
+                exec(compiled, namespace)
+            today_symbols = set(str(item) for item in request.get("today_symbols", []))
+            current_prices = request.get("current_prices", {})
+            records = request.get("records", {})
+            results = []
+            for phase in ("before_market", "on_market", "after_market"):
+                if phase == "after_market":
+                    add_prices(request.get("prior_after", []))
+                    add_prices(request.get("today_after", []))
+                universe = set(prices)
+                if phase != "before_market":
+                    universe.update(today_symbols)
+                context = {
+                    "universe": sorted(universe),
+                    "prices": prices,
+                    "market_values": {},
+                    "trading_day": request["trading_day"],
+                    "phase": phase,
+                    "current_prices": current_prices if phase == "on_market" else {},
+                    "records": records.get(phase, {}),
+                }
+                results.append(
+                    _execute_call(
+                        namespace,
+                        parameters,
+                        {"context": context, "phase": phase},
+                    )
+                )
+            _stream_reply({"ok": True, "results": results})
+        except Exception as error:
+            _stream_reply({"ok": False, "error": f"{type(error).__name__}: {error}"})
+
+
+def _stream_reply(payload: dict[str, object]) -> None:
+    sys.stdout.write(json.dumps(payload, ensure_ascii=True, default=str) + "\n")
+    sys.stdout.flush()
+
+
+def _safe_builtins() -> dict[str, object]:
+    return {
+        "abs": abs,
+        "bool": bool,
+        "dict": dict,
+        "float": float,
+        "int": int,
+        "len": len,
+        "list": list,
+        "max": max,
+        "min": min,
+        "print": print,
+        "range": range,
+        "str": str,
+        "sum": sum,
+    }
 
 
 def _execute_call(
@@ -189,4 +274,4 @@ def _execute_call(
 
 
 if __name__ == "__main__":
-    main()
+    stream_main() if "--stream" in sys.argv else main()

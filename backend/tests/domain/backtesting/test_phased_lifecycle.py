@@ -1,7 +1,7 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
-from easy_quant.domain.backtesting.engine import run_phased_daily_backtest
+from easy_quant.domain.backtesting.engine import PhasedBacktestSession, run_phased_daily_backtest
 from easy_quant.domain.backtesting.entities import BacktestConfig
 from easy_quant.domain.backtesting.execution import MarketBar
 from easy_quant.domain.strategies.entities import Signal
@@ -68,3 +68,18 @@ def test_phase_execution_uses_open_trigger_and_close_prices() -> None:
     _, trades, _ = run_phased_daily_backtest(config, [bar], strategy)
 
     assert [trade.price for trade in trades] == [Decimal("10.00"), Decimal("11.50")]
+
+
+def test_incremental_engine_handles_multi_year_sequence_without_bars_list() -> None:
+    start = date(2020, 1, 1)
+    end = start + timedelta(days=999)
+    session = PhasedBacktestSession(
+        BacktestConfig("version", ("000001",), start, end, Decimal("100000"))
+    )
+    for offset in range(1000):
+        day = start + timedelta(days=offset)
+        session.advance(day, [MarketBar(day, "000001", Decimal("10"))], lambda _phase: [])
+    periods, trades, metrics = session.finish()
+    assert len(periods) == 1000
+    assert trades == []
+    assert metrics["trade_count"] == 0

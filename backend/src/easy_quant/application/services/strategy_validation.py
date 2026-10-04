@@ -5,6 +5,33 @@ import ast
 from easy_quant.domain.shared.errors import ValidationError
 
 FORBIDDEN_NAMES = {"breakpoint", "eval", "exec", "open", "__import__"}
+DEFAULT_HISTORY_TRADING_DAYS = 250
+MAX_HISTORY_TRADING_DAYS = 2500
+
+
+def extract_history_trading_days(source_code: str) -> int:
+    declaration: int | None = None
+    for node in ast.parse(source_code).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "HISTORY_TRADING_DAYS"
+            for target in node.targets
+        ):
+            continue
+        value = node.value
+        if (
+            declaration is not None
+            or not isinstance(value, ast.Constant)
+            or type(value.value) is not int
+        ):
+            raise ValidationError("HISTORY_TRADING_DAYS 必须是唯一的整数常量")
+        declaration = value.value
+    if declaration is None:
+        return DEFAULT_HISTORY_TRADING_DAYS
+    if not 1 <= declaration <= MAX_HISTORY_TRADING_DAYS:
+        raise ValidationError(f"HISTORY_TRADING_DAYS 必须在 1 至 {MAX_HISTORY_TRADING_DAYS} 之间")
+    return declaration
 
 
 def extract_factor_dependencies(source_code: str) -> set[str]:
@@ -80,3 +107,4 @@ class PythonStrategyValidator:
                 and node.func.id in FORBIDDEN_NAMES
             ):
                 raise ValidationError("策略使用了禁止的函数", {"name": node.func.id})
+        extract_history_trading_days(source_code)

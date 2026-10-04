@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import gzip
 import json
+import zlib
 from bisect import bisect_left, bisect_right
+from collections.abc import Iterator
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -25,6 +27,7 @@ from easy_quant.infrastructure.persistence.models.market_data_records import (
     JsonMarketRecordModel,
     TradingDayModel,
 )
+from easy_quant.infrastructure.persistence.snapshot_spool import SnapshotSpool
 
 
 def bar_coverage_statement():
@@ -44,6 +47,20 @@ def bar_coverage_statement():
 def snapshot_chunks(payload: bytes) -> list[bytes]:
     compressed = gzip.compress(payload, mtime=0)
     return [compressed[offset : offset + 60_000] for offset in range(0, len(compressed), 60_000)]
+
+
+def streamed_snapshot_chunks(payload: SnapshotSpool) -> Iterator[bytes]:
+    compressor = zlib.compressobj(wbits=31)
+    buffer = bytearray()
+    for block in payload.chunks():
+        buffer.extend(compressor.compress(block))
+        while len(buffer) >= 60_000:
+            yield bytes(buffer[:60_000])
+            del buffer[:60_000]
+    buffer.extend(compressor.flush())
+    while buffer:
+        yield bytes(buffer[:60_000])
+        del buffer[:60_000]
 
 
 class InMemoryMarketDataStore:
@@ -101,6 +118,24 @@ class InMemoryMarketDataStore:
             and (end_day is None or date.fromisoformat(str(row["trading_day"])) <= end_day)
             and (symbol is None or str(row["symbol"]) == symbol)
         ]
+
+    def list_runtime_bars(self, start_day: date, end_day: date) -> list[dict[str, Any]]:
+        fields = ("symbol", "trading_day", "available_at", "open", "high", "low", "close")
+        return [
+            {field: row[field] for field in fields} for row in self.list_bars(start_day, end_day)
+        ]
+
+    def iter_runtime_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
+        yield from sorted(
+            self.list_runtime_bars(start_day, end_day),
+            key=lambda row: (str(row["trading_day"]), str(row["symbol"])),
+        )
+
+    def iter_snapshot_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
+        yield from sorted(
+            self.list_bars(start_day, end_day),
+            key=lambda row: (str(row["symbol"]), str(row["trading_day"])),
+        )
 
     def list_instruments(self):
         return list(self.instruments.values())
@@ -251,7 +286,7 @@ class SqlAlchemyMarketDataStore:
             statement = statement.where(DailyBarModel.symbol == symbol)
         if start_day is not None and symbol is None:
             statement = statement.with_hint(
-                DailyBarModel, "FORCE INDEX (ix_daily_bars_day_symbol)", dialect_name="mysql"
+                DailyBarModel, "FORCE INDEX (ix_daily_bars_runtime_day)", dialect_name="mysql"
             )
         statement = statement.order_by(DailyBarModel.trading_day)
         return [
@@ -271,6 +306,67 @@ class SqlAlchemyMarketDataStore:
             }
             for row in self.session.scalars(statement)
         ]
+
+    def list_runtime_bars(self, start_day: date, end_day: date) -> list[dict[str, Any]]:
+        return list(self.iter_runtime_bars(start_day, end_day))
+
+    def iter_runtime_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
+        statement = (
+            select(
+                DailyBarModel.symbol,
+                DailyBarModel.trading_day,
+                DailyBarModel.available_at,
+                DailyBarModel.open,
+                DailyBarModel.high,
+                DailyBarModel.low,
+                DailyBarModel.close,
+            )
+            .with_hint(
+                DailyBarModel, "FORCE INDEX (ix_daily_bars_runtime_day)", dialect_name="mysql"
+            )
+            .where(
+                DailyBarModel.trading_day >= start_day,
+                DailyBarModel.trading_day <= end_day,
+            )
+            .order_by(DailyBarModel.trading_day, DailyBarModel.symbol)
+        )
+        result = self.session.execute(statement.execution_options(yield_per=1000))
+        for symbol, trading_day, available_at, open_price, high, low, close in result:
+            yield {
+                "symbol": symbol,
+                "trading_day": trading_day.isoformat(),
+                "available_at": available_at.isoformat(),
+                "open": str(open_price),
+                "high": str(high),
+                "low": str(low),
+                "close": str(close),
+            }
+
+    def iter_snapshot_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
+        # 短区间用日期索引限制扫描；多年范围顺序扫聚簇主键以避免大量随机回表。
+        index = "ix_daily_bars_runtime_day" if (end_day - start_day).days <= 30 else "PRIMARY"
+        statement = (
+            select(DailyBarModel)
+            .with_hint(DailyBarModel, f"FORCE INDEX ({index})", dialect_name="mysql")
+            .where(DailyBarModel.trading_day >= start_day, DailyBarModel.trading_day <= end_day)
+            .order_by(DailyBarModel.symbol, DailyBarModel.trading_day)
+            .execution_options(yield_per=1000)
+        )
+        for row in self.session.scalars(statement):
+            yield {
+                "symbol": row.symbol,
+                "trading_day": row.trading_day.isoformat(),
+                "open": str(row.open),
+                "high": str(row.high),
+                "low": str(row.low),
+                "close": str(row.close),
+                "volume": str(row.volume),
+                "available_at": row.available_at.isoformat(),
+                "amount": str(row.amount) if row.amount is not None else None,
+                "source": row.source,
+                "adjustment": row.adjustment,
+                "archive_sha256": row.archive_sha256,
+            }
 
     def list_instruments(self):
         return [
@@ -444,7 +540,7 @@ class InMemoryBacktestStore:
     def __init__(self, rows: dict[str, dict[str, Any]]) -> None:
         self.rows = rows
 
-    def save(self, run: dict[str, Any], snapshot_payload: bytes) -> None:
+    def save(self, run: dict[str, Any], snapshot_payload: bytes | SnapshotSpool) -> None:
         self.rows[str(run["id"])] = run
 
     def get(self, run_id: str) -> dict[str, Any] | None:
@@ -465,17 +561,27 @@ class SqlAlchemyBacktestStore:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def save(self, run: dict[str, Any], snapshot_payload: bytes) -> None:
+    def save(self, run: dict[str, Any], snapshot_payload: bytes | SnapshotSpool) -> None:
         snapshot_id = str(run["snapshot_id"])
         if self.session.get(DataSnapshotModel, snapshot_id) is None:
+            count = (
+                snapshot_payload.record_count
+                if isinstance(snapshot_payload, SnapshotSpool)
+                else len(json.loads(snapshot_payload))
+            )
             self.session.add(
                 DataSnapshotModel(
                     id=snapshot_id,
                     content_sha256=snapshot_id,
-                    record_count=len(json.loads(snapshot_payload)),
+                    record_count=count,
                 )
             )
-            for sequence, chunk in enumerate(snapshot_chunks(snapshot_payload)):
+            chunks = (
+                streamed_snapshot_chunks(snapshot_payload)
+                if isinstance(snapshot_payload, SnapshotSpool)
+                else snapshot_chunks(snapshot_payload)
+            )
+            for sequence, chunk in enumerate(chunks):
                 self.session.add(
                     DataSnapshotChunkModel(
                         snapshot_id=snapshot_id,
@@ -483,6 +589,8 @@ class SqlAlchemyBacktestStore:
                         payload=chunk,
                     )
                 )
+                if sequence % 100 == 99:
+                    self.session.flush()
         row = self.session.get(BacktestRunModel, str(run["id"]))
         if row is None:
             row = BacktestRunModel(

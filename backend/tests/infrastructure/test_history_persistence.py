@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -91,13 +92,21 @@ def test_coverage_index_contains_only_symbol_and_date() -> None:
     assert "daily_bars.open" not in statement
 
 
-def test_day_range_uses_date_leading_index_without_loading_full_history() -> None:
+def test_day_range_uses_date_leading_covering_index_without_loading_full_history() -> None:
     index = next(
         item
         for item in cast(Table, DailyBarModel.__table__).indexes
-        if item.name == "ix_daily_bars_day_symbol"
+        if item.name == "ix_daily_bars_runtime_day"
     )
-    assert [column.name for column in index.columns] == ["trading_day", "symbol"]
+    assert [column.name for column in index.columns] == [
+        "trading_day",
+        "symbol",
+        "available_at",
+        "open",
+        "high",
+        "low",
+        "close",
+    ]
 
     class FakeSession:
         statement = None
@@ -111,6 +120,35 @@ def test_day_range_uses_date_leading_index_without_loading_full_history() -> Non
     assert store.list_bars(date(2026, 6, 1), date(2026, 9, 29)) == []
     assert session.statement is not None
     statement = str(session.statement.compile(dialect=mysql.dialect()))
-    assert "FORCE INDEX (ix_daily_bars_day_symbol)" in statement
+    assert "FORCE INDEX (ix_daily_bars_runtime_day)" in statement
     assert "daily_bars.trading_day >= %s" in statement
     assert "daily_bars.trading_day <= %s" in statement
+
+
+def test_runtime_covering_index_migration_replaces_old_index_reversibly(monkeypatch) -> None:
+    path = Path(__file__).parents[2] / "migrations/versions/0008_runtime_bar_covering_index.py"
+    spec = importlib.util.spec_from_file_location("runtime_bar_index", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    actions: list[tuple[str, str]] = []
+    monkeypatch.setattr(module.op, "get_context", lambda: SimpleNamespace(as_sql=False))
+    monkeypatch.setattr(
+        module.op, "create_index", lambda name, *_args: actions.append(("create", name))
+    )
+    monkeypatch.setattr(
+        module.op, "drop_index", lambda name, **_kwargs: actions.append(("drop", name))
+    )
+    monkeypatch.setattr(module, "_indexes", lambda: {"ix_daily_bars_day_symbol"})
+    module.upgrade()
+    assert actions == [
+        ("create", "ix_daily_bars_runtime_day"),
+        ("drop", "ix_daily_bars_day_symbol"),
+    ]
+    actions.clear()
+    monkeypatch.setattr(module, "_indexes", lambda: {"ix_daily_bars_runtime_day"})
+    module.downgrade()
+    assert actions == [
+        ("create", "ix_daily_bars_day_symbol"),
+        ("drop", "ix_daily_bars_runtime_day"),
+    ]

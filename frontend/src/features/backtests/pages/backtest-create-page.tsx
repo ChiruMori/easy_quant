@@ -46,7 +46,9 @@ export function BacktestCreatePage() {
       <CardHeader>
         <CardTitle>创建回测</CardTitle>
         <CardDescription>
-          标的由策略通过平台因子选择；回测固定使用所选的不可变策略版本。
+          标的由策略通过平台因子选择；回测固定使用所选的不可变策略版本。每个交易日默认可读取此前 250
+          个交易日；策略源码可用 HISTORY_TRADING_DAYS 显式延长至 2500
+          日，回测整体日期范围不受此限制。
         </CardDescription>
       </CardHeader>
       <form

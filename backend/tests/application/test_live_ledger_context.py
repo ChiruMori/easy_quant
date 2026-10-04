@@ -1,4 +1,6 @@
+from datetime import timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -122,3 +124,49 @@ def test_confirmation_during_analysis_is_preserved_by_fresh_transaction(monkeypa
     assert container.state.recommendations["l"][0]["version"] == 1
     assert container.state.live_instances["l"]["positions"] == {"000001": "10"}
     assert len(container.state.portfolio_ledger) == 1
+
+
+def test_live_analysis_uses_declared_window_and_hides_today_before_market(
+    monkeypatch, fixed_now
+) -> None:
+    container = action_container()
+    setup(container, fixed_now)
+    source = "HISTORY_TRADING_DAYS = 2\ndef before_market(context, parameters):\n return []"
+    container.state.strategies.version_items["s"][0] = StrategyVersion(
+        "v", "s", 1, source, "hash", fixed_now
+    )
+    days = [(fixed_now + timedelta(hours=8) - timedelta(days=offset)).date() for offset in range(5)]
+    container.market_data.upsert_bars(
+        [
+            {
+                "symbol": "000001",
+                "trading_day": day.isoformat(),
+                "open": "10",
+                "high": "11",
+                "low": "9",
+                "close": str(10 + offset),
+                "volume": "100",
+                "available_at": f"{day.isoformat()}T15:00:00+08:00",
+            }
+            for offset, day in enumerate(days)
+        ]
+    )
+    seen = []
+
+    class Runner:
+        def __init__(self, *_args):
+            pass
+
+        def run(self, _version, _parameters, context, *, phase):
+            seen.append(context)
+            return StrategyRun("run", "v", StrategyRunStatus.SUCCEEDED, {}, [])
+
+    monkeypatch.setattr(live_runtime, "SubprocessStrategyRunner", Runner)
+    with patch.object(
+        container.market_data,
+        "list_runtime_bars",
+        wraps=container.market_data.list_runtime_bars,
+    ) as bars:
+        live_runtime.analyze_live_instance(container, "l", "before_market", fixed_now)
+    assert bars.call_count == 3
+    assert seen[0]["prices"]["000001"] == [12.0, 11.0]

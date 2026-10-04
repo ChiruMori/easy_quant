@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, time
+from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from easy_quant.application.services.strategy_validation import extract_factor_dependencies
 from easy_quant.domain.shared.errors import StateConflictError
+from easy_quant.infrastructure.persistence.market_data_pages import DailyBarPageCache
 from easy_quant.infrastructure.strategy_runtime.runner import SubprocessStrategyRunner
 
 QUICK_TEST_PRIOR_TRADING_DAYS = 5
+logger = logging.getLogger(__name__)
 
 
 def quick_test_start_day(trading_days: set[date], trading_day: date) -> date:
@@ -32,7 +36,10 @@ def _visible_records(rows: list[dict[str, object]], cutoff: datetime) -> list[di
     return visible
 
 
-def execute_strategy_tick(container: Any, payload: dict[str, Any]) -> dict[str, object]:
+def execute_strategy_tick(
+    container: Any, payload: dict[str, Any], *, job_id: str = ""
+) -> dict[str, object]:
+    started = perf_counter()
     strategy_id = str(payload["strategy_id"])
     version_id = str(payload["strategy_version_id"])
     trading_day = date.fromisoformat(str(payload["trading_day"]))
@@ -51,9 +58,19 @@ def execute_strategy_tick(container: Any, payload: dict[str, Any]) -> dict[str, 
         raise StateConflictError("策略版本不存在")
 
     dependencies = extract_factor_dependencies(version.source_code)
-    bars = container.market_data.list_bars(
-        start_day=quick_test_start_day(container.market_data.list_trading_days(), trading_day),
-        end_day=trading_day,
+    trading_days = container.market_data.list_trading_days()
+    previous_days = sorted(day for day in trading_days if day < trading_day)[
+        -QUICK_TEST_PRIOR_TRADING_DAYS:
+    ]
+    page_cache = DailyBarPageCache(container.market_data)
+    bars = page_cache.days([*previous_days, trading_day])
+    read_finished = perf_counter()
+    logger.info(
+        "快测行情已读取 job_id=%s rows=%d pages=%d seconds=%.3f",
+        job_id,
+        len(bars),
+        len(previous_days) + 1,
+        read_finished - started,
     )
     if not any(str(row["trading_day"]) == trading_day.isoformat() for row in bars):
         raise StateConflictError(
@@ -122,8 +139,17 @@ def execute_strategy_tick(container: Any, payload: dict[str, Any]) -> dict[str, 
             )
         )
 
+    context_finished = perf_counter()
     results = SubprocessStrategyRunner(timeout_seconds=30).run_many(
         version, dict(payload.get("parameters", {})), contexts
+    )
+    runtime_finished = perf_counter()
+    logger.info(
+        "快测阶段完成 job_id=%s context_seconds=%.3f subprocess_seconds=%.3f cache_hits=%d",
+        job_id,
+        context_finished - read_finished,
+        runtime_finished - context_finished,
+        page_cache.stats()["hits"],
     )
     phase_results = []
     failed = False
