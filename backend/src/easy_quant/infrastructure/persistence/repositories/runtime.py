@@ -4,8 +4,9 @@ import gzip
 import json
 import zlib
 from bisect import bisect_left, bisect_right
+from calendar import monthrange
 from collections.abc import Iterator
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -41,6 +42,40 @@ def bar_coverage_statement():
         )
         .with_hint(DailyBarModel, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql")
         .group_by(DailyBarModel.symbol)
+    )
+
+
+RUNTIME_SYMBOL_BATCH = 500
+
+
+def runtime_symbols_statement(start_day: date, end_day: date):
+    return (
+        select(DailyBarModel.symbol)
+        .with_hint(DailyBarModel, "FORCE INDEX (ix_daily_bars_day_symbol)", dialect_name="mysql")
+        .where(DailyBarModel.trading_day >= start_day, DailyBarModel.trading_day <= end_day)
+        .distinct()
+        .order_by(DailyBarModel.symbol)
+    )
+
+
+def runtime_batch_statement(symbols: list[str], start_day: date, end_day: date):
+    return (
+        select(
+            DailyBarModel.symbol,
+            DailyBarModel.trading_day,
+            DailyBarModel.available_at,
+            DailyBarModel.open,
+            DailyBarModel.high,
+            DailyBarModel.low,
+            DailyBarModel.close,
+        )
+        .with_hint(DailyBarModel, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
+        .where(
+            DailyBarModel.symbol.in_(symbols),
+            DailyBarModel.trading_day >= start_day,
+            DailyBarModel.trading_day <= end_day,
+        )
+        .order_by(DailyBarModel.symbol, DailyBarModel.trading_day)
     )
 
 
@@ -286,7 +321,7 @@ class SqlAlchemyMarketDataStore:
             statement = statement.where(DailyBarModel.symbol == symbol)
         if start_day is not None and symbol is None:
             statement = statement.with_hint(
-                DailyBarModel, "FORCE INDEX (ix_daily_bars_runtime_day)", dialect_name="mysql"
+                DailyBarModel, "FORCE INDEX (ix_daily_bars_day_symbol)", dialect_name="mysql"
             )
         statement = statement.order_by(DailyBarModel.trading_day)
         return [
@@ -308,65 +343,80 @@ class SqlAlchemyMarketDataStore:
         ]
 
     def list_runtime_bars(self, start_day: date, end_day: date) -> list[dict[str, Any]]:
-        return list(self.iter_runtime_bars(start_day, end_day))
+        symbols = list(self.session.scalars(runtime_symbols_statement(start_day, end_day)))
+        rows: list[dict[str, Any]] = []
+        for offset in range(0, len(symbols), RUNTIME_SYMBOL_BATCH):
+            batch = symbols[offset : offset + RUNTIME_SYMBOL_BATCH]
+            result = self.session.execute(runtime_batch_statement(batch, start_day, end_day))
+            rows.extend(
+                {
+                    "symbol": symbol,
+                    "trading_day": trading_day.isoformat(),
+                    "available_at": available_at.isoformat(),
+                    "open": str(open_price),
+                    "high": str(high),
+                    "low": str(low),
+                    "close": str(close),
+                }
+                for symbol, trading_day, available_at, open_price, high, low, close in result
+            )
+        rows.sort(key=lambda row: (str(row["trading_day"]), str(row["symbol"])))
+        return rows
 
     def iter_runtime_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
-        statement = (
-            select(
-                DailyBarModel.symbol,
-                DailyBarModel.trading_day,
-                DailyBarModel.available_at,
-                DailyBarModel.open,
-                DailyBarModel.high,
-                DailyBarModel.low,
-                DailyBarModel.close,
+        cursor = start_day
+        while cursor <= end_day:
+            last_day_of_month = date(
+                cursor.year, cursor.month, monthrange(cursor.year, cursor.month)[1]
             )
-            .with_hint(
-                DailyBarModel, "FORCE INDEX (ix_daily_bars_runtime_day)", dialect_name="mysql"
-            )
-            .where(
-                DailyBarModel.trading_day >= start_day,
-                DailyBarModel.trading_day <= end_day,
-            )
-            .order_by(DailyBarModel.trading_day, DailyBarModel.symbol)
-        )
-        result = self.session.execute(statement.execution_options(yield_per=1000))
-        for symbol, trading_day, available_at, open_price, high, low, close in result:
-            yield {
-                "symbol": symbol,
-                "trading_day": trading_day.isoformat(),
-                "available_at": available_at.isoformat(),
-                "open": str(open_price),
-                "high": str(high),
-                "low": str(low),
-                "close": str(close),
-            }
+            chunk_end = min(end_day, last_day_of_month)
+            yield from self.list_runtime_bars(cursor, chunk_end)
+            cursor = chunk_end + timedelta(days=1)
 
     def iter_snapshot_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
-        # 短区间用日期索引限制扫描；多年范围顺序扫聚簇主键以避免大量随机回表。
-        index = "ix_daily_bars_runtime_day" if (end_day - start_day).days <= 30 else "PRIMARY"
-        statement = (
-            select(DailyBarModel)
-            .with_hint(DailyBarModel, f"FORCE INDEX ({index})", dialect_name="mysql")
-            .where(DailyBarModel.trading_day >= start_day, DailyBarModel.trading_day <= end_day)
-            .order_by(DailyBarModel.symbol, DailyBarModel.trading_day)
-            .execution_options(yield_per=1000)
-        )
-        for row in self.session.scalars(statement):
-            yield {
-                "symbol": row.symbol,
-                "trading_day": row.trading_day.isoformat(),
-                "open": str(row.open),
-                "high": str(row.high),
-                "low": str(row.low),
-                "close": str(row.close),
-                "volume": str(row.volume),
-                "available_at": row.available_at.isoformat(),
-                "amount": str(row.amount) if row.amount is not None else None,
-                "source": row.source,
-                "adjustment": row.adjustment,
-                "archive_sha256": row.archive_sha256,
-            }
+        # 短区间按标的主键范围取；长区间顺序扫描聚簇主键，避免数百万随机回表。
+        if (end_day - start_day).days <= 30:
+            symbols = list(self.session.scalars(runtime_symbols_statement(start_day, end_day)))
+            statements = (
+                select(DailyBarModel)
+                .with_hint(DailyBarModel, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
+                .where(
+                    DailyBarModel.symbol.in_(symbols[offset : offset + RUNTIME_SYMBOL_BATCH]),
+                    DailyBarModel.trading_day >= start_day,
+                    DailyBarModel.trading_day <= end_day,
+                )
+                .order_by(DailyBarModel.symbol, DailyBarModel.trading_day)
+                .execution_options(yield_per=1000)
+                for offset in range(0, len(symbols), RUNTIME_SYMBOL_BATCH)
+            )
+        else:
+            statements = (
+                select(DailyBarModel)
+                .with_hint(DailyBarModel, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
+                .where(DailyBarModel.trading_day >= start_day, DailyBarModel.trading_day <= end_day)
+                .order_by(DailyBarModel.symbol, DailyBarModel.trading_day)
+                .execution_options(yield_per=1000),
+            )
+        for statement in statements:
+            for row in self.session.scalars(statement):
+                yield self._snapshot_row(row)
+
+    @staticmethod
+    def _snapshot_row(row: DailyBarModel) -> dict[str, Any]:
+        return {
+            "symbol": row.symbol,
+            "trading_day": row.trading_day.isoformat(),
+            "open": str(row.open),
+            "high": str(row.high),
+            "low": str(row.low),
+            "close": str(row.close),
+            "volume": str(row.volume),
+            "available_at": row.available_at.isoformat(),
+            "amount": str(row.amount) if row.amount is not None else None,
+            "source": row.source,
+            "adjustment": row.adjustment,
+            "archive_sha256": row.archive_sha256,
+        }
 
     def list_instruments(self):
         return [

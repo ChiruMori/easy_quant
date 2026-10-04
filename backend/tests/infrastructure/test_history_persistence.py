@@ -92,21 +92,16 @@ def test_coverage_index_contains_only_symbol_and_date() -> None:
     assert "daily_bars.open" not in statement
 
 
-def test_day_range_uses_date_leading_covering_index_without_loading_full_history() -> None:
+def test_day_range_keeps_narrow_date_index_without_wide_runtime_index() -> None:
     index = next(
         item
         for item in cast(Table, DailyBarModel.__table__).indexes
-        if item.name == "ix_daily_bars_runtime_day"
+        if item.name == "ix_daily_bars_day_symbol"
     )
-    assert [column.name for column in index.columns] == [
-        "trading_day",
-        "symbol",
-        "available_at",
-        "open",
-        "high",
-        "low",
-        "close",
-    ]
+    assert [column.name for column in index.columns] == ["trading_day", "symbol"]
+    assert "ix_daily_bars_runtime_day" not in {
+        item.name for item in cast(Table, DailyBarModel.__table__).indexes
+    }
 
     class FakeSession:
         statement = None
@@ -120,14 +115,14 @@ def test_day_range_uses_date_leading_covering_index_without_loading_full_history
     assert store.list_bars(date(2026, 6, 1), date(2026, 9, 29)) == []
     assert session.statement is not None
     statement = str(session.statement.compile(dialect=mysql.dialect()))
-    assert "FORCE INDEX (ix_daily_bars_runtime_day)" in statement
+    assert "FORCE INDEX (ix_daily_bars_day_symbol)" in statement
     assert "daily_bars.trading_day >= %s" in statement
     assert "daily_bars.trading_day <= %s" in statement
 
 
-def test_runtime_covering_index_migration_replaces_old_index_reversibly(monkeypatch) -> None:
-    path = Path(__file__).parents[2] / "migrations/versions/0008_runtime_bar_covering_index.py"
-    spec = importlib.util.spec_from_file_location("runtime_bar_index", path)
+def test_interrupted_runtime_index_migration_repair_is_idempotent(monkeypatch) -> None:
+    path = Path(__file__).parents[2] / "migrations/versions/0009_repair_runtime_indexes.py"
+    spec = importlib.util.spec_from_file_location("repair_runtime_indexes", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -139,15 +134,38 @@ def test_runtime_covering_index_migration_replaces_old_index_reversibly(monkeypa
     monkeypatch.setattr(
         module.op, "drop_index", lambda name, **_kwargs: actions.append(("drop", name))
     )
-    monkeypatch.setattr(module, "_indexes", lambda: {"ix_daily_bars_day_symbol"})
+    monkeypatch.setattr(
+        module.sa,
+        "inspect",
+        lambda _bind: SimpleNamespace(
+            get_indexes=lambda _table: [
+                {"name": "ix_daily_bars_day_symbol"},
+                {"name": "ix_daily_bars_runtime_day"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(module.op, "get_bind", lambda: object())
     module.upgrade()
-    assert actions == [
-        ("create", "ix_daily_bars_runtime_day"),
-        ("drop", "ix_daily_bars_day_symbol"),
-    ]
+    assert actions == [("drop", "ix_daily_bars_runtime_day")]
     actions.clear()
-    monkeypatch.setattr(module, "_indexes", lambda: {"ix_daily_bars_runtime_day"})
-    module.downgrade()
+    monkeypatch.setattr(
+        module.sa,
+        "inspect",
+        lambda _bind: SimpleNamespace(
+            get_indexes=lambda _table: [{"name": "ix_daily_bars_day_symbol"}]
+        ),
+    )
+    module.upgrade()
+    assert actions == []
+    actions.clear()
+    monkeypatch.setattr(
+        module.sa,
+        "inspect",
+        lambda _bind: SimpleNamespace(
+            get_indexes=lambda _table: [{"name": "ix_daily_bars_runtime_day"}]
+        ),
+    )
+    module.upgrade()
     assert actions == [
         ("create", "ix_daily_bars_day_symbol"),
         ("drop", "ix_daily_bars_runtime_day"),

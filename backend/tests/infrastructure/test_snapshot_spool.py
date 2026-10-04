@@ -38,12 +38,14 @@ def test_snapshot_spool_rolls_over_without_unbounded_memory() -> None:
         assert spool.record_count == 100
 
 
-def test_snapshot_scan_uses_date_index_for_short_range_and_primary_for_years() -> None:
+def test_snapshot_scan_uses_primary_for_short_range_and_years() -> None:
     class FakeSession:
         statements: list[Any] = []
 
         def scalars(self, statement):
             self.statements.append(statement)
+            if "DISTINCT" in str(statement):
+                return ["000001"]
             return []
 
     session = FakeSession()
@@ -51,5 +53,6 @@ def test_snapshot_scan_uses_date_index_for_short_range_and_primary_for_years() -
     assert list(store.iter_snapshot_bars(date(2026, 9, 1), date(2026, 9, 2))) == []
     assert list(store.iter_snapshot_bars(date(2024, 1, 1), date(2026, 9, 2))) == []
     sql = [str(statement.compile(dialect=mysql.dialect())) for statement in session.statements]
-    assert "FORCE INDEX (ix_daily_bars_runtime_day)" in sql[0]
+    assert "FORCE INDEX (ix_daily_bars_day_symbol)" in sql[0]
     assert "FORCE INDEX (PRIMARY)" in sql[1]
+    assert "FORCE INDEX (PRIMARY)" in sql[2]
