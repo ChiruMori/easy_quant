@@ -421,4 +421,7 @@ def build_worker():
         sleeper=SystemSleeper(),
         poll_seconds=settings.worker_poll_seconds,
         poll_hook=pump_schedules,
+        failure_hook=container.database_session.rollback
+        if container.database_session is not None
+        else None,
     )

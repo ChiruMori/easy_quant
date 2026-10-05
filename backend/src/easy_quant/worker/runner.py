@@ -25,6 +25,7 @@ class Worker:
     lease_duration: timedelta = timedelta(minutes=5)
     poll_seconds: float = 1.0
     poll_hook: Callable[[], None] | None = None
+    failure_hook: Callable[[], None] | None = None
 
     def run_once(self) -> bool:
         if self.poll_hook is not None:
@@ -44,6 +45,8 @@ class Worker:
             job.succeed(self.worker_id, dict(summary))
         except Exception as exc:
             logger.exception("任务执行失败", extra={"job_id": job.id, "job_type": job.job_type})
+            if self.failure_hook is not None:
+                self.failure_hook()
             error: dict[str, Any] = {"code": "job_failed", "message": str(exc)}
             if isinstance(exc, DomainError):
                 error["code"] = exc.code

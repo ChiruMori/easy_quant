@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -20,6 +21,15 @@ from easy_quant.domain.shared.errors import DomainError
 class AcquisitionFailed(DomainError):
     def __init__(self, message: str, details: dict[str, object]) -> None:
         super().__init__("all_sources_failed", message, details)
+
+
+def _safe_source_error(error: Exception) -> str:
+    message = str(error)
+    return re.sub(
+        r"(?i)(\b(?:ut|token|api[_-]?key|secret|password)=)[^&\s)]+",
+        r"\1<redacted>",
+        message,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,15 +96,18 @@ class AcquisitionService:
                         now,
                         now + self.freshness,
                     )
-                    self.cache.put(envelope)
-                    attempts.append(SourceAttempt(source.key, attempt, AttemptStatus.SUCCEEDED))
-                    return envelope, attempts
                 except Exception as error:  # 来源适配器错误在边界统一汇总
                     attempts.append(
-                        SourceAttempt(source.key, attempt, AttemptStatus.FAILED, str(error))
+                        SourceAttempt(
+                            source.key, attempt, AttemptStatus.FAILED, _safe_source_error(error)
+                        )
                     )
                     if attempt < self.retry.max_attempts:
                         self.sleeper.sleep(self.retry.delay_seconds(attempt))
+                    continue
+                self.cache.put(envelope)
+                attempts.append(SourceAttempt(source.key, attempt, AttemptStatus.SUCCEEDED))
+                return envelope, attempts
         raise AcquisitionFailed(
             "所有数据来源均失败",
             details={

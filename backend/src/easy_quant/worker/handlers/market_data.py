@@ -63,6 +63,8 @@ def register_market_data_handlers(
                 source_keys=enabled_sources,
             )
         except Exception as error:
+            if container.database_session is not None:
+                container.database_session.rollback()
             if task is not None:
                 task.update({"status": "failed", "message": str(error)})
                 details = getattr(error, "details", None)

@@ -67,6 +67,25 @@ def test_all_sources_failed(fixed_now) -> None:
         service.acquire(SemanticRequest("bars", {}, "identity"))
 
 
+def test_source_failure_redacts_query_tokens_but_keeps_reason(fixed_now) -> None:
+    class FailingSource(Source):
+        def fetch(self, request):
+            raise RuntimeError("ProxyError /kline/get?ut=sample-token&beg=20260903 disconnected")
+
+    service = AcquisitionService(
+        [FailingSource("eastmoney")],
+        MemoryCache(),
+        FixedClock(fixed_now),
+        VirtualSleeper(),
+        ExponentialRetry(1),
+    )
+    with pytest.raises(AcquisitionFailed) as captured:
+        service.acquire(SemanticRequest("bars", {}, "identity"))
+    message = str(captured.value.details["attempts"])
+    assert "ProxyError" in message
+    assert "sample-token" not in message
+
+
 def test_randomized_source_order_is_used(fixed_now) -> None:
     first, second = Source("a"), Source("b")
 
@@ -83,3 +102,21 @@ def test_randomized_source_order_is_used(fixed_now) -> None:
     result = service.acquire(SemanticRequest("bars", {}, "identity"))
     assert result.source_key == "b"
     assert (first.calls, second.calls) == (0, 1)
+
+
+def test_cache_write_failure_does_not_refetch_or_try_another_source(fixed_now) -> None:
+    class FailingCache(MemoryCache):
+        def put(self, envelope: RawEnvelope):
+            raise RuntimeError("cache write failed")
+
+    first, second = Source("a"), Source("b")
+    service = AcquisitionService(
+        [first, second],
+        FailingCache(),
+        FixedClock(fixed_now),
+        VirtualSleeper(),
+        shuffle=lambda sources: None,
+    )
+    with pytest.raises(RuntimeError, match="cache write failed"):
+        service.acquire(SemanticRequest("securities", {}, "identity"))
+    assert (first.calls, second.calls) == (1, 0)

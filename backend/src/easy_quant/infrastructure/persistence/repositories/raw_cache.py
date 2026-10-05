@@ -44,17 +44,21 @@ class SqlAlchemyCompressedRawCache:
     def put(self, envelope: RawEnvelope) -> None:
         if hashlib.sha256(envelope.payload).hexdigest() != envelope.payload_sha256:
             raise ValueError("原始响应摘要不匹配")
-        self.session.merge(
-            RawCacheModel(
-                request_identity=envelope.request_identity,
-                source_key=envelope.source_key,
-                payload_gzip=gzip.compress(envelope.payload, mtime=0),
-                payload_sha256=envelope.payload_sha256,
-                fetched_at=envelope.fetched_at,
-                expires_at=envelope.expires_at,
+        try:
+            self.session.merge(
+                RawCacheModel(
+                    request_identity=envelope.request_identity,
+                    source_key=envelope.source_key,
+                    payload_gzip=gzip.compress(envelope.payload, mtime=0),
+                    payload_sha256=envelope.payload_sha256,
+                    fetched_at=envelope.fetched_at,
+                    expires_at=envelope.expires_at,
+                )
             )
-        )
-        self.session.commit()
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
 
     def get(self, request_identity: str) -> RawEnvelope | None:
         row = self.session.get(RawCacheModel, request_identity)

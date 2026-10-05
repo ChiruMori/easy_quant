@@ -7,6 +7,7 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.schema import CreateTable
 
 from easy_quant.infrastructure.persistence.models.backtesting import BacktestRunModel
+from easy_quant.infrastructure.persistence.models.market_data_catalog import RawCacheModel
 from easy_quant.infrastructure.persistence.models.scheduling import JobModel
 from easy_quant.infrastructure.persistence.models.strategies import StrategyVersionModel
 from easy_quant.infrastructure.persistence.repositories.runtime import snapshot_chunks
@@ -27,6 +28,11 @@ def test_prefixed_job_identifier_fits_mysql_column() -> None:
     ddl = str(CreateTable(cast(Table, JobModel.__table__)).compile(dialect=mysql.dialect()))
     assert "id VARCHAR(64) NOT NULL" in ddl
     assert len("job-" + "00000000-0000-0000-0000-000000000000") <= 64
+
+
+def test_raw_cache_supports_full_security_catalog_payload() -> None:
+    ddl = str(CreateTable(cast(Table, RawCacheModel.__table__)).compile(dialect=mysql.dialect()))
+    assert "payload_gzip LONGBLOB NOT NULL" in ddl
 
 
 def test_snapshot_chunks_fit_blob_limit_and_reassemble() -> None:
