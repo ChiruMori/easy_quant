@@ -16,6 +16,7 @@ def serialize(item):
         "parameters": item.parameters,
         "output": item.output,
         "example": item.example,
+        "output_example": item.output_example,
     }
 
 

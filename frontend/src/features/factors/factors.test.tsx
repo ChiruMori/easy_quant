@@ -18,6 +18,7 @@ describe("只读因子文档", () => {
               parameters: { window: "窗口" },
               output: "数值",
               example: "factor('technical.ma')",
+              output_example: "{'available': True, 'value': Decimal('10.50'), 'window': 5}",
             },
           ]}
         />
@@ -29,11 +30,13 @@ describe("只读因子文档", () => {
             parameters: { window: "窗口" },
             output: "数值",
             example: "factor('technical.ma')",
+            output_example: "{'available': True, 'value': Decimal('10.50'), 'window': 5}",
           }}
         />
       </QueryClientProvider>,
     )
     expect(screen.getByText("factor('technical.ma')")).toBeInTheDocument()
+    expect(screen.getAllByText(/'available': True/)).toHaveLength(2)
     expect(screen.queryByText(/新增|删除|训练|上传|发布/)).not.toBeInTheDocument()
   })
 })

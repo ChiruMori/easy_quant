@@ -5,6 +5,7 @@ interface FactorDetail {
   parameters: Record<string, string>
   output: string
   example: string
+  output_example: string
 }
 
 export function FactorDetailPage({ factor }: { factor: FactorDetail }) {
@@ -25,6 +26,8 @@ export function FactorDetailPage({ factor }: { factor: FactorDetail }) {
       </dl>
       <h2>输出</h2>
       <p>{factor.output}</p>
+      <h2>输出示例（示意值）</h2>
+      <pre>{factor.output_example}</pre>
       <h2>示例</h2>
       <pre>{factor.example}</pre>
     </article>

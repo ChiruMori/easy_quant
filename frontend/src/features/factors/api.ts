@@ -7,6 +7,7 @@ export interface FactorDefinition {
   parameters: Record<string, string>
   output: string
   example: string
+  output_example: string
 }
 
 export const listFactors = () => apiRequest<FactorDefinition[]>("/factors")
