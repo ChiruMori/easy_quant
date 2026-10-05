@@ -34,7 +34,7 @@ class EastMoneySource:
             parameters = {
                 "secid": f"{market}.{symbol}",
                 "klt": 101,
-                "fqt": 1,
+                "fqt": 0 if parameters.get("adjustment", "qfq") == "none" else 1,
                 "beg": str(parameters["start_date"]).replace("-", ""),
                 "end": str(parameters["end_date"]).replace("-", ""),
                 "fields1": "f1,f2,f3,f4,f5,f6",

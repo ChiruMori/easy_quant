@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.instrument_eligibility import currently_unavailable_symbols
 from easy_quant.application.services.notification_runtime import notify_owner
 from easy_quant.application.services.recommendation_actions import (
     actual_portfolio,
@@ -61,13 +62,16 @@ def analyze_live_instance(
     page_cache = DailyBarPageCache(container.market_data)
     dependencies = extract_factor_dependencies(version.source_code)
     cutoff = decision_at.astimezone(UTC)
+    excluded = currently_unavailable_symbols(container.market_data)
     universe_symbols: set[str] = set()
     prices: dict[str, list[float]] = {}
     found_bars = False
     for day in (*previous_days, trading_day):
         for row in page_cache.day(day):
-            found_bars = True
             symbol = str(row["symbol"])
+            if symbol in excluded:
+                continue
+            found_bars = True
             row_available_at = datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
             include_today = day == trading_day and phase == "after_market"
             if row_available_at <= cutoff and (day < trading_day or include_today):
@@ -80,7 +84,7 @@ def analyze_live_instance(
             "实盘分析所需日线尚未同步",
             {"dataset": "daily-bars", "recommended_action": "请先在数据管理中同步行情。"},
         )
-    universe = sorted(universe_symbols | set(current_prices or {}))
+    universe = sorted((universe_symbols | set(current_prices or {})) - excluded)
     records: dict[str, dict[str, list[dict[str, object]]]] = {}
     for dataset in dependencies - {"daily-bars"}:
         dataset_rows = container.market_data.list_records(dataset)
@@ -90,6 +94,8 @@ def analyze_live_instance(
                 {"dataset": dataset, "recommended_action": "请先在数据管理中同步或导入数据。"},
             )
         for row in dataset_rows:
+            if str(row.get("symbol", "")) in excluded:
+                continue
             raw_available_at = row.get("available_at")
             if (
                 raw_available_at
@@ -108,7 +114,11 @@ def analyze_live_instance(
             "universe": universe,
             "prices": prices,
             "market_values": {},
-            "current_prices": current_prices or {},
+            "current_prices": {
+                symbol: price
+                for symbol, price in (current_prices or {}).items()
+                if symbol not in excluded
+            },
             "positions": instance.get("positions", {}),
             "cash": instance["cash"],
             "costs": instance["costs"],
@@ -134,6 +144,8 @@ def analyze_live_instance(
         recommendations = list(state.recommendations.get(instance_id, []))
         if phase != "after_market":
             for signal in result.signals:
+                if signal.symbol in excluded:
+                    continue
                 if phase == "on_market" and not _intraday_triggered(
                     signal.action,
                     signal.trigger_price,

@@ -15,3 +15,28 @@ def test_eastmoney_adapter_uses_injected_transport() -> None:
         )
     assert b'"total": 0' in payload
     assert media_type == "application/json"
+
+
+def test_eastmoney_daily_bars_map_adjustment_to_fqt() -> None:
+    seen = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params["fqt"])
+        return httpx.Response(200, json={"data": {"klines": []}})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        source = EastMoneySource(EastMoneyClient(client))
+        for adjustment in ("none", "qfq"):
+            source.fetch(
+                SemanticRequest(
+                    "daily-bars",
+                    {
+                        "symbol": "000016",
+                        "start_date": "2026-09-03",
+                        "end_date": "2026-09-30",
+                        "adjustment": adjustment,
+                    },
+                    adjustment,
+                )
+            )
+    assert seen == ["0", "1"]

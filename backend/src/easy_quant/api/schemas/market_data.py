@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -13,3 +15,8 @@ class AcquisitionRequest(BaseModel):
 class SourceOrderRequest(BaseModel):
     source_keys: list[str] = Field(min_length=1)
     enabled_keys: list[str] = Field(default_factory=list)
+
+
+class InstrumentStatusRequest(BaseModel):
+    status: Literal["active", "suspended"]
+    reason: str = Field(min_length=4, max_length=500)

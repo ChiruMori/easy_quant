@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from pydantic import SecretStr, ValidationError
 
 from easy_quant import __version__, bootstrap
@@ -18,6 +20,21 @@ def test_legacy_dataset_label_is_updated_without_changing_source_configuration()
     assert "不复权" in datasets[0]["description"]
     assert datasets[0]["sources"] == sources
     assert datasets[1]["description"] == "自定义说明"
+
+
+def test_existing_daily_dataset_gets_independent_source_once() -> None:
+    datasets = [
+        {
+            "key": "daily-bars",
+            "sources": [{"key": "eastmoney", "name": "东方财富", "enabled": False}],
+        }
+    ]
+    bootstrap._ensure_independent_daily_source(datasets)
+    bootstrap._ensure_independent_daily_source(datasets)
+    assert datasets[0]["sources"] == [
+        {"key": "eastmoney", "name": "东方财富", "enabled": False},
+        {"key": "tencent", "name": "腾讯行情", "enabled": True},
+    ]
 
 
 def test_database_url_is_required(monkeypatch) -> None:
@@ -69,3 +86,91 @@ def test_runtime_container_always_uses_configured_database(monkeypatch) -> None:
     assert seen_urls == ["mysql+pymysql://configured/db"]
     assert container.database_session is session
     assert session.remove_calls == 1
+
+
+def test_security_catalog_includes_both_shanghai_boards(monkeypatch) -> None:
+    import akshare as ak
+    import pandas as pd
+
+    from tests.fakes.platform import make_test_container
+
+    seen: list[str] = []
+
+    def sh_board(*, symbol: str):
+        seen.append(symbol)
+        code = "600001" if symbol == "主板A股" else "688001"
+        return pd.DataFrame([{"证券代码": code, "证券简称": symbol}])
+
+    monkeypatch.setattr(ak, "stock_info_sh_name_code", sh_board)
+    monkeypatch.setattr(
+        ak,
+        "stock_info_sz_name_code",
+        lambda: pd.DataFrame([{"A股代码": "000001", "A股简称": "深市"}]),
+    )
+    monkeypatch.setattr(
+        ak,
+        "stock_info_bj_name_code",
+        lambda: pd.DataFrame([{"证券代码": "830001", "证券简称": "北交所"}]),
+    )
+    container = make_test_container()
+    service = bootstrap._build_market_data_sync(container, object())
+    source = cast(Any, service.acquisitions["securities"]).sources[0]
+    rows = source.functions["securities"]()
+
+    assert seen == ["主板A股", "科创板"]
+    assert set(rows["code"]) == {"600001", "688001", "000001", "830001"}
+
+
+def test_akshare_daily_bars_use_requested_adjustment(monkeypatch) -> None:
+    import akshare as ak
+    import pandas as pd
+
+    from tests.fakes.platform import make_test_container
+
+    seen: list[str] = []
+
+    def bars(**parameters):
+        seen.append(parameters["adjust"])
+        return pd.DataFrame()
+
+    monkeypatch.setattr(ak, "stock_zh_a_hist", bars)
+    service = bootstrap._build_market_data_sync(make_test_container(), object())
+    source = cast(Any, service.acquisitions["daily-bars"]).sources[0]
+    for adjustment in ("none", "qfq"):
+        source.functions["daily-bars"](
+            symbol="000016", start_date="2026-09-03", end_date="2026-09-30", adjustment=adjustment
+        )
+    assert seen == ["", "qfq"]
+
+
+def test_tencent_daily_bars_use_market_prefix_and_adjustment(monkeypatch) -> None:
+    import akshare as ak
+    import pandas as pd
+
+    from tests.fakes.platform import make_test_container
+
+    seen: list[dict[str, object]] = []
+
+    def bars(**parameters):
+        seen.append(parameters)
+        return pd.DataFrame()
+
+    monkeypatch.setattr(ak, "stock_zh_a_hist_tx", bars)
+    service = bootstrap._build_market_data_sync(make_test_container(), object())
+    source = next(
+        source
+        for source in cast(Any, service.acquisitions["daily-bars"]).sources
+        if source.key == "tencent"
+    )
+    for symbol, adjustment in (("000016", "none"), ("600000", "qfq"), ("830001", "none")):
+        source.functions["daily-bars"](
+            symbol=symbol,
+            start_date="2026-09-03",
+            end_date="2026-09-30",
+            adjustment=adjustment,
+        )
+    assert [(item["symbol"], item["adjust"]) for item in seen] == [
+        ("sz000016", ""),
+        ("sh600000", "qfq"),
+        ("bj830001", ""),
+    ]

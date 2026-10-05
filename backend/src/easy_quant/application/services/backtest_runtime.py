@@ -10,6 +10,7 @@ from itertools import groupby
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.instrument_eligibility import delisted_symbols
 from easy_quant.application.services.strategy_validation import (
     extract_factor_dependencies,
     extract_history_trading_days,
@@ -54,6 +55,7 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
     start_day = date.fromisoformat(str(payload["start_day"]))
     end_day = date.fromisoformat(str(payload["end_day"]))
     dependencies = extract_factor_dependencies(version.source_code)
+    excluded = delisted_symbols(container.market_data)
     generic_missing = [
         dataset
         for dataset in sorted(dependencies - {"daily-bars"})
@@ -96,7 +98,11 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
         int(payload.get("random_seed", 0)),
     )
     generic_records = {
-        dataset: container.market_data.list_records(dataset)
+        dataset: [
+            row
+            for row in container.market_data.list_records(dataset)
+            if str(row.get("symbol", "")) not in excluded
+        ]
         for dataset in dependencies - {"daily-bars"}
     }
 
@@ -133,7 +139,11 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 rows.append(row)
         return rows
 
-    rows = container.market_data.iter_runtime_bars(start_day, end_day)
+    rows = (
+        row
+        for row in container.market_data.iter_runtime_bars(start_day, end_day)
+        if str(row["symbol"]) not in excluded
+    )
     with StreamingStrategyRunner(version, {}, timeout_seconds=30) as runner:
         for trading_day_text, day_group in groupby(rows, key=lambda row: str(row["trading_day"])):
             trading_day = date.fromisoformat(trading_day_text)
@@ -208,7 +218,14 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 for row in today_rows
             ]
             signals_by_phase: dict[str, list[Signal]] = dict(
-                zip(phases, (result.signals for result in results), strict=True)
+                zip(
+                    phases,
+                    (
+                        [signal for signal in result.signals if signal.symbol not in excluded]
+                        for result in results
+                    ),
+                    strict=True,
+                )
             )
             backtest_session.advance(
                 trading_day, day_bars, lambda phase, signals=signals_by_phase: signals[phase]
@@ -250,7 +267,8 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
     )
     with SnapshotSpool() as snapshot:
         for row in container.market_data.iter_snapshot_bars(start_day, end_day):
-            snapshot.append(row)
+            if str(row["symbol"]) not in excluded:
+                snapshot.append(row)
         snapshot_id = snapshot.finish()
         completed = {
             **run,
@@ -283,6 +301,7 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 "frequency": "daily",
                 "fee_rate": str(config.fee_rate),
                 "slippage_rate": str(config.slippage_rate),
+                "excluded_delisted_symbols": sorted(excluded),
             },
             "strategy_outputs": strategy_outputs,
         }

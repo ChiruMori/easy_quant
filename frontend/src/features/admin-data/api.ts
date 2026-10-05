@@ -43,6 +43,16 @@ export const getAcquisition = (id: string) =>
 export const getInstrument = (symbol: string) =>
   apiRequest<Instrument>(`/admin/market-data/instruments/${symbol}`)
 
+export const updateInstrumentStatus = (
+  symbol: string,
+  status: "active" | "suspended",
+  reason: string,
+) =>
+  apiRequest<Instrument>(`/admin/market-data/instruments/${symbol}/status`, {
+    method: "PUT",
+    body: JSON.stringify({ status, reason }),
+  })
+
 export const getInstrumentDailyBars = (symbol: string, startDay?: string, endDay?: string) => {
   const query = new URLSearchParams()
   if (startDay) query.set("start_day", startDay)

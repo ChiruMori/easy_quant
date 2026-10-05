@@ -15,6 +15,17 @@ registerModules([
   CanvasRenderer,
 ])
 
+export function formatCandleTooltip(bar: CandleBar): string {
+  const day = bar.trading_day.replace(/[^0-9-]/g, "")
+  return [
+    `日期：${day}`,
+    `开盘：${Number(bar.open)}`,
+    `收盘：${Number(bar.close)}`,
+    `最低：${Number(bar.low)}`,
+    `最高：${Number(bar.high)}`,
+  ].join("<br/>")
+}
+
 export function candlestickOption(
   bars: CandleBar[],
   upColor: string,
@@ -23,7 +34,17 @@ export function candlestickOption(
   return {
     animation: false,
     grid: { left: 68, right: 24, top: 24, bottom: 84 },
-    tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "cross" },
+      formatter: (params: unknown) => {
+        const item = Array.isArray(params) ? params[0] : params
+        const index =
+          item && typeof item === "object" && "dataIndex" in item ? Number(item.dataIndex) : -1
+        const bar = bars[index]
+        return bar ? formatCandleTooltip(bar) : ""
+      },
+    },
     xAxis: { type: "category", data: bars.map((bar) => bar.trading_day), boundaryGap: true },
     yAxis: { type: "value", scale: true },
     dataZoom: [
@@ -43,7 +64,7 @@ export function candlestickOption(
     ],
     series: [
       {
-        name: "OHLC",
+        name: "K 线",
         type: "candlestick",
         data: bars.map((bar) => [bar.open, bar.close, bar.low, bar.high].map(Number)),
         itemStyle: {

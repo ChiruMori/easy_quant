@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any, Protocol
 
 from easy_quant.domain.market_data.entities import SemanticRequest
+from easy_quant.domain.shared.errors import StateConflictError
 
 
 class AcquisitionClient(Protocol):
@@ -130,8 +131,16 @@ class MarketDataSyncService:
         elif isinstance(value, dict):
             data = value.get("data")
             raw_rows = list(data.get("diff", [])) if isinstance(data, dict) else []
+            if (
+                isinstance(data, dict)
+                and data.get("total") is not None
+                and len(raw_rows) != int(data["total"])
+            ):
+                raise ValueError("证券清单不完整，已取消退市状态更新")
         else:
             raw_rows = []
+        if not raw_rows and not symbols:
+            raise ValueError("证券清单为空，已取消退市状态更新")
         instruments = []
         wanted = {str(symbol).zfill(6) for symbol in symbols or []}
         for row in raw_rows:
@@ -156,10 +165,18 @@ class MarketDataSyncService:
                     "name": str(row.get("name") or row.get("名称") or row.get("f14") or ""),
                     "exchange": _exchange(symbol),
                     "listed_on": listed_on,
-                    "status": "active",
+                    "status": "delisted"
+                    if str(row.get("status") or row.get("状态") or "").lower()
+                    in {"delisted", "退市", "已退市"}
+                    else "active",
                 }
             )
+        active_symbols = {str(item["symbol"]) for item in instruments if item["status"] == "active"}
+        if not symbols and not active_symbols:
+            raise ValueError("证券清单缺少在市股票，已取消退市状态更新")
         self.store.upsert_instruments(instruments)
+        if not symbols:
+            self.store.mark_missing_instruments_delisted(active_symbols)
         return {"record_count": len(instruments), "attempts": attempts, "source_key": source}
 
     def _sync_calendar(
@@ -196,20 +213,29 @@ class MarketDataSyncService:
         normalized: list[dict[str, object]] = []
         all_attempts: list[dict[str, object]] = []
         sources: set[str] = set()
+        incomplete: list[str] = []
         for input_symbol in symbols:
             symbol = str(input_symbol).zfill(6)
+            adjustment = self.store.bar_adjustment(symbol) or "qfq"
+            if adjustment not in {"none", "qfq"}:
+                raise StateConflictError(
+                    "历史日线复权口径不明确，无法自动补齐",
+                    {"symbol": symbol, "adjustment": adjustment},
+                )
             parameters: dict[str, object] = {
                 "symbol": symbol,
                 "start_date": start_day.isoformat(),
                 "end_date": end_day.isoformat(),
+                "adjustment": adjustment,
             }
             value, attempts, source, _ = self._acquire("daily-bars", parameters, force, source_keys)
             all_attempts.extend({**item, "symbol": symbol} for item in attempts)
             sources.add(source)
-            normalized.extend(
-                {**row, "source": source, "adjustment": "qfq"}
-                for row in self._normalize_bars(symbol, value)
-            )
+            bars = self._normalize_bars(symbol, value)
+            normalized.extend({**row, "source": source, "adjustment": adjustment} for row in bars)
+            latest = max((str(row["trading_day"]) for row in bars), default=None)
+            if latest is None or latest < end_day.isoformat():
+                incomplete.append(f"{symbol} 最新 {latest or '无'}")
         overwritten = self.store.upsert_bars(normalized)
         existing = {str(item["symbol"]) for item in self.store.list_instruments()}
         self.store.upsert_instruments(
@@ -222,8 +248,15 @@ class MarketDataSyncService:
         return {
             "record_count": len(normalized),
             "overwritten": overwritten,
+            "new_record_count": len(normalized) - overwritten,
             "attempts": all_attempts,
             "source_keys": sorted(sources),
+            "message": (
+                f"请求截至 {end_day.isoformat()}，来源返回的 K 线：{'、'.join(incomplete)}；"
+                "其后暂无新交易数据，请核实停牌或来源延迟，系统不会补造行情。"
+                if incomplete
+                else ""
+            ),
         }
 
     def _sync_generic(

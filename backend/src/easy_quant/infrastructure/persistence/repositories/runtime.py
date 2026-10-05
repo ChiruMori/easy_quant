@@ -45,6 +45,15 @@ def bar_coverage_statement():
     )
 
 
+def _single_bar_adjustment(symbol: str, adjustments: set[str]) -> str | None:
+    if len(adjustments) > 1:
+        raise StateConflictError(
+            "同一股票已有多种日线复权口径，无法自动补齐",
+            {"symbol": symbol, "adjustments": sorted(adjustments)},
+        )
+    return next(iter(adjustments), None)
+
+
 RUNTIME_SYMBOL_BATCH = 500
 
 
@@ -136,9 +145,36 @@ class InMemoryMarketDataStore:
             item["count"] += 1
         return result
 
+    def bar_adjustment(self, symbol: str) -> str | None:
+        return _single_bar_adjustment(
+            symbol,
+            {
+                str(row.get("adjustment", "unknown"))
+                for row in self.daily_bars.values()
+                if str(row["symbol"]) == symbol
+            },
+        )
+
     def upsert_instruments(self, rows: list[dict[str, Any]]) -> None:
         for row in rows:
-            self.instruments[str(row["symbol"])] = row
+            symbol = str(row["symbol"])
+            if (
+                self.instruments.get(symbol, {}).get("status") == "suspended"
+                and row.get("status", "active") == "active"
+            ):
+                row = {**row, "status": "suspended"}
+            self.instruments[symbol] = row
+
+    def set_instrument_status(self, symbol: str, status: str) -> bool:
+        if symbol not in self.instruments:
+            return False
+        self.instruments[symbol]["status"] = status
+        return True
+
+    def mark_missing_instruments_delisted(self, active_symbols: set[str]) -> None:
+        for symbol, instrument in self.instruments.items():
+            if symbol not in active_symbols:
+                instrument["status"] = "delisted"
 
     def list_bars(
         self,
@@ -206,7 +242,18 @@ class InMemoryMarketDataStore:
             return "完全同步" if days >= 3652 else "部分同步" if days >= 1095 else "数据不足"
 
         if status:
-            symbols = [symbol for symbol in symbols if sync_status(coverage.get(symbol)) == status]
+            symbols = [
+                symbol
+                for symbol in symbols
+                if (
+                    "已退市"
+                    if self.instruments.get(symbol, {}).get("status") == "delisted"
+                    else "已停牌"
+                    if self.instruments.get(symbol, {}).get("status") == "suspended"
+                    else sync_status(coverage.get(symbol))
+                )
+                == status
+            ]
         total = len(symbols)
         page = min(page, max(1, (total + page_size - 1) // page_size))
         if after_symbol:
@@ -292,18 +339,50 @@ class SqlAlchemyMarketDataStore:
             for symbol, first, last, count in self.session.execute(statement)
         }
 
+    def bar_adjustment(self, symbol: str) -> str | None:
+        adjustments = set(
+            self.session.scalars(
+                select(DailyBarModel.adjustment).where(DailyBarModel.symbol == symbol).distinct()
+            )
+        )
+        return _single_bar_adjustment(symbol, adjustments)
+
     def upsert_instruments(self, rows: list[dict[str, Any]]) -> None:
+        suspended_symbols = set(
+            self.session.scalars(
+                select(InstrumentModel.symbol).where(InstrumentModel.status == "suspended")
+            )
+        )
         for item in rows:
             listed_on = item.get("listed_on")
+            symbol = str(item["symbol"])
+            status = str(item.get("status", "active"))
+            if symbol in suspended_symbols and status == "active":
+                status = "suspended"
             self.session.merge(
                 InstrumentModel(
-                    symbol=str(item["symbol"]),
+                    symbol=symbol,
                     name=str(item.get("name", "")),
                     exchange=str(item["exchange"]),
                     listed_on=date.fromisoformat(str(listed_on)) if listed_on else None,
-                    status=str(item.get("status", "active")),
+                    status=status,
                 )
             )
+        self.session.commit()
+
+    def set_instrument_status(self, symbol: str, status: str) -> bool:
+        row = self.session.get(InstrumentModel, symbol)
+        if row is None:
+            return False
+        row.status = status
+        self.session.commit()
+        return True
+
+    def mark_missing_instruments_delisted(self, active_symbols: set[str]) -> None:
+        self.session.query(InstrumentModel).filter(
+            InstrumentModel.symbol.not_in(active_symbols),
+            InstrumentModel.status != "delisted",
+        ).update({InstrumentModel.status: "delisted"}, synchronize_session=False)
         self.session.commit()
 
     def list_bars(
@@ -456,7 +535,11 @@ class SqlAlchemyMarketDataStore:
     ):
         # 页码跳转仅跳过主键；详情和日线聚合只读取选中的一页。
         symbols = select(InstrumentModel.symbol)
-        if status:
+        if status == "已退市":
+            symbols = symbols.where(InstrumentModel.status == "delisted")
+        elif status == "已停牌":
+            symbols = symbols.where(InstrumentModel.status == "suspended")
+        elif status:
             coverage = (
                 select(
                     DailyBarModel.symbol.label("symbol"),
@@ -478,7 +561,7 @@ class SqlAlchemyMarketDataStore:
             )
             symbols = symbols.outerjoin(
                 coverage, InstrumentModel.symbol == coverage.c.symbol
-            ).where(status_expr == status)
+            ).where(status_expr == status, InstrumentModel.status == "active")
         if search:
             pattern = f"%{search}%"
             symbols = symbols.where(
@@ -547,6 +630,7 @@ class SqlAlchemyMarketDataStore:
                     "name": instrument.name,
                     "exchange": instrument.exchange,
                     "listed_on": instrument.listed_on.isoformat() if instrument.listed_on else None,
+                    "status": instrument.status,
                     **selected_coverage.get(symbol, {}),
                 }
             )

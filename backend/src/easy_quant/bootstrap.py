@@ -45,6 +45,7 @@ from easy_quant.infrastructure.persistence.session import (
 from easy_quant.infrastructure.security import SecretBox
 
 _DAILY_BARS_DESCRIPTION = "日线行情；公开接口提供前复权，通达信全量导入为不复权"
+_TENCENT_DAILY_SOURCE = {"key": "tencent", "name": "腾讯行情", "enabled": True}
 
 
 def _refresh_dataset_description(datasets: Any) -> None:
@@ -55,6 +56,17 @@ def _refresh_dataset_description(datasets: Any) -> None:
         ):
             dataset["description"] = _DAILY_BARS_DESCRIPTION
             datasets[index] = dataset
+
+
+def _ensure_independent_daily_source(datasets: Any) -> None:
+    for index, dataset in enumerate(datasets):
+        if dataset.get("key") != "daily-bars":
+            continue
+        sources = list(dataset.get("sources", []))
+        if any(source.get("key") == "tencent" for source in sources):
+            continue
+        dataset["sources"] = [*sources, dict(_TENCENT_DAILY_SOURCE)]
+        datasets[index] = dataset
 
 
 def _default_datasets() -> list[dict[str, Any]]:
@@ -75,6 +87,7 @@ def _default_datasets() -> list[dict[str, Any]]:
             "sources": [
                 {"key": "akshare", "name": "AKShare", "enabled": True},
                 {"key": "eastmoney", "name": "东方财富", "enabled": True},
+                dict(_TENCENT_DAILY_SOURCE),
             ],
         },
         {
@@ -176,6 +189,7 @@ def build_container(settings: Settings | None = None) -> Container:
         for dataset in _default_datasets():
             datasets.append(dataset)
     _refresh_dataset_description(datasets)
+    _ensure_independent_daily_source(datasets)
     state = PlatformState(
         strategies=strategies,
         datasets=datasets,
@@ -261,7 +275,10 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
     eastmoney = EastMoneySource(EastMoneyClient(httpx.Client(timeout=20.0)))
 
     def akshare_securities(**_: object):
-        sh = ak.stock_info_sh_name_code().rename(
+        sh_main = ak.stock_info_sh_name_code(symbol="主板A股").rename(
+            columns={"证券代码": "code", "证券简称": "name", "上市日期": "listed_on"}
+        )
+        sh_star = ak.stock_info_sh_name_code(symbol="科创板").rename(
             columns={"证券代码": "code", "证券简称": "name", "上市日期": "listed_on"}
         )
         sz = ak.stock_info_sz_name_code().rename(
@@ -270,9 +287,12 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         bj = ak.stock_info_bj_name_code().rename(
             columns={"证券代码": "code", "证券简称": "name", "上市日期": "listed_on"}
         )
+        if any(frame.empty for frame in (sh_main, sh_star, sz, bj)):
+            raise ValueError("证券清单缺少交易所数据")
         columns = ["code", "name", "listed_on"]
         return pd.concat(
-            [frame.reindex(columns=columns) for frame in (sh, sz, bj)], ignore_index=True
+            [frame.reindex(columns=columns) for frame in (sh_main, sh_star, sz, bj)],
+            ignore_index=True,
         )
 
     securities_ak = AkShareSource({"securities": akshare_securities})
@@ -283,9 +303,28 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
                 period="daily",
                 start_date=str(parameters["start_date"]).replace("-", ""),
                 end_date=str(parameters["end_date"]).replace("-", ""),
-                adjust="qfq",
+                adjust="" if parameters.get("adjustment", "qfq") == "none" else "qfq",
             )
         }
+    )
+    daily_tencent = AkShareSource(
+        {
+            "daily-bars": lambda **parameters: ak.stock_zh_a_hist_tx(
+                symbol=(
+                    "bj"
+                    if str(parameters["symbol"]).startswith(("4", "8", "92"))
+                    else "sh"
+                    if str(parameters["symbol"]).startswith(("5", "6", "9"))
+                    else "sz"
+                )
+                + str(parameters["symbol"]),
+                start_date=str(parameters["start_date"]).replace("-", ""),
+                end_date=str(parameters["end_date"]).replace("-", ""),
+                adjust="" if parameters.get("adjustment", "qfq") == "none" else "qfq",
+                timeout=20,
+            )
+        },
+        key="tencent",
     )
     calendar_ak = AkShareSource({"trading-calendar": lambda **_: ak.tool_trade_date_hist_sina()})
     quotes_ak = AkShareSource({"live-quotes": lambda **_: ak.stock_zh_a_spot_em()})
@@ -325,7 +364,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
     return MarketDataSyncService(
         {
             "securities": acquisition([securities_ak, eastmoney]),
-            "daily-bars": acquisition([daily_ak, eastmoney]),
+            "daily-bars": acquisition([daily_ak, eastmoney, daily_tencent]),
             "trading-calendar": acquisition([calendar_ak]),
             "live-quotes": quotes_acquisition,
             "market-values": acquisition([eastmoney]),
