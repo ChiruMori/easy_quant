@@ -3,6 +3,7 @@ from threading import Barrier
 
 from sqlalchemy.orm import sessionmaker
 
+from easy_quant.infrastructure.persistence import session as persistence_session
 from easy_quant.infrastructure.persistence.session import create_scoped_session
 
 
@@ -33,3 +34,15 @@ def test_releasing_scope_discards_the_previous_session() -> None:
         assert sessions() is not first
     finally:
         sessions.remove()
+
+
+def test_database_errors_hide_bound_parameters(monkeypatch) -> None:
+    options = {}
+
+    def fake_create_engine(_url, **kwargs):
+        options.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(persistence_session, "create_engine", fake_create_engine)
+    persistence_session.create_database_engine("mysql+pymysql://unused/db")
+    assert options["hide_parameters"] is True

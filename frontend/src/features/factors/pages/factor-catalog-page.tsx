@@ -67,6 +67,10 @@ export function FactorCatalogPage({ factors }: { factors?: FactorDefinition[] } 
               <section>
                 <h3 className="text-sm font-medium">输出</h3>
                 <p className="text-sm text-muted-foreground">{factor.output}</p>
+                <p className="mt-2 text-xs text-muted-foreground">输出示例（示意值）</p>
+                <pre className="mt-1 overflow-x-auto rounded-md bg-muted p-3 text-xs">
+                  <code>{factor.output_example}</code>
+                </pre>
               </section>
               <section>
                 <h3 className="text-sm font-medium">策略用法</h3>

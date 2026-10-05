@@ -87,4 +87,12 @@ test("股票详情可切换日周月 K 线", async ({ page }) => {
     await page.getByRole("radio", { name: period }).click()
     await expect(page.getByRole("radio", { name: period })).toHaveAttribute("data-state", "on")
   }
+  await page.getByLabel("状态依据").fill("交易所停牌公告")
+  await page.getByRole("button", { name: "标记停牌" }).click()
+  await expect(page.getByText("已停牌")).toBeVisible()
+  await page.goto("/admin/data")
+  await page.getByLabel("名称或代码").fill("000001")
+  await page.getByRole("button", { name: "搜索" }).click()
+  await expect(page.getByRole("table").getByText("已停牌")).toBeVisible()
+  await expect(page.getByRole("button", { name: /更新至/ })).toHaveCount(0)
 })

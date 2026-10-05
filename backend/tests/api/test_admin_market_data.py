@@ -191,6 +191,68 @@ def test_coverage_is_paginated_and_searchable_with_status_filter() -> None:
     assert bars[0]["close"] == "10.5"
 
 
+def test_admin_can_mark_suspension_without_losing_historical_bars() -> None:
+    from tests.fakes.platform import make_test_container
+
+    container = make_test_container(initialize_admin=True)
+    container.market_data.upsert_instruments(
+        [{"symbol": "000016", "name": "康佳", "exchange": "深圳证券交易所"}]
+    )
+    container.market_data.upsert_bars(
+        [
+            {
+                "symbol": "000016",
+                "trading_day": "2026-09-03",
+                "open": "2.46",
+                "high": "2.46",
+                "low": "2.45",
+                "close": "2.46",
+                "volume": "100",
+                "available_at": "2026-09-03T15:00:00+08:00",
+                "adjustment": "none",
+            }
+        ]
+    )
+    client = create_app(settings=container.settings, container=container).test_client()
+    login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "username": container.settings.initial_admin_username,
+            "password": container.settings.initial_admin_password.get_secret_value(),
+        },
+    )
+    headers = {"X-CSRF-Token": login.get_json()["data"]["csrf_token"]}
+    url = "/api/v1/admin/market-data/instruments/000016/status"
+    assert (
+        client.put(
+            url, json={"status": "suspended", "reason": "交易所停牌公告"}, headers=headers
+        ).status_code
+        == 200
+    )
+    coverage = client.get("/api/v1/admin/market-data/coverage").get_json()["data"]["items"][0]
+    assert coverage["sync_status"] == "已停牌"
+    assert coverage["stale"] is False
+    assert container.market_data.list_bars(symbol="000016")
+    container.market_data.upsert_instruments(
+        [{"symbol": "000016", "name": "新名称", "exchange": "深圳证券交易所", "status": "active"}]
+    )
+    assert container.market_data.get_instrument("000016")["status"] == "suspended"
+    assert (
+        client.put(
+            url, json={"status": "active", "reason": "已复牌公告"}, headers=headers
+        ).status_code
+        == 200
+    )
+    assert container.market_data.get_instrument("000016")["status"] == "active"
+    container.market_data.set_instrument_status("000016", "delisted")
+    assert (
+        client.put(
+            url, json={"status": "active", "reason": "尝试恢复"}, headers=headers
+        ).status_code
+        == 400
+    )
+
+
 def test_sync_request_creates_job_before_data_source_runs() -> None:
     from easy_quant.infrastructure.core import SystemSleeper
     from easy_quant.worker.handlers.market_data import register_market_data_handlers
@@ -246,3 +308,48 @@ def test_sync_request_creates_job_before_data_source_runs() -> None:
     updated = client.get(f"/api/v1/admin/market-data/acquisitions/{task['id']}").get_json()["data"]
     assert updated["status"] == "succeeded"
     assert updated["record_count"] == 2
+
+
+def test_delisted_coverage_has_no_freshness_and_can_be_filtered() -> None:
+    from tests.fakes.platform import make_test_container
+
+    container = make_test_container(initialize_admin=True)
+    container.market_data.upsert_instruments(
+        [
+            {
+                "symbol": "000002",
+                "name": "退市股票",
+                "exchange": "深圳证券交易所",
+                "status": "delisted",
+            }
+        ]
+    )
+    container.market_data.upsert_bars(
+        [
+            {
+                "symbol": "000002",
+                "trading_day": "2020-01-02",
+                "open": "10",
+                "high": "11",
+                "low": "9",
+                "close": "10",
+                "volume": "100",
+                "available_at": "2020-01-02T15:00:00+08:00",
+            }
+        ]
+    )
+    client = create_app(settings=container.settings, container=container).test_client()
+    client.post(
+        "/api/v1/auth/login",
+        json={
+            "username": container.settings.initial_admin_username,
+            "password": container.settings.initial_admin_password.get_secret_value(),
+        },
+    )
+    data = client.get("/api/v1/admin/market-data/coverage?status=已退市").get_json()["data"]
+    assert data["total"] == 1
+    item = data["items"][0]
+    assert item["sync_status"] == "已退市"
+    assert item["freshness_status"] == "delisted"
+    assert item["stale"] is False and item["updated"] is False
+    assert item["record_count"] == 1

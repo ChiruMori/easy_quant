@@ -18,4 +18,5 @@ class FactorDefinition:
     parameters: dict[str, str]
     output: str
     example: str
+    output_example: str
     function: FactorFunction

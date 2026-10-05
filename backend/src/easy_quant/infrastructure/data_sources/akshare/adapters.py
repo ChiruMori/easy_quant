@@ -9,10 +9,11 @@ from easy_quant.infrastructure.data_sources.akshare.serialization import stable_
 
 
 class AkShareSource:
-    key = "akshare"
-
-    def __init__(self, functions: dict[str, Callable[..., pd.DataFrame]]) -> None:
+    def __init__(
+        self, functions: dict[str, Callable[..., pd.DataFrame]], *, key: str = "akshare"
+    ) -> None:
         self.functions = functions
+        self.key = key
 
     def fetch(self, request: SemanticRequest) -> tuple[bytes, str]:
         function = self.functions.get(request.dataset_key)

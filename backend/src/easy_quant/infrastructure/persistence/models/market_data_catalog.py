@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, LargeBinary, String
+from sqlalchemy.dialects.mysql import LONGBLOB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from easy_quant.infrastructure.persistence.base import Base, UtcDateTime
@@ -32,7 +33,10 @@ class RawCacheModel(Base):
     __tablename__ = "raw_cache"
     request_identity: Mapped[str] = mapped_column(String(64), primary_key=True)
     source_key: Mapped[str] = mapped_column(String(80), nullable=False)
-    payload_gzip: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    payload_gzip: Mapped[bytes] = mapped_column(
+        LargeBinary().with_variant(LONGBLOB(), "mysql").with_variant(LONGBLOB(), "mariadb"),
+        nullable=False,
+    )
     payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)

@@ -12,6 +12,7 @@ def create_database_engine(
     return create_engine(
         database_url,
         echo=echo,
+        hide_parameters=True,
         pool_pre_ping=True,
         connect_args={"local_infile": True} if local_infile else {},
     )

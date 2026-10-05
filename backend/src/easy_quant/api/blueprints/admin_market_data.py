@@ -12,7 +12,11 @@ from flask import Blueprint, g, request
 from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_admin
 from easy_quant.api.responses import success
-from easy_quant.api.schemas.market_data import AcquisitionRequest, SourceOrderRequest
+from easy_quant.api.schemas.market_data import (
+    AcquisitionRequest,
+    InstrumentStatusRequest,
+    SourceOrderRequest,
+)
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.scheduling.entities import Job
@@ -102,19 +106,30 @@ def market_data_coverage():
         first_day = summary.get("first_day")
         last_day = summary.get("last_day")
         freshness = calendar.freshness(first_day=first_day, last_day=last_day, now=now)
+        delisted = summary.get("status") == "delisted"
+        suspended = summary.get("status") == "suspended"
         rows.append(
             {
                 "symbol": symbol,
                 "name": summary.get("name", ""),
                 "exchange": summary.get("exchange", _exchange(symbol)),
                 "listed_on": summary.get("listed_on"),
+                "status": summary.get("status", "active"),
                 "first_trading_day": first_day.isoformat() if first_day else None,
                 "last_trading_day": last_day.isoformat() if last_day else None,
                 "record_count": summary.get("count", 0),
-                "sync_status": _coverage_status(first_day, last_day),
-                "freshness_status": freshness.status.value,
-                "updated": freshness.status.value == "updated",
-                "stale": freshness.status.value == "stale",
+                "sync_status": "已退市"
+                if delisted
+                else "已停牌"
+                if suspended
+                else _coverage_status(first_day, last_day),
+                "freshness_status": "delisted"
+                if delisted
+                else "suspended"
+                if suspended
+                else freshness.status.value,
+                "updated": not (delisted or suspended) and freshness.status.value == "updated",
+                "stale": not (delisted or suspended) and freshness.status.value == "stale",
                 "previous_trading_day": freshness.previous_trading_day.isoformat(),
                 "recommended_end_day": freshness.recommended_end_day.isoformat(),
             }
@@ -140,6 +155,32 @@ def get_instrument(symbol: str):
     if instrument is None:
         return success(None, status=404)
     return success(instrument)
+
+
+@blueprint.put("/instruments/<symbol>/status")
+@require_admin
+def update_instrument_status(symbol: str):
+    normalized = symbol.strip().zfill(6)
+    payload = InstrumentStatusRequest.model_validate(request.get_json() or {})
+    store = get_container().market_data
+    existing = store.get_instrument(normalized)
+    if existing is None:
+        return success(None, status=404)
+    if existing.get("status") == "delisted":
+        raise ValidationError("已退市股票不能标记为停牌或恢复交易")
+    previous_status = existing.get("status")
+    if not store.set_instrument_status(normalized, payload.status):
+        return success(None, status=404)
+    record_audit(
+        get_container(),
+        actor_user_id=g.current_user.id,
+        action="update",
+        resource_type="instrument-status",
+        resource_id=normalized,
+        before={"status": previous_status},
+        after={"status": payload.status, "reason": payload.reason},
+    )
+    return success(store.get_instrument(normalized))
 
 
 @blueprint.get("/instruments/<symbol>/daily-bars")

@@ -1,7 +1,7 @@
 """Easy Quant 首个数据库结构基线。"""
 
 from alembic import op
-from sqlalchemy import Column, Date, DateTime, MetaData, Numeric, String, Table
+from sqlalchemy import Column, Date, DateTime, LargeBinary, MetaData, Numeric, String, Table
 
 from easy_quant.infrastructure.persistence.base import Base
 from easy_quant.infrastructure.persistence.models.audit import AuditEventModel
@@ -104,7 +104,9 @@ def initial_metadata() -> MetaData:
     metadata = MetaData(naming_convention=Base.metadata.naming_convention)
     for model in _SCHEMA_MODELS:
         if model is not DailyBarModel:
-            model.__table__.to_metadata(metadata)
+            table = model.__table__.to_metadata(metadata)
+            if model is RawCacheModel:
+                table.c.payload_gzip.type = LargeBinary()
     Table(
         "daily_bars",
         metadata,

@@ -10,8 +10,10 @@ export interface Acquisition {
   dataset_key: string
   force: boolean
   status: string
+  symbols?: string[]
   source?: string
   record_count?: number
+  new_record_count?: number
   message?: string
   attempts?: Array<{ source_key: string; attempt: number; status: string; message?: string }>
 }
@@ -35,11 +37,12 @@ export interface MarketDataCoverage {
     name: string
     exchange: string
     listed_on: string | null
+    status: "active" | "suspended" | "delisted"
     first_trading_day: string | null
     last_trading_day: string | null
     record_count: number
-    sync_status: "完全同步" | "部分同步" | "数据不足" | "未同步"
-    freshness_status: "updated" | "stale" | "not_updated"
+    sync_status: "完全同步" | "部分同步" | "数据不足" | "未同步" | "已停牌" | "已退市"
+    freshness_status: "updated" | "stale" | "not_updated" | "suspended" | "delisted"
     updated: boolean
     stale: boolean
     previous_trading_day: string

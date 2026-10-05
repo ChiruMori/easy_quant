@@ -6,6 +6,7 @@ from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.instrument_eligibility import currently_unavailable_symbols
 from easy_quant.application.services.strategy_validation import extract_factor_dependencies
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.infrastructure.persistence.market_data_pages import DailyBarPageCache
@@ -63,7 +64,12 @@ def execute_strategy_tick(
         -QUICK_TEST_PRIOR_TRADING_DAYS:
     ]
     page_cache = DailyBarPageCache(container.market_data)
-    bars = page_cache.days([*previous_days, trading_day])
+    excluded = currently_unavailable_symbols(container.market_data)
+    bars = [
+        row
+        for row in page_cache.days([*previous_days, trading_day])
+        if str(row["symbol"]) not in excluded
+    ]
     read_finished = perf_counter()
     logger.info(
         "快测行情已读取 job_id=%s rows=%d pages=%d seconds=%.3f",
@@ -85,7 +91,9 @@ def execute_strategy_tick(
                 f"策略运行依赖的数据集 {dataset} 尚未同步",
                 {"dataset": dataset, "action_url": "/admin/data/acquisitions"},
             )
-        generic_records[dataset] = rows
+        generic_records[dataset] = [
+            row for row in rows if str(row.get("symbol", "")) not in excluded
+        ]
 
     phases = ("before_market", "on_market", "after_market")
     contexts: list[tuple[dict[str, object], str]] = []
@@ -167,6 +175,7 @@ def execute_strategy_tick(
                         "reason": signal.reason,
                     }
                     for signal in result.signals
+                    if signal.symbol not in excluded
                 ],
                 "stdout": result.stdout,
                 "error": result.error,

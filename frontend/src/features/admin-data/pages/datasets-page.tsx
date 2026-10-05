@@ -1,7 +1,6 @@
-import { useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { toast } from "sonner"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
@@ -25,40 +24,72 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { localizedLabel } from "@/lib/labels"
 
-import { startAcquisition, updateDatasetSources, useDatasets, useMarketDataCoverage } from "../api"
+import {
+  getAcquisition,
+  startAcquisition,
+  updateDatasetSources,
+  useDatasets,
+  useMarketDataCoverage,
+} from "../api"
 import { SourceToggleForm } from "../components/source-toggle-form"
+import type { Acquisition } from "../types"
 
 export function DatasetsPage() {
   const query = useDatasets()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [pageInput, setPageInput] = useState("1")
+  const [pageError, setPageError] = useState("")
   const [cursor, setCursor] = useState<{ after?: string; before?: string }>({})
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("all")
   const [syncingSymbol, setSyncingSymbol] = useState("")
+  const [syncTask, setSyncTask] = useState<Acquisition | null>(null)
+  const [syncError, setSyncError] = useState("")
+  const [handledTaskId, setHandledTaskId] = useState("")
+  const syncQuery = useQuery({
+    queryKey: ["admin", "market-data", "acquisition", syncTask?.id],
+    queryFn: () => getAcquisition(syncTask!.id),
+    enabled: Boolean(syncTask?.id),
+    refetchInterval: (query) =>
+      ["queued", "running"].includes(query.state.data?.status ?? "queued") ? 1000 : false,
+  })
+  const currentSyncTask = syncQuery.data ?? syncTask
   const coverage = useMarketDataCoverage({
     page,
     search,
     status: status === "all" ? undefined : status,
     ...cursor,
   })
+  useEffect(() => {
+    if (
+      currentSyncTask?.id &&
+      currentSyncTask.id !== handledTaskId &&
+      ["succeeded", "failed"].includes(currentSyncTask.status)
+    ) {
+      setHandledTaskId(currentSyncTask.id)
+      void queryClient.invalidateQueries({ queryKey: ["admin", "market-data", "coverage"] })
+    }
+  }, [currentSyncTask, handledTaskId, queryClient])
   if (query.isLoading) return <LoadingState label="正在加载数据集" />
   if (query.error) return <ErrorState title="无法加载数据集" message={query.error.message} />
 
   async function enqueueSync(symbol: string, endDay: string, startDay: string) {
     setSyncingSymbol(symbol)
+    setSyncError("")
+    setSyncTask(null)
     try {
       const task = await startAcquisition("daily-bars", true, {
         symbols: [symbol],
         start_day: startDay,
         end_day: endDay,
       })
-      toast.success(`同步任务 ${task.id} 已进入队列`)
+      setSyncTask(task)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "无法创建同步任务")
+      setSyncError(error instanceof Error ? error.message : "无法创建同步任务")
     } finally {
       setSyncingSymbol("")
     }
@@ -111,10 +142,35 @@ export function DatasetsPage() {
         <CardHeader>
           <CardTitle>股票数据覆盖</CardTitle>
           <CardDescription>
-            当前已维护 {coverage.data?.instrument_count ?? 0} 只沪深京股票；列表按服务端分页加载。
+            当前已维护 {coverage.data?.instrument_count ?? 0}
+            只沪深京股票；列表按服务端分页加载。补齐日线时自动沿用已有复权口径。
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {syncingSymbol && <p aria-live="polite">正在为 {syncingSymbol} 创建同步任务…</p>}
+          {syncError && <p role="alert">创建同步任务失败：{syncError}</p>}
+          {currentSyncTask && (
+            <div className="mb-4 space-y-2 text-sm" aria-live="polite">
+              <p role={currentSyncTask.status === "failed" ? "alert" : undefined}>
+                股票 {currentSyncTask.symbols?.join("、") ?? ""} 同步任务：
+                {localizedLabel(currentSyncTask.status)}
+                {currentSyncTask.status === "succeeded" &&
+                  `，取得 ${currentSyncTask.record_count ?? 0} 条 K 线${currentSyncTask.new_record_count === undefined ? "" : `，新增 ${currentSyncTask.new_record_count} 条`}`}
+                {currentSyncTask.message && `；${currentSyncTask.message}`}
+              </p>
+              {currentSyncTask.status === "failed" && currentSyncTask.attempts?.length ? (
+                <details>
+                  <summary>查看来源失败原因</summary>
+                  {currentSyncTask.attempts.map((attempt, index) => (
+                    <p className="break-words" key={`${attempt.source_key}-${index}`}>
+                      {attempt.source_key} 第 {attempt.attempt} 次：{attempt.message}
+                    </p>
+                  ))}
+                </details>
+              ) : null}
+            </div>
+          )}
+          {syncQuery.error && <p role="alert">任务状态刷新失败：{syncQuery.error.message}</p>}
           <form
             className="flex flex-wrap items-end gap-3"
             onSubmit={(event) => {
@@ -159,6 +215,8 @@ export function DatasetsPage() {
                     <SelectItem value="部分同步">部分同步</SelectItem>
                     <SelectItem value="数据不足">数据不足</SelectItem>
                     <SelectItem value="未同步">未同步</SelectItem>
+                    <SelectItem value="已停牌">已停牌</SelectItem>
+                    <SelectItem value="已退市">已退市</SelectItem>
                   </SelectGroup>
                 </SelectContent>
               </Select>
@@ -203,9 +261,11 @@ export function DatasetsPage() {
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
                         <Badge variant="secondary">{item.sync_status}</Badge>
-                        {item.updated && <Badge>已更新</Badge>}
-                        {item.stale && <Badge variant="destructive">已过时</Badge>}
-                        {item.stale && (
+                        {item.status === "active" && item.updated && <Badge>已更新</Badge>}
+                        {item.status === "active" && item.stale && (
+                          <Badge variant="destructive">已过时</Badge>
+                        )}
+                        {item.status === "active" && item.stale && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -221,21 +281,23 @@ export function DatasetsPage() {
                             更新至 {item.previous_trading_day}
                           </Button>
                         )}
-                        {item.stale && item.recommended_end_day !== item.previous_trading_day && (
-                          <Button
-                            size="sm"
-                            disabled={syncingSymbol === item.symbol}
-                            onClick={() =>
-                              void enqueueSync(
-                                item.symbol,
-                                item.recommended_end_day,
-                                item.last_trading_day ?? item.previous_trading_day,
-                              )
-                            }
-                          >
-                            更新至今日
-                          </Button>
-                        )}
+                        {item.status === "active" &&
+                          item.stale &&
+                          item.recommended_end_day !== item.previous_trading_day && (
+                            <Button
+                              size="sm"
+                              disabled={syncingSymbol === item.symbol}
+                              onClick={() =>
+                                void enqueueSync(
+                                  item.symbol,
+                                  item.recommended_end_day,
+                                  item.last_trading_day ?? item.previous_trading_day,
+                                )
+                              }
+                            >
+                              更新至今日
+                            </Button>
+                          )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -285,9 +347,10 @@ export function DatasetsPage() {
                   const target = Number(pageInput)
                   const lastPage = Math.ceil(coverage.data.total / coverage.data.page_size)
                   if (!Number.isSafeInteger(target) || target < 1 || target > lastPage) {
-                    toast.error(`请输入 1 到 ${lastPage} 之间的页码`)
+                    setPageError(`请输入 1 到 ${lastPage} 之间的页码`)
                     return
                   }
+                  setPageError("")
                   setCursor({})
                   setPage(target)
                 }}
@@ -312,6 +375,7 @@ export function DatasetsPage() {
                   跳转
                 </Button>
               </form>
+              {pageError && <p role="alert">{pageError}</p>}
             </div>
           </CardContent>
         )}

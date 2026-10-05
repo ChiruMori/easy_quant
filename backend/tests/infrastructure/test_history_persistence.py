@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import Table
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.schema import CreateIndex
+from sqlalchemy.schema import CreateIndex, CreateTable
 
 from easy_quant.infrastructure.imports.tdx import parse_day
 from easy_quant.infrastructure.persistence.models.market_data_records import DailyBarModel
@@ -75,6 +75,8 @@ def test_initial_schema_remains_frozen_before_history_migration() -> None:
     assert "source" not in metadata.tables["daily_bars"].columns
     assert "amount" not in metadata.tables["daily_bars"].columns
     assert not metadata.tables["daily_bars"].indexes
+    raw_cache_ddl = str(CreateTable(metadata.tables["raw_cache"]).compile(dialect=mysql.dialect()))
+    assert "payload_gzip BLOB NOT NULL" in raw_cache_ddl
 
 
 def test_coverage_index_contains_only_symbol_and_date() -> None:
