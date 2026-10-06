@@ -233,17 +233,51 @@ class StreamingStrategyRunner:
         current_prices: dict[str, float],
         records: dict[str, object] | None = None,
     ) -> list[StrategyRun]:
-        def price_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
-            return [
-                {
-                    "symbol": row["symbol"],
-                    "trading_day": row["trading_day"],
-                    "close": row["close"],
-                }
-                for row in rows
-            ]
+        request = _day_request(
+            trading_day,
+            expire_before,
+            prior_before,
+            prior_after,
+            today_after,
+            today_symbols,
+            current_prices,
+            records,
+        )
+        return self._run_request(
+            trading_day, ("before_market", "on_market", "after_market"), request
+        )
 
-        phases = ("before_market", "on_market", "after_market")
+    def run_phase(
+        self,
+        trading_day: date,
+        *,
+        phase: str,
+        expire_before: date,
+        prior_before: list[dict[str, object]],
+        prior_after: list[dict[str, object]],
+        today_after: list[dict[str, object]],
+        today_symbols: list[str],
+        current_prices: dict[str, float],
+        positions: dict[str, str],
+        cash: str,
+        records: dict[str, object] | None = None,
+    ) -> StrategyRun:
+        request = _day_request(
+            trading_day,
+            expire_before,
+            prior_before,
+            prior_after,
+            today_after,
+            today_symbols,
+            current_prices,
+            records,
+        )
+        request.update({"phase": phase, "positions": dict(positions), "cash": cash})
+        return self._run_request(trading_day, (phase,), request)[0]
+
+    def _run_request(
+        self, trading_day: date, phases: tuple[str, ...], request: dict[str, object]
+    ) -> list[StrategyRun]:
         runs = [
             StrategyRun(
                 f"run-{self.version.id}-{trading_day.isoformat()}-{phase}",
@@ -254,18 +288,7 @@ class StreamingStrategyRunner:
             for phase in phases
         ]
         try:
-            payload = self._exchange(
-                {
-                    "trading_day": trading_day.isoformat(),
-                    "expire_before": expire_before.isoformat(),
-                    "prior_before": price_rows(prior_before),
-                    "prior_after": price_rows(prior_after),
-                    "today_after": price_rows(today_after),
-                    "today_symbols": today_symbols,
-                    "current_prices": current_prices,
-                    "records": records or {},
-                }
-            )
+            payload = self._exchange(request)
         except FutureTimeoutError:
             for run in runs:
                 run.status, run.error = StrategyRunStatus.TIMED_OUT, "策略运行超时"
@@ -275,7 +298,7 @@ class StreamingStrategyRunner:
                 run.status, run.error = StrategyRunStatus.FAILED, str(error)
             return runs
         results = payload.get("results", [])
-        if not payload.get("ok") or not isinstance(results, list) or len(results) != 3:
+        if not payload.get("ok") or not isinstance(results, list) or len(results) != len(runs):
             for run in runs:
                 run.status = StrategyRunStatus.FAILED
                 run.error = str(payload.get("error") or "策略子进程返回无效结果")
@@ -283,3 +306,31 @@ class StreamingStrategyRunner:
         for run, result in zip(runs, results, strict=True):
             self._decoder._apply_result(run, result)
         return runs
+
+
+def _day_request(
+    trading_day: date,
+    expire_before: date,
+    prior_before: list[dict[str, object]],
+    prior_after: list[dict[str, object]],
+    today_after: list[dict[str, object]],
+    today_symbols: list[str],
+    current_prices: dict[str, float],
+    records: dict[str, object] | None,
+) -> dict[str, object]:
+    def price_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        return [
+            {"symbol": row["symbol"], "trading_day": row["trading_day"], "close": row["close"]}
+            for row in rows
+        ]
+
+    return {
+        "trading_day": trading_day.isoformat(),
+        "expire_before": expire_before.isoformat(),
+        "prior_before": price_rows(prior_before),
+        "prior_after": price_rows(prior_after),
+        "today_after": price_rows(today_after),
+        "today_symbols": today_symbols,
+        "current_prices": current_prices,
+        "records": records or {},
+    }

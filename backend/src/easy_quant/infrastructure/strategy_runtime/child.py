@@ -170,11 +170,17 @@ def stream_main() -> None:
                 days.insert(position, day)
                 values.insert(position, float(str(row["close"])))
 
-    for line in sys.stdin:
-        try:
-            request = json.loads(line)
-            if request.get("stop"):
-                break
+    namespace: dict[str, object] = {}
+    active_day: str | None = None
+    phase_index = 3
+    phases = ("before_market", "on_market", "after_market")
+
+    def execute_phase(request: dict[str, object], phase: str) -> dict[str, object]:
+        nonlocal namespace, active_day, phase_index
+        trading_day = str(request["trading_day"])
+        if phase == "before_market":
+            if phase_index != 3 or (active_day is not None and trading_day <= active_day):
+                raise ValueError("回测阶段必须按交易日和盘前、盘中、盘后顺序执行")
             expire_before = str(request["expire_before"])
             for symbol, days in tuple(price_days.items()):
                 values = prices[symbol]
@@ -185,37 +191,44 @@ def stream_main() -> None:
                 if not days:
                     del price_days[symbol]
                     del prices[symbol]
-            add_prices(request.get("prior_before", []))
-            namespace: dict[str, object] = {"__builtins__": _safe_builtins()}
+            add_prices(cast(list[dict[str, object]], request.get("prior_before", [])))
+            namespace = {"__builtins__": _safe_builtins()}
             with contextlib.redirect_stdout(io.StringIO()):
                 exec(compiled, namespace)
-            today_symbols = set(str(item) for item in request.get("today_symbols", []))
-            current_prices = request.get("current_prices", {})
-            records = request.get("records", {})
-            results = []
-            for phase in ("before_market", "on_market", "after_market"):
-                if phase == "after_market":
-                    add_prices(request.get("prior_after", []))
-                    add_prices(request.get("today_after", []))
-                universe = set(prices)
-                if phase != "before_market":
-                    universe.update(today_symbols)
-                context = {
-                    "universe": sorted(universe),
-                    "prices": prices,
-                    "market_values": {},
-                    "trading_day": request["trading_day"],
-                    "phase": phase,
-                    "current_prices": current_prices if phase == "on_market" else {},
-                    "records": records.get(phase, {}),
-                }
-                results.append(
-                    _execute_call(
-                        namespace,
-                        parameters,
-                        {"context": context, "phase": phase},
-                    )
-                )
+            active_day, phase_index = trading_day, 0
+        if active_day != trading_day or phase_index >= 3 or phase != phases[phase_index]:
+            raise ValueError("回测阶段必须按交易日和盘前、盘中、盘后顺序执行")
+        if phase == "after_market":
+            add_prices(cast(list[dict[str, object]], request.get("prior_after", [])))
+            add_prices(cast(list[dict[str, object]], request.get("today_after", [])))
+        universe = set(prices)
+        if phase != "before_market":
+            universe.update(
+                str(item) for item in cast(list[object], request.get("today_symbols", []))
+            )
+        records = cast(dict[str, object], request.get("records", {}))
+        context = {
+            "universe": sorted(universe),
+            "prices": prices,
+            "market_values": {},
+            "trading_day": trading_day,
+            "phase": phase,
+            "current_prices": request.get("current_prices", {}) if phase == "on_market" else {},
+            "records": records.get(phase, {}),
+            "positions": request.get("positions", {}),
+            "cash": request.get("cash"),
+        }
+        result = _execute_call(namespace, parameters, {"context": context, "phase": phase})
+        phase_index += 1
+        return result
+
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+            if request.get("stop"):
+                break
+            requested_phases = (request["phase"],) if "phase" in request else phases
+            results = [execute_phase(request, phase) for phase in requested_phases]
             _stream_reply({"ok": True, "results": results})
         except Exception as error:
             _stream_reply({"ok": False, "error": f"{type(error).__name__}: {error}"})

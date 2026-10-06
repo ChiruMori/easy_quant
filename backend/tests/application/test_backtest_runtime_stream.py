@@ -59,11 +59,10 @@ def test_backtest_context_uses_bounded_history_over_many_days(monkeypatch, fixed
         def __exit__(self, *_args):
             return None
 
-        def run_day(self, _trading_day, *, expire_before, **_kwargs):
-            observed_bounds.append(expire_before)
-            return [
-                StrategyRun("run", "v", StrategyRunStatus.SUCCEEDED, {}, []) for _phase in range(3)
-            ]
+        def run_phase(self, _trading_day, *, expire_before, phase, **_kwargs):
+            if phase == "before_market":
+                observed_bounds.append(expire_before)
+            return StrategyRun("run", "v", StrategyRunStatus.SUCCEEDED, {}, [])
 
     monkeypatch.setattr(backtest_runtime, "StreamingStrategyRunner", Runner)
     result = backtest_runtime.execute_backtest(container, "b")
