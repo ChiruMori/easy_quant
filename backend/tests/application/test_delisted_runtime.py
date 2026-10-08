@@ -119,12 +119,10 @@ def test_backtest_excludes_delisted_bars_and_hardcoded_signals(monkeypatch, fixe
         def __exit__(self, *_args):
             return None
 
-        def run_day(self, _trading_day, **kwargs):
-            observed.append(kwargs["today_symbols"])
-            return [
-                StrategyRun("run", "v", StrategyRunStatus.SUCCEEDED, {}, _signals())
-                for _ in range(3)
-            ]
+        def run_phase(self, _trading_day, *, phase, **kwargs):
+            if phase == "before_market":
+                observed.append(kwargs["today_symbols"])
+            return StrategyRun("run", "v", StrategyRunStatus.SUCCEEDED, {}, _signals())
 
     monkeypatch.setattr(backtest_runtime, "StreamingStrategyRunner", Runner)
     backtest_runtime.execute_backtest(container, "b")

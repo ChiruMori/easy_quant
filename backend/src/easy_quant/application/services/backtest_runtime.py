@@ -120,7 +120,6 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 )
         return records
 
-    phases = ("before_market", "on_market", "after_market")
     strategy_outputs = []
     history_window = extract_history_trading_days(version.source_code)
     backtest_session = PhasedBacktestSession(config)
@@ -173,38 +172,6 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                     heapq.heappush(pending, (available_at, sequence, row))
                     sequence += 1
             records_before = visible_records(before_cutoff)
-            results = runner.run_day(
-                trading_day,
-                expire_before=expire_before,
-                prior_before=prior_before,
-                prior_after=prior_after,
-                today_after=today_after,
-                today_symbols=sorted({str(row["symbol"]) for row in today_rows}),
-                current_prices={str(row["symbol"]): float(str(row["open"])) for row in today_rows},
-                records={
-                    "before_market": records_before,
-                    "on_market": records_before,
-                    "after_market": visible_records(after_cutoff),
-                },
-            )
-            for phase, result in zip(phases, results, strict=True):
-                if result.status != "succeeded":
-                    raise StateConflictError(
-                        "策略运行失败",
-                        {
-                            "phase": phase,
-                            "trading_day": trading_day.isoformat(),
-                            "error": result.error,
-                        },
-                    )
-                if result.stdout:
-                    strategy_outputs.append(
-                        {
-                            "trading_day": trading_day.isoformat(),
-                            "phase": phase,
-                            "text": result.stdout,
-                        }
-                    )
             day_bars = [
                 MarketBar(
                     trading_day,
@@ -217,19 +184,61 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 )
                 for row in today_rows
             ]
-            signals_by_phase: dict[str, list[Signal]] = dict(
-                zip(
-                    phases,
-                    (
-                        [signal for signal in result.signals if signal.symbol not in excluded]
-                        for result in results
-                    ),
-                    strict=True,
+
+            today_symbols = sorted({str(row["symbol"]) for row in today_rows})
+            current_prices = {str(row["symbol"]): float(str(row["open"])) for row in today_rows}
+            phase_inputs: dict[str, dict[str, Any]] = {
+                phase: {
+                    "expire_before": expire_before,
+                    "prior_before": prior_before if phase == "before_market" else [],
+                    "prior_after": prior_after if phase == "after_market" else [],
+                    "today_after": today_after if phase == "after_market" else [],
+                    "today_symbols": today_symbols,
+                    "current_prices": current_prices if phase == "on_market" else {},
+                    "records": {
+                        phase: visible_records(after_cutoff)
+                        if phase == "after_market"
+                        else records_before
+                    },
+                }
+                for phase in ("before_market", "on_market", "after_market")
+            }
+
+            def strategy(
+                phase: str,
+                day: date = trading_day,
+                inputs: dict[str, dict[str, Any]] = phase_inputs,
+            ) -> list[Signal]:
+                portfolio = backtest_session.portfolio
+                result = runner.run_phase(
+                    day,
+                    phase=phase,
+                    positions={
+                        symbol: str(quantity) for symbol, quantity in portfolio.positions.items()
+                    },
+                    cash=str(portfolio.cash),
+                    **inputs[phase],
                 )
-            )
-            backtest_session.advance(
-                trading_day, day_bars, lambda phase, signals=signals_by_phase: signals[phase]
-            )
+                if result.status != "succeeded":
+                    raise StateConflictError(
+                        "策略运行失败",
+                        {
+                            "phase": phase,
+                            "trading_day": day.isoformat(),
+                            "error": result.error,
+                        },
+                    )
+                if result.stdout:
+                    strategy_outputs.append(
+                        {
+                            "trading_day": day.isoformat(),
+                            "phase": phase,
+                            "text": result.stdout,
+                        }
+                    )
+                return [signal for signal in result.signals if signal.symbol not in excluded]
+
+            backtest_session.advance(trading_day, day_bars, strategy)
 
     if not row_count:
         raise StateConflictError(
@@ -299,6 +308,7 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
             ],
             "assumptions": {
                 "frequency": "daily",
+                "strategy_context_protocol": "phase-portfolio-v1",
                 "fee_rate": str(config.fee_rate),
                 "slippage_rate": str(config.slippage_rate),
                 "excluded_delisted_symbols": sorted(excluded),
