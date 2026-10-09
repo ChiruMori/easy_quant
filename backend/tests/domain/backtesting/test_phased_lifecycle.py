@@ -37,7 +37,7 @@ def test_each_trading_day_runs_three_hooks_in_order_without_notification() -> No
     assert trades == []
 
 
-def test_phase_execution_uses_open_trigger_and_close_prices() -> None:
+def test_phase_execution_uses_open_and_single_midpoint_quote() -> None:
     config = BacktestConfig(
         "version",
         ("000001",),
@@ -60,14 +60,14 @@ def test_phase_execution_uses_open_trigger_and_close_prices() -> None:
             return [Signal("000001", "buy", Decimal(100), "盘前买入")]
         if phase == "on_market":
             return [
-                Signal("000001", "sell", Decimal(100), "盘中止盈", Decimal("11.5")),
+                Signal("000001", "sell", Decimal(100), "盘中止盈", Decimal("10.5")),
                 Signal("000001", "buy", Decimal(100), "未触发", Decimal("8")),
             ]
         return []
 
     _, trades, _ = run_phased_daily_backtest(config, [bar], strategy)
 
-    assert [trade.price for trade in trades] == [Decimal("10.00"), Decimal("11.50")]
+    assert [trade.price for trade in trades] == [Decimal("10.00"), Decimal("10.50")]
 
 
 def test_incremental_engine_handles_multi_year_sequence_without_bars_list() -> None:

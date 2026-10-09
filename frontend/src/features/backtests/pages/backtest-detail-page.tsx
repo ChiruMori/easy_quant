@@ -39,6 +39,11 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
           开启实盘跟踪
         </Button>
       </div>
+      {run.assumptions.intraday_quote && (
+        <p className="text-sm text-muted-foreground">
+          盘中模拟报价为当日开收盘均值，包含收盘信息，只代表日线近似模拟。
+        </p>
+      )}
       {["queued", "running"].includes(run.status) && (
         <Alert>
           <AlertTitle>回测已进入后台任务</AlertTitle>

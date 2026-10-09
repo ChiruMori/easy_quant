@@ -61,7 +61,7 @@ class MarketDataSyncService:
         force: bool = False,
         source_keys: set[str] | None = None,
     ) -> dict[str, object]:
-        if dataset_key == "securities":
+        if dataset_key in {"securities", "security-status"}:
             return self._sync_securities(force, source_keys, symbols)
         if dataset_key == "trading-calendar":
             return self._sync_calendar(start_day, end_day, force, source_keys)
@@ -69,7 +69,12 @@ class MarketDataSyncService:
             if not symbols or start_day is None or end_day is None:
                 raise ValueError("同步日线需要股票、开始日期和结束日期")
             return self._sync_daily_bars(symbols, start_day, end_day, force, source_keys)
-        if dataset_key in {"market-values", "pledge-ratios", "financial-indicators"}:
+        if dataset_key in {
+            "market-values",
+            "pledge-ratios",
+            "financial-indicators",
+            "sw-industry-memberships",
+        }:
             if end_day is None:
                 raise ValueError("同步基本面数据需要结束日期作为数据时点")
             if dataset_key == "financial-indicators" and not symbols:
@@ -81,7 +86,9 @@ class MarketDataSyncService:
 
     def quotes(self, symbols: list[str], *, force: bool = False) -> dict[str, str]:
         wanted = {str(symbol).zfill(6) for symbol in symbols}
-        value, _, _, _ = self._acquire("live-quotes", {"market": "a-shares"}, force, None)
+        if not wanted:
+            return {}
+        value, _, _, _ = self._acquire("live-quotes", {"symbols": sorted(wanted)}, force, None)
         if isinstance(value, dict):
             data = value.get("data")
             rows = list(data.get("diff", [])) if isinstance(data, dict) else []
@@ -124,7 +131,7 @@ class MarketDataSyncService:
     def _sync_securities(
         self, force: bool, source_keys: set[str] | None, symbols: list[str] | None
     ) -> dict[str, object]:
-        value, attempts, source, _ = self._acquire("securities", {}, force, source_keys)
+        value, attempts, source, fetched_at = self._acquire("securities", {}, force, source_keys)
         raw_rows: list[dict[str, object]]
         if isinstance(value, list):
             raw_rows = value
@@ -177,6 +184,22 @@ class MarketDataSyncService:
         self.store.upsert_instruments(instruments)
         if not symbols:
             self.store.mark_missing_instruments_delisted(active_symbols)
+        self.store.upsert_records(
+            "security-status",
+            [
+                {
+                    **item,
+                    "record_key": f"{item['symbol']}:{fetched_at.isoformat()}",
+                    "is_st": "ST" in str(item.get("name", "")).upper()
+                    if item.get("name")
+                    else None,
+                    "available_at": fetched_at.isoformat(),
+                    "source": source,
+                }
+                for item in self.store.list_instruments()
+                if not wanted or str(item["symbol"]) in wanted
+            ],
+        )
         return {"record_count": len(instruments), "attempts": attempts, "source_key": source}
 
     def _sync_calendar(
@@ -214,6 +237,7 @@ class MarketDataSyncService:
         all_attempts: list[dict[str, object]] = []
         sources: set[str] = set()
         incomplete: list[str] = []
+        availability: list[dict[str, object]] = []
         for input_symbol in symbols:
             symbol = str(input_symbol).zfill(6)
             adjustment = self.store.bar_adjustment(symbol) or "qfq"
@@ -228,7 +252,9 @@ class MarketDataSyncService:
                 "end_date": end_day.isoformat(),
                 "adjustment": adjustment,
             }
-            value, attempts, source, _ = self._acquire("daily-bars", parameters, force, source_keys)
+            value, attempts, source, fetched_at = self._acquire(
+                "daily-bars", parameters, force, source_keys
+            )
             all_attempts.extend({**item, "symbol": symbol} for item in attempts)
             sources.add(source)
             bars = self._normalize_bars(symbol, value)
@@ -236,7 +262,17 @@ class MarketDataSyncService:
             latest = max((str(row["trading_day"]) for row in bars), default=None)
             if latest is None or latest < end_day.isoformat():
                 incomplete.append(f"{symbol} 最新 {latest or '无'}")
+            availability.append(
+                {
+                    "symbol": symbol,
+                    "record_key": f"{symbol}:{end_day}",
+                    "requested_end_day": end_day.isoformat(),
+                    "latest_day": latest,
+                    "available_at": fetched_at.isoformat(),
+                }
+            )
         overwritten = self.store.upsert_bars(normalized)
+        self.store.upsert_records("daily-bar-availability", availability)
         existing = {str(item["symbol"]) for item in self.store.list_instruments()}
         self.store.upsert_instruments(
             [
@@ -306,6 +342,7 @@ class MarketDataSyncService:
                 ).zfill(6)
                 if wanted and symbol not in wanted:
                     continue
+                announced = row.get("公告日期") or row.get("发布日期")
                 raw_day = (
                     row.get("公告日期")
                     or row.get("发布日期")
@@ -313,7 +350,7 @@ class MarketDataSyncService:
                     or row.get("日期")
                     or fetched_at.date()
                 )
-                if dataset_key == "market-values":
+                if dataset_key in {"market-values", "sw-industry-memberships"}:
                     raw_day = fetched_at.date()
                 available_day = date.fromisoformat(str(raw_day)[:10])
                 if start_day and available_day < start_day:
@@ -325,6 +362,24 @@ class MarketDataSyncService:
                     f"{symbol}|{available_day.isoformat()}|{index}|{serialized}".encode()
                 ).hexdigest()
                 mapped = dict(row)
+                if dataset_key == "financial-indicators":
+                    mapped["report_period"] = str(row.get("报告期") or row.get("日期") or "")[:10]
+                    mapped["publication_time_known"] = bool(announced)
+                    for target, aliases in {
+                        "roe": ("roe", "净资产收益率(%)"),
+                        "adjusted_net_profit": (
+                            "adjusted_net_profit",
+                            "扣除非经常性损益后的净利润(元)",
+                        ),
+                        "net_profit": ("net_profit", "净利润(元)"),
+                    }.items():
+                        raw_number = next(
+                            (row[name] for name in aliases if row.get(name) not in (None, "", "-")),
+                            None,
+                        )
+                        mapped[target] = (
+                            str(Decimal(str(raw_number))) if raw_number is not None else None
+                        )
                 if dataset_key == "market-values":
                     mapped.update(
                         pe_ratio=row.get("f9"),
@@ -337,7 +392,10 @@ class MarketDataSyncService:
                         **mapped,
                         "symbol": symbol,
                         "record_key": record_key,
-                        "available_at": f"{available_day.isoformat()}T23:59:59+08:00",
+                        "available_at": f"{available_day.isoformat()}T23:59:59+08:00"
+                        if announced
+                        else fetched_at.isoformat(),
+                        "source": source,
                     }
                 )
         overwritten = self.store.upsert_records(dataset_key, normalized)

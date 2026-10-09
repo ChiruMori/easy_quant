@@ -72,6 +72,21 @@ def _ensure_independent_daily_source(datasets: Any) -> None:
 def _default_datasets() -> list[dict[str, Any]]:
     return [
         {
+            "key": "sw-industry-memberships",
+            "name": "申万一级行业成分",
+            "description": "当前分类快照，按实际采集时点可见，不伪造历史行业归属",
+            "sources": [{"key": "akshare", "name": "AKShare", "enabled": True}],
+        },
+        {
+            "key": "security-status",
+            "name": "证券风险状态",
+            "description": "随证券清单同步的 ST、上市日期及交易状态快照",
+            "sources": [
+                {"key": "eastmoney", "name": "东方财富", "enabled": True},
+                {"key": "akshare", "name": "AKShare", "enabled": True},
+            ],
+        },
+        {
             "key": "securities",
             "name": "证券列表",
             "description": "沪深股票代码、名称与交易所",
@@ -190,6 +205,10 @@ def build_container(settings: Settings | None = None) -> Container:
             datasets.append(dataset)
     _refresh_dataset_description(datasets)
     _ensure_independent_daily_source(datasets)
+    existing_keys = {item["key"] for item in datasets}
+    for dataset in _default_datasets():
+        if dataset["key"] not in existing_keys:
+            datasets.append(dataset)
     state = PlatformState(
         strategies=strategies,
         datasets=datasets,
@@ -327,7 +346,6 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         key="tencent",
     )
     calendar_ak = AkShareSource({"trading-calendar": lambda **_: ak.tool_trade_date_hist_sina()})
-    quotes_ak = AkShareSource({"live-quotes": lambda **_: ak.stock_zh_a_spot_em()})
     pledge_ak = AkShareSource(
         {
             "pledge-ratios": lambda **parameters: ak.stock_gpzy_pledge_ratio_em(
@@ -343,6 +361,28 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         }
     )
 
+    def industry_memberships(**_parameters):
+        import pandas as pd
+
+        rows = []
+        for _, industry in ak.sw_index_first_info().iterrows():
+            code = str(industry["行业代码"]).split(".")[0]
+            for _, member in ak.index_component_sw(symbol=code).iterrows():
+                rows.append(
+                    {
+                        "symbol": str(member["证券代码"]).zfill(6),
+                        "industry_code": code,
+                        "industry_name": str(industry["行业名称"]),
+                        "classification": "sw",
+                        "level": 1,
+                    }
+                )
+        if not rows:
+            raise ValueError("申万行业成分为空")
+        return pd.DataFrame(rows)
+
+    industry_ak = AkShareSource({"sw-industry-memberships": industry_memberships})
+
     def acquisition(sources: list[Any]) -> AcquisitionService:
         return AcquisitionService(
             sources,
@@ -353,7 +393,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         )
 
     quotes_acquisition = AcquisitionService(
-        [quotes_ak, eastmoney],
+        [eastmoney],
         raw_cache,
         clock,
         sleeper,
@@ -370,13 +410,14 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
             "market-values": acquisition([eastmoney]),
             "pledge-ratios": acquisition([pledge_ak]),
             "financial-indicators": acquisition([financial_ak]),
+            "sw-industry-memberships": acquisition([industry_ak]),
         },
         container.market_data,
     )
 
 
 def build_worker():
-    from datetime import datetime, time
+    from datetime import UTC, datetime, time
     from zoneinfo import ZoneInfo
 
     from easy_quant.application.services.scheduled_tasks import next_run
@@ -421,15 +462,45 @@ def build_worker():
         for schedule_id, schedule in list(container.state.schedules.items()):
             if not schedule.get("enabled", True):
                 continue
+            job_type = str(schedule["task_type"])
+            payload = dict(schedule.get("configuration", {}))
+            local_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
+            if job_type == "live-analysis" and payload.get("phase") == "on_market":
+                run_time = time.fromisoformat(container.settings.intraday_run_time)
+                expression = f"{run_time.minute} {run_time.hour} * * 1-5"
+                if (
+                    schedule.get("schedule_kind") != "cron"
+                    or schedule.get("schedule_expression") != expression
+                ):
+                    schedule["schedule_kind"] = "cron"
+                    schedule["schedule_expression"] = expression
+                    schedule["next_run_at"] = (
+                        datetime.combine(local_now.date(), run_time, local_now.tzinfo)
+                        .astimezone(UTC)
+                        .isoformat()
+                    )
+                    container.state.schedules[schedule_id] = schedule
+            if job_type == "live-analysis" and payload.get("phase") == "after_market":
+                instance = container.state.live_instances.get(str(payload.get("instance_id")))
+                if instance is not None and not instance.get("after_market_enabled", False):
+                    schedule["enabled"] = False
+                    container.state.schedules[schedule_id] = schedule
+                    continue
             next_run_at = schedule.get("next_run_at")
             if not next_run_at or datetime.fromisoformat(str(next_run_at)) > now:
                 continue
-            job_type = str(schedule["task_type"])
-            payload = dict(schedule.get("configuration", {}))
             calendar = TradingCalendar(container.market_data.list_trading_days() or None)
             local_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
             if job_type == "live-analysis":
                 phase = payload.get("phase")
+                if phase == "on_market":
+                    run_time = time.fromisoformat(container.settings.intraday_run_time)
+                    schedule["schedule_kind"] = "cron"
+                    schedule["schedule_expression"] = f"{run_time.minute} {run_time.hour} * * 1-5"
+                    if local_now.time() < run_time:
+                        # 历史间隔计划迁移到系统统一时刻。
+                        advance_schedule(schedule_id, schedule, now)
+                        continue
                 in_morning = time(9, 30) <= local_now.time() <= time(11, 30)
                 in_afternoon = time(13, 0) <= local_now.time() <= time(15, 0)
                 if not calendar.is_trading_day(local_now.date()) or (
@@ -438,7 +509,9 @@ def build_worker():
                     advance_schedule(schedule_id, schedule, now)
                     continue
             if job_type == "market-data-acquisition" and payload.get("mode") == "daily-update":
-                payload["end_day"] = calendar.previous_trading_day(now.date()).isoformat()
+                payload["end_day"] = calendar.freshness(
+                    first_day=None, last_day=None, now=now
+                ).recommended_end_day.isoformat()
                 payload["start_day"] = payload["end_day"]
                 payload["symbols"] = [
                     str(item["symbol"]) for item in container.market_data.list_instruments()

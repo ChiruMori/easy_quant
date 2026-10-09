@@ -1,0 +1,122 @@
+[
+  {
+    "key": "universe",
+    "name": "股票池",
+    "signature": "context.universe()",
+    "description": "读取当前阶段已知行情和证券快照中的代码，包含已知的新上市股票；持仓分析应另行遍历 portfolio 的 positions。",
+    "parameters": "无",
+    "output": "list[str]",
+    "example": "symbols = context.universe()",
+    "runtime": "三个运行时一致。停牌和退市标的按平台规则排除。"
+  },
+  {
+    "key": "securities",
+    "name": "申万一级行业股票池",
+    "signature": "context.securities(industry=None)",
+    "description": "按申万一级行业代码筛选股票池；分类快照只在实际采集时点之后可见。",
+    "parameters": "industry：行业代码字符串；省略则返回股票池。",
+    "output": "list[str]；未知归属不纳入行业股票池。",
+    "example": "symbols = context.securities(industry=parameters['industry_code'])",
+    "runtime": "必须预先同步申万行业和证券状态。历史回测不得使用未来采集的分类。"
+  },
+  {
+    "key": "security_info",
+    "name": "证券风险信息",
+    "signature": "context.security_info(symbol)",
+    "description": "读取当前可见的证券及行业快照，包含 is_st、status、listed_on、industry_code。",
+    "parameters": "symbol：证券代码。",
+    "output": "dict 或 None；is_st=None 表示未知，不应当作正常股票。",
+    "example": "info = context.security_info(symbol)\nif info and info.get('is_st') is True:\n    print('发现 ST 状态')",
+    "runtime": "三个运行时一致。ST 来自证券名称标记，交易状态包含管理员核实结果。"
+  },
+  {
+    "key": "financials",
+    "name": "可见财务历史",
+    "signature": "context.financials(symbol)",
+    "description": "读取按可获知时间排序的财务历史。标准字段 roe 为百分数，利润字段以元计；保留来源字段。",
+    "parameters": "symbol：证券代码。",
+    "output": "记录序列；含 report_period、publication_time_known、available_at。缺失指标为 None。",
+    "example": "reports = context.financials(symbol)\nfor report in reports:\n    print(report.get('report_period'), report.get('adjusted_net_profit'))",
+    "runtime": "无公告日期时以采集时间为边界；不把累计利润当单季利润，不补造基本面。"
+  },
+  {
+    "key": "valuation",
+    "name": "估值数据",
+    "signature": "context.valuation(symbol)",
+    "description": "读取最新可见 PE、PB、总市值和流通市值；遵循来源口径。",
+    "parameters": "symbol：证券代码。",
+    "output": "dict 或 None；标准数值字段为 Decimal。",
+    "example": "value = context.valuation(symbol)\nif value and value.get('pe_ratio') is not None:\n    print(value['pe_ratio'])",
+    "runtime": "盘前读昨晚同步的数据。PE 非正值或缺失需要由策略明确处理。"
+  },
+  {
+    "key": "factor",
+    "name": "平台因子",
+    "signature": "context.factor(key, **parameters)",
+    "description": "三个运行时调用唯一的平台因子实现。技术和统计计算使用 Decimal。",
+    "parameters": "key：因子 Key；其余参数见因子目录。",
+    "output": "因子定义的结果；不足时 available=False 或 None。",
+    "example": "ma30 = context.factor('technical.ma', symbol=symbol, window=30)\nif ma30['available']:\n    print(ma30['value'])",
+    "runtime": "快测仅在显式开启 Mock 后可重复首个可见价格补技术窗口，并记录补值；正式回测和实盘不补造。"
+  },
+  {
+    "key": "quotes",
+    "name": "批量临时报价",
+    "signature": "context.quotes(symbols)",
+    "description": "只在盘中阶段取得所请求股票的报价，同阶段缓存已获取股票。",
+    "parameters": "symbols：证券代码列表，最多 10000 个。",
+    "output": "dict[str, Decimal]；无模拟报价的标的不返回值，实盘缺价报错。",
+    "example": "prices = context.quotes(list(context.portfolio()['positions']))",
+    "runtime": "实盘由宿主访问真实接口；模拟使用 (open+close)/2，含收盘信息，仅为日线近似。"
+  },
+  {
+    "key": "current_price",
+    "name": "单股临时报价",
+    "signature": "context.current_price(symbol)",
+    "description": "quotes 的单标的形式，适合判断价格条件。",
+    "parameters": "symbol：证券代码。",
+    "output": "Decimal 或 None。",
+    "example": "price = context.current_price(symbol)\nif price is not None and price <= Decimal('10.50'):\n    print('达到买点')",
+    "runtime": "只在盘中可调用；实盘仅每天统一时刻采样一次，不监控盘中路径。"
+  },
+  {
+    "key": "portfolio",
+    "name": "组合快照",
+    "signature": "context.portfolio() / context.position(symbol)",
+    "description": "读取阶段开始时的现金、数量及平均成本，数值为 Decimal。",
+    "parameters": "portfolio 无参数；position 接收证券代码。",
+    "output": "{'cash': Decimal, 'positions': dict, 'costs': dict}；不存在的持仓数量为 Decimal(0)。",
+    "example": "portfolio = context.portfolio()\nquantity = context.position(symbol)",
+    "runtime": "快测和回测读取已模拟成交的组合；实盘从人工实际账本重建。修改副本不改变账本。"
+  },
+  {
+    "key": "signal",
+    "name": "按比例建议",
+    "signature": "context.signal(symbol, action, ratio, reason, *, price=None, lot_size=100, trigger_price=None, trigger_operator=None)",
+    "description": "买入按可用现金比例计算，卖出按该股票持仓比例计算；允许加仓与减仓。",
+    "parameters": "action：buy/sell；ratio：(0,1]；买入需参考价，盘中可省略；lot_size：交易单位；trigger_operator：lte/gte。",
+    "output": "带 quantity、ratio、ratio_basis、reason 的信号字典，需放入钩子返回列表；不足一手时数量为零。",
+    "example": "return [context.signal(symbol, 'buy', Decimal('0.10'), '符合买入规则', price=reference_price)]\n# 部分卖出\nreturn [context.signal(symbol, 'sell', Decimal('0.50'), '降低风险')]",
+    "runtime": "买入预留配置中的费用和滑点，数量向下取整。多信号共享阶段开始快照，需要策略分配总预算。模拟引擎入账，实盘等待人工反馈。"
+  },
+  {
+    "key": "store",
+    "name": "策略 KV 状态",
+    "signature": "context.store.get(key, default=None) / set(key, value) / delete(key)",
+    "description": "保存候选股票、阈值及其他跨阶段和跨日信息。阶段失败不提交。",
+    "parameters": "key：1–128 字符；value：JSON 值或有限 Decimal；状态最多 256 KiB。",
+    "output": "get 返回独立副本；set/delete 无返回值。Decimal 持久化为字符串，读取时用 Decimal 恢复。",
+    "example": "context.store.set('candidates', symbols)\ncandidates = context.store.get('candidates', [])\ncontext.store.set('limit', Decimal('10.50'))\nlimit = Decimal(context.store.get('limit'))",
+    "runtime": "快测和回测在单次运行内存保存；实盘按实例保存到 MariaDB，与阶段建议原子提交。源码全局变量不能替代 KV。"
+  },
+  {
+    "key": "snapshot",
+    "name": "阶段与数值工具",
+    "signature": "context.data / Decimal(value)",
+    "description": "读取 trading_day、phase、decision_at 与阶段快照；Decimal 在策略中直接可用，无需导入。",
+    "parameters": "Decimal 建议传十进制字符串，避免浮点误差。",
+    "output": "上下文独立副本；日期及时间使用带时区 ISO 字符串。",
+    "example": "ratio = Decimal(parameters.get('ratio', '0.10'))\nprint(context.data['trading_day'], context.data['phase'])",
+    "runtime": "统一三个钩子 before_market/on_market/after_market；实盘盘后默认关闭。数据读取接口和 KV 在三个运行时相同。"
+  }
+]

@@ -36,7 +36,8 @@ test("管理员登录、数据管理、任务管理与邀请注册主旅程", as
 
   await page.goto("/admin/schedules")
   await page.getByRole("button", { name: "创建任务" }).click()
-  await expect(page.getByRole("cell", { name: "0 18 * * 1-5" })).toBeVisible()
+  await expect(page.getByRole("cell", { name: "0 22 * * 1-5" })).toBeVisible()
+  await expect(page.getByRole("cell", { name: "盘后全量数据同步" })).toBeVisible()
   await page.getByRole("combobox").click()
   await page.getByRole("option", { name: "通达信 A 股盘后增量" }).click()
   await page.getByRole("button", { name: "创建任务" }).click()

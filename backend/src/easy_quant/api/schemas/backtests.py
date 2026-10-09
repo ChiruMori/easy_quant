@@ -14,6 +14,7 @@ class BacktestCreateRequest(BaseModel):
     slippage_rate: Decimal = Field(default=Decimal("0.0001"), ge=0)
     benchmark: str | None = None
     random_seed: int = 0
+    parameters: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def dates_are_ordered(self):

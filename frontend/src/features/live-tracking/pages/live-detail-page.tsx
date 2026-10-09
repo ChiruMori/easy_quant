@@ -84,6 +84,12 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
               <p className="mb-4 text-sm text-muted-foreground">
                 {item.reason} · {localizedLabel(item.status)}
               </p>
+              {item.ratio && (
+                <p className="mb-4 text-sm">
+                  建议按{item.action === "buy" ? "可用现金" : "该股持仓"}的{" "}
+                  {Number(item.ratio) * 100}% 操作（基数 {item.ratio_basis}）。请按实际成交回填。
+                </p>
+              )}
               <RecommendationActions
                 disabled={busy || item.status !== "pending"}
                 onSubmit={(kind, values = {}) =>

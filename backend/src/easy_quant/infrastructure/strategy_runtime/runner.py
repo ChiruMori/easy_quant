@@ -4,10 +4,13 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from easy_quant.domain.strategies.entities import (
@@ -68,8 +71,10 @@ class SubprocessStrategyRunner:
                             {"context": context_data, "phase": phase}
                             for context_data, phase in calls
                         ],
-                    }
-                ),
+                    },
+                    default=str,
+                )
+                + "\n",
                 text=True,
                 capture_output=True,
                 timeout=self.timeout_seconds,
@@ -100,6 +105,79 @@ class SubprocessStrategyRunner:
             self._apply_result(run, result)
         return runs
 
+    def run_live(
+        self,
+        version: StrategyVersion,
+        parameters: dict[str, object],
+        context_data: dict[str, object],
+        *,
+        phase: str,
+        quotes: Callable[[list[str]], dict[str, object]],
+    ) -> StrategyRun:
+        """父进程代理报价；动态策略自身无网络、凭据或数据库权限。"""
+        run = StrategyRun(f"run-{version.id}", version.id, StrategyRunStatus.RUNNING, parameters)
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not any(token in key.upper() for token in ("SECRET", "TOKEN", "PASSWORD", "KEY"))
+        }
+        process = subprocess.Popen(
+            [sys.executable, "-I", str(Path(__file__).with_name("child.py"))],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            env=environment,
+        )
+        reader = ThreadPoolExecutor(max_workers=1)
+        deadline = monotonic() + self.timeout_seconds
+        try:
+            assert process.stdin is not None and process.stdout is not None
+            process.stdin.write(
+                json.dumps(
+                    {
+                        "source_code": version.source_code,
+                        "parameters": parameters,
+                        "calls": [{"context": {**context_data, "runtime": "live"}, "phase": phase}],
+                    },
+                    default=str,
+                    ensure_ascii=True,
+                )
+                + "\n"
+            )
+            process.stdin.flush()
+            for _ in range(1001):
+                line = reader.submit(process.stdout.readline, self.result_limit + 1).result(
+                    timeout=max(0, deadline - monotonic())
+                )
+                if not line or len(line.encode()) > self.result_limit:
+                    raise RuntimeError("策略返回无效或过大结果")
+                payload = json.loads(line)
+                if "quote_request" not in payload:
+                    self._apply_result(run, payload["results"][0])
+                    break
+                symbols = payload["quote_request"]
+                if phase != "on_market" or not isinstance(symbols, list) or len(symbols) > 10000:
+                    raise ValueError("非法报价请求")
+                response = {"quotes": quotes([str(item) for item in symbols])}
+                process.stdin.write(json.dumps(response, default=str, ensure_ascii=True) + "\n")
+                process.stdin.flush()
+            else:
+                raise ValueError("报价请求次数超过限制")
+        except (FutureTimeoutError, ValueError, RuntimeError, KeyError, OSError) as error:
+            run.status, run.error = StrategyRunStatus.FAILED, str(error) or "策略运行超时"
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            if process.stdin:
+                process.stdin.close()
+            if process.stdout:
+                process.stdout.close()
+            reader.shutdown(wait=False, cancel_futures=True)
+        return run
+
     def _apply_result(self, run: StrategyRun, payload: object) -> None:
         if not isinstance(payload, dict):
             run.status, run.error = StrategyRunStatus.FAILED, "策略子进程返回无效结果"
@@ -121,17 +199,59 @@ class SubprocessStrategyRunner:
                 Signal(
                     str(item["symbol"]),
                     str(item["action"]),
-                    __import__("decimal").Decimal(str(item["quantity"])),
+                    Decimal(str(item["quantity"])),
                     str(item.get("reason", "")),
-                    __import__("decimal").Decimal(str(item["trigger_price"]))
+                    Decimal(str(item["trigger_price"]))
                     if item.get("trigger_price") is not None
+                    else None,
+                    str(item["trigger_operator"]) if item.get("trigger_operator") else None,
+                    Decimal(str(item["ratio"])) if item.get("ratio") is not None else None,
+                    Decimal(str(item["ratio_basis"]))
+                    if item.get("ratio_basis") is not None
+                    else None,
+                    Decimal(str(item["reference_price"]))
+                    if item.get("reference_price") is not None
                     else None,
                 )
                 for item in payload["signals"]
             ]
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, ArithmeticError):
             run.status, run.error = StrategyRunStatus.FAILED, "策略信号格式无效"
             return
+        if any(
+            signal.action not in {"buy", "sell"}
+            or not signal.quantity.is_finite()
+            or signal.quantity < 0
+            or signal.trigger_operator not in {None, "lte", "gte"}
+            or (
+                signal.ratio is not None
+                and (not signal.ratio.is_finite() or not 0 < signal.ratio <= 1)
+            )
+            or (
+                signal.ratio_basis is not None
+                and (not signal.ratio_basis.is_finite() or signal.ratio_basis < 0)
+            )
+            or (
+                signal.trigger_price is not None
+                and (not signal.trigger_price.is_finite() or signal.trigger_price <= 0)
+            )
+            or (
+                signal.reference_price is not None
+                and (not signal.reference_price.is_finite() or signal.reference_price <= 0)
+            )
+            for signal in run.signals
+        ):
+            run.status, run.error = StrategyRunStatus.FAILED, "策略信号数值或触发条件无效"
+            return
+        state = payload.get("state", {})
+        if (
+            not isinstance(state, dict)
+            or len(json.dumps(state, ensure_ascii=True).encode()) > 256 * 1024
+        ):
+            run.status, run.error = StrategyRunStatus.FAILED, "策略状态格式或大小无效"
+            return
+        run.state = state
+        run.mock_usage = list(payload.get("mock_usage", []))
         run.status = StrategyRunStatus.SUCCEEDED
 
 
@@ -205,7 +325,7 @@ class StreamingStrategyRunner:
         # Windows 子进程默认控制台编码未必是 UTF-8；行协议保持纯 ASCII。
         self._process.stdin.write(json.dumps(request, ensure_ascii=True, default=str) + "\n")
         self._process.stdin.flush()
-        future = self._reader.submit(self._process.stdout.readline)
+        future = self._reader.submit(self._process.stdout.readline, self.result_limit + 1)
         try:
             line = future.result(timeout=self.timeout_seconds)
         except FutureTimeoutError:
@@ -230,7 +350,7 @@ class StreamingStrategyRunner:
         prior_after: list[dict[str, object]],
         today_after: list[dict[str, object]],
         today_symbols: list[str],
-        current_prices: dict[str, float],
+        current_prices: dict[str, Any],
         records: dict[str, object] | None = None,
     ) -> list[StrategyRun]:
         request = _day_request(
@@ -257,10 +377,17 @@ class StreamingStrategyRunner:
         prior_after: list[dict[str, object]],
         today_after: list[dict[str, object]],
         today_symbols: list[str],
-        current_prices: dict[str, float],
+        current_prices: dict[str, Any],
         positions: dict[str, str],
         cash: str,
         records: dict[str, object] | None = None,
+        costs: dict[str, str] | None = None,
+        runtime: str = "backtest",
+        allow_mock: bool = False,
+        decision_at: str | None = None,
+        fee_rate: str = "0.0003",
+        slippage_rate: str = "0",
+        prior_intraday: list[dict[str, object]] | None = None,
     ) -> StrategyRun:
         request = _day_request(
             trading_day,
@@ -273,6 +400,18 @@ class StreamingStrategyRunner:
             records,
         )
         request.update({"phase": phase, "positions": dict(positions), "cash": cash})
+        request["prior_intraday"] = prior_intraday or []
+        request.update(
+            {
+                "costs": costs or {},
+                "runtime": runtime,
+                "allow_mock": allow_mock,
+                "fee_rate": fee_rate,
+                "slippage_rate": slippage_rate,
+            }
+        )
+        if decision_at:
+            request["decision_at"] = decision_at
         return self._run_request(trading_day, (phase,), request)[0]
 
     def _run_request(
@@ -315,7 +454,7 @@ def _day_request(
     prior_after: list[dict[str, object]],
     today_after: list[dict[str, object]],
     today_symbols: list[str],
-    current_prices: dict[str, float],
+    current_prices: dict[str, Any],
     records: dict[str, object] | None,
 ) -> dict[str, object]:
     def price_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:

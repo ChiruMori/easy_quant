@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import heapq
+import json
 import logging
 import time as clock
 from collections import deque
@@ -124,11 +126,23 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
     history_window = extract_history_trading_days(version.source_code)
     backtest_session = PhasedBacktestSession(config)
     recent_days: deque[date] = deque(maxlen=history_window + 1)
+    warmup_days = sorted(
+        day for day in container.market_data.list_trading_days() if day < start_day
+    )[-history_window:]
+    history_start = warmup_days[0] if warmup_days else start_day
+    recent_days.extend(warmup_days)
     pending: list[tuple[datetime, int, dict[str, object]]] = []
     sequence = 0
     row_count = 0
     day_count = 0
     started = clock.monotonic()
+    for row in container.market_data.iter_runtime_bars(
+        history_start, start_day - timedelta(days=1)
+    ):
+        if str(row["symbol"]) not in excluded:
+            available_at = datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
+            heapq.heappush(pending, (available_at, sequence, row))
+            sequence += 1
 
     def due_rows(cutoff: datetime, earliest_day: date) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
@@ -143,7 +157,9 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
         for row in container.market_data.iter_runtime_bars(start_day, end_day)
         if str(row["symbol"]) not in excluded
     )
-    with StreamingStrategyRunner(version, {}, timeout_seconds=30) as runner:
+    with StreamingStrategyRunner(
+        version, dict(payload.get("parameters", {})), timeout_seconds=30
+    ) as runner:
         for trading_day_text, day_group in groupby(rows, key=lambda row: str(row["trading_day"])):
             trading_day = date.fromisoformat(trading_day_text)
             today_rows = list(day_group)
@@ -158,10 +174,16 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
             before_cutoff = datetime.combine(
                 trading_day, time(9), ZoneInfo("Asia/Shanghai")
             ).astimezone(UTC)
+            intraday_cutoff = datetime.combine(
+                trading_day,
+                time.fromisoformat(container.settings.intraday_run_time),
+                ZoneInfo("Asia/Shanghai"),
+            ).astimezone(UTC)
             after_cutoff = datetime.combine(
                 trading_day, time(23, 59, 59), ZoneInfo("Asia/Shanghai")
             ).astimezone(UTC)
             prior_before = due_rows(before_cutoff, expire_before)
+            prior_intraday = due_rows(intraday_cutoff, expire_before)
             prior_after = due_rows(after_cutoff, expire_before)
             today_after = []
             for row in today_rows:
@@ -186,11 +208,17 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
             ]
 
             today_symbols = sorted({str(row["symbol"]) for row in today_rows})
-            current_prices = {str(row["symbol"]): float(str(row["open"])) for row in today_rows}
+            current_prices = {
+                str(row["symbol"]): str(
+                    (Decimal(str(row["open"])) + Decimal(str(row["close"]))) / 2
+                )
+                for row in today_rows
+            }
             phase_inputs: dict[str, dict[str, Any]] = {
                 phase: {
                     "expire_before": expire_before,
                     "prior_before": prior_before if phase == "before_market" else [],
+                    "prior_intraday": prior_intraday if phase == "on_market" else [],
                     "prior_after": prior_after if phase == "after_market" else [],
                     "today_after": today_after if phase == "after_market" else [],
                     "today_symbols": today_symbols,
@@ -198,8 +226,17 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                     "records": {
                         phase: visible_records(after_cutoff)
                         if phase == "after_market"
+                        else visible_records(intraday_cutoff)
+                        if phase == "on_market"
                         else records_before
                     },
+                    "decision_at": (
+                        after_cutoff
+                        if phase == "after_market"
+                        else intraday_cutoff
+                        if phase == "on_market"
+                        else before_cutoff
+                    ).isoformat(),
                 }
                 for phase in ("before_market", "on_market", "after_market")
             }
@@ -217,6 +254,9 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                         symbol: str(quantity) for symbol, quantity in portfolio.positions.items()
                     },
                     cash=str(portfolio.cash),
+                    costs={symbol: str(value) for symbol, value in portfolio.costs.items()},
+                    fee_rate=str(config.fee_rate),
+                    slippage_rate=str(config.slippage_rate),
                     **inputs[phase],
                 )
                 if result.status != "succeeded":
@@ -275,7 +315,7 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
         clock.monotonic() - started,
     )
     with SnapshotSpool() as snapshot:
-        for row in container.market_data.iter_snapshot_bars(start_day, end_day):
+        for row in container.market_data.iter_snapshot_bars(history_start, end_day):
             if str(row["symbol"]) not in excluded:
                 snapshot.append(row)
         snapshot_id = snapshot.finish()
@@ -308,7 +348,12 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
             ],
             "assumptions": {
                 "frequency": "daily",
-                "strategy_context_protocol": "phase-portfolio-v1",
+                "strategy_context_protocol": "strategy-library-v2",
+                "intraday_quote": "open-close-midpoint-v1 (contains closing information)",
+                "warmup_start_day": history_start.isoformat(),
+                "fundamental_snapshot_sha256": hashlib.sha256(
+                    json.dumps(generic_records, sort_keys=True, default=str).encode()
+                ).hexdigest(),
                 "fee_rate": str(config.fee_rate),
                 "slippage_rate": str(config.slippage_rate),
                 "excluded_delisted_symbols": sorted(excluded),

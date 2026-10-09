@@ -1,6 +1,7 @@
 import {
   Activity,
   Bell,
+  BookOpen,
   ChartNoAxesCombined,
   Database,
   FlaskConical,
@@ -29,6 +30,7 @@ const entries = [
   ["/", "概览", Gauge],
   ["/strategies", "策略", FlaskConical],
   ["/factors", "因子", FunctionSquare],
+  ["/strategy-library", "策略公共库", BookOpen],
   ["/backtests", "回测", ChartNoAxesCombined],
   ["/live", "实盘", Activity],
   ["/notifications", "通知设置", Bell],

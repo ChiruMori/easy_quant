@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 from easy_quant.domain.market_data.entities import SemanticRequest
 from easy_quant.infrastructure.data_sources.eastmoney.client import EastMoneyClient
@@ -41,15 +42,13 @@ class EastMoneySource:
                 "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
             }
         elif request.dataset_key == "live-quotes":
-            path = "api/qt/clist/get"
+            path = "api/qt/ulist.np/get"
             parameters = {
-                "pn": 1,
-                "pz": 10000,
-                "po": 1,
-                "np": 1,
                 "fltt": 2,
-                "fid": "f3",
-                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
+                "secids": ",".join(
+                    _quote_secid(str(symbol))
+                    for symbol in cast(list[str], parameters.get("symbols", []))
+                ),
                 "fields": "f2,f12,f14",
             }
         elif request.dataset_key == "market-values":
@@ -78,3 +77,8 @@ def diagnose_page(total: int, rows: list[object], page: int, page_size: int) -> 
         "actual": len(rows),
         "complete": len(rows) == expected,
     }
+
+
+def _quote_secid(symbol: str) -> str:
+    market = "1" if symbol.startswith(("5", "6", "9")) and not symbol.startswith("92") else "0"
+    return f"{market}.{symbol}"

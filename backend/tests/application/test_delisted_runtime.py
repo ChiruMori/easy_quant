@@ -74,13 +74,17 @@ def test_quick_test_excludes_delisted_bars_and_hardcoded_signals(monkeypatch, fi
         def __init__(self, *_args, **_kwargs):
             pass
 
-        def run_many(self, _version, _parameters, values):
-            contexts.extend(context for context, _phase in values)
-            return [
-                StrategyRun("run", "v", StrategyRunStatus.SUCCEEDED, {}, _signals()) for _ in values
-            ]
+        def __enter__(self):
+            return self
 
-    monkeypatch.setattr(strategy_quick_test, "SubprocessStrategyRunner", Runner)
+        def __exit__(self, *_args):
+            return None
+
+        def run_phase(self, _day, **inputs):
+            contexts.append(inputs)
+            return StrategyRun("run", "v", StrategyRunStatus.SUCCEEDED, {}, _signals())
+
+    monkeypatch.setattr(strategy_quick_test, "StreamingStrategyRunner", Runner)
     result = strategy_quick_test.execute_strategy_tick(
         container,
         {
@@ -90,9 +94,9 @@ def test_quick_test_excludes_delisted_bars_and_hardcoded_signals(monkeypatch, fi
             "trading_day": "2026-09-29",
         },
     )
-    assert all("000002" not in context["universe"] for context in contexts)
-    assert all("000003" not in context["universe"] for context in contexts)
-    assert contexts[1]["universe"] == ["000001"]
+    assert all("000002" not in context["today_symbols"] for context in contexts)
+    assert all("000003" not in context["today_symbols"] for context in contexts)
+    assert contexts[1]["today_symbols"] == ["000001"]
     phase_results = result["phase_results"]
     assert isinstance(phase_results, list)
     assert all(isinstance(item, dict) and item["signals"] == [] for item in phase_results)

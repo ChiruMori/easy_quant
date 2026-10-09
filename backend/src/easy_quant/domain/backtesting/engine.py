@@ -66,7 +66,7 @@ def run_phased_daily_backtest(
 ) -> tuple[list[BacktestPeriod], list[SimulatedTrade], dict[str, Decimal | int | None]]:
     """按盘前、盘中、盘后顺序运行策略；回测路径没有通知副作用。
 
-    盘前信号按开盘价成交，盘中限价信号仅在当日高低价覆盖触发价时成交，
+    盘前信号按开盘价成交，盘中以开收盘均值检查指定方向的触发条件，
     盘后信号按收盘价成交。这样不会把盘中条件错误地统一按收盘价执行。
     """
 
@@ -153,8 +153,11 @@ def _phase_price(phase: str, signal: Signal, bar: MarketBar) -> Decimal | None:
         return bar.open if bar.open is not None else bar.close
     if phase == "after_market":
         return bar.close
+    price = ((bar.open if bar.open is not None else bar.close) + bar.close) / 2
     if signal.trigger_price is None:
-        return bar.open if bar.open is not None else bar.close
-    low = bar.low if bar.low is not None else bar.close
-    high = bar.high if bar.high is not None else bar.close
-    return signal.trigger_price if low <= signal.trigger_price <= high else None
+        return price
+    operator = signal.trigger_operator or ("lte" if signal.action == "buy" else "gte")
+    triggered = (
+        price <= signal.trigger_price if operator == "lte" else price >= signal.trigger_price
+    )
+    return price if triggered else None

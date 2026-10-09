@@ -45,6 +45,7 @@ export interface MarketDataCoverage {
     freshness_status: "updated" | "stale" | "not_updated" | "suspended" | "delisted"
     updated: boolean
     stale: boolean
+    publication_pending?: boolean
     previous_trading_day: string
     recommended_end_day: string
   }>

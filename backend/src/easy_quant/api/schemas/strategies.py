@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -12,3 +13,5 @@ class StrategyCreateRequest(BaseModel):
 class StrategyRunRequest(BaseModel):
     trading_day: date
     parameters: dict[str, object] = Field(default_factory=dict)
+    allow_mock: bool = False
+    initial_cash: Decimal = Field(default=Decimal("1000000"), gt=0, allow_inf_nan=False)

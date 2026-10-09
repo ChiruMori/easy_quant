@@ -24,6 +24,9 @@ export interface StrategyRun {
     error?: string
   }>
   error?: string
+  allow_mock?: boolean
+  mock_usage?: Array<{ factor: string; symbol: string; count: number }>
+  portfolio?: { cash: string; positions: Record<string, string> }
 }
 export interface StrategyTemplate {
   key: string

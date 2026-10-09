@@ -1,18 +1,16 @@
 def before_market(context, parameters):
-    """使用平台市值和历史预期回报因子选股。"""
+    """以市值和历史预期回报筛选候选股票。"""
+    ratio = parameters.get("ratio", "0.10")
     signals = []
     for symbol in context.universe():
         value = context.factor("market.value", symbol=symbol)
         expected = context.factor("stat.expected-return", symbol=symbol)
         if value and expected["available"] and expected["expected_return"] > 0:
-            signals.append(
-                {
-                    "symbol": symbol,
-                    "action": "buy",
-                    "quantity": int(parameters.get("quantity", 100)),
-                    "reason": "正预期回报候选",
-                }
-            )
+            bars = context.factor("market.daily-bars", symbol=symbol)
+            if bars:
+                signals.append(
+                    context.signal(symbol, "buy", ratio, "正预期回报候选", price=bars[-1]["close"])
+                )
     return signals
 
 

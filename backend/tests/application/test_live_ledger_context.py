@@ -169,4 +169,4 @@ def test_live_analysis_uses_declared_window_and_hides_today_before_market(
     ) as bars:
         live_runtime.analyze_live_instance(container, "l", "before_market", fixed_now)
     assert bars.call_count == 3
-    assert seen[0]["prices"]["000001"] == [12.0, 11.0]
+    assert seen[0]["prices"]["000001"] == ["12", "11"]

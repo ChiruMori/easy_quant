@@ -41,12 +41,18 @@ def execute_signal(
         if portfolio.cash < gross + fee:
             return None
         portfolio.cash -= gross + fee
+        previous = portfolio.position(signal.symbol)
+        portfolio.costs[signal.symbol] = (
+            portfolio.costs.get(signal.symbol, Decimal(0)) * previous + gross + fee
+        ) / (previous + signal.quantity)
         portfolio.positions[signal.symbol] = portfolio.position(signal.symbol) + signal.quantity
     else:
         if portfolio.position(signal.symbol) < signal.quantity:
             return None
         portfolio.cash += gross - fee
         portfolio.positions[signal.symbol] = portfolio.position(signal.symbol) - signal.quantity
+        if portfolio.positions[signal.symbol] == 0:
+            portfolio.costs.pop(signal.symbol, None)
     return SimulatedTrade(
         bar.trading_day, signal.symbol, signal.action, signal.quantity, price, fee, slippage
     )

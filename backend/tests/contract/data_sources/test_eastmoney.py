@@ -40,3 +40,19 @@ def test_eastmoney_daily_bars_map_adjustment_to_fqt() -> None:
                 )
             )
     assert seen == ["0", "1"]
+
+
+def test_live_quotes_request_only_selected_symbols():
+    seen = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return httpx.Response(200, json={"data": {"diff": []}})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        EastMoneySource(EastMoneyClient(client)).fetch(
+            SemanticRequest("live-quotes", {"symbols": ["000001", "600001"]}, "q")
+        )
+    assert seen[0].path == "/api/qt/ulist.np/get"
+    assert seen[0].params["secids"] == "0.000001,1.600001"
+    assert "fs" not in seen[0].params

@@ -18,6 +18,7 @@
     "/auth/accept-invitation": {"post": {"operationId": "acceptInvitation", "responses": {"201": {"description": "accepted"}}}},
     "/factors": {"get": {"operationId": "listFactors", "responses": {"200": {"description": "factor catalog"}}}},
     "/factors/{key}": {"get": {"operationId": "getFactor", "responses": {"200": {"description": "factor detail"}}}},
+    "/strategy-library": {"get": {"operationId": "listStrategyLibrary", "responses": {"200": {"description": "策略公共库签名、参数、返回、示例与运行时约束"}}}},
     "/strategies": {"get": {"operationId": "listStrategies", "responses": {"200": {"description": "strategies"}}}, "post": {"operationId": "createStrategy", "responses": {"201": {"description": "created"}}}},
     "/strategies/templates": {"get": {"operationId": "listStrategyTemplates", "responses": {"200": {"description": "templates"}}}},
     "/strategies/{strategy_id}/versions": {"post": {"operationId": "createStrategyVersion", "responses": {"201": {"description": "created"}}}},

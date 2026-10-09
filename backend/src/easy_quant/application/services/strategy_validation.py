@@ -48,6 +48,13 @@ def extract_factor_dependencies(source_code: str) -> set[str]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
+        helpers = {
+            "security_info": {"security-status", "sw-industry-memberships"},
+            "securities": {"sw-industry-memberships", "security-status"},
+            "financials": {"financial-indicators"},
+            "valuation": {"market-values"},
+        }
+        datasets.update(helpers.get(node.func.attr, set()))
         if (
             node.func.attr != "factor"
             or not node.args

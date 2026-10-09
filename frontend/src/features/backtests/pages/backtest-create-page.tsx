@@ -68,6 +68,7 @@ export function BacktestCreatePage() {
               slippage_rate: data.get("slippage"),
               benchmark: data.get("benchmark") || null,
               random_seed: Number(data.get("seed")),
+              parameters: JSON.parse(String(data.get("parameters") || "{}")),
             })
             navigate(`/backtests/${run.id}`)
           } catch (reason) {
@@ -111,6 +112,11 @@ export function BacktestCreatePage() {
             <Field>
               <FieldLabel htmlFor="cash">初始资金</FieldLabel>
               <Input id="cash" type="number" name="cash" min="1" defaultValue="100000" required />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="strategy-parameters">策略参数（JSON）</FieldLabel>
+              <Input id="strategy-parameters" name="parameters" defaultValue="{}" />
+              <FieldDescription>传给三个钩子的 parameters；实盘启动时默认沿用。</FieldDescription>
             </Field>
             <div className="grid gap-4 md:grid-cols-2">
               <Field>
