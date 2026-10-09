@@ -1,62 +1,45 @@
 name: easy-quant
 services:
-  db:
-    image: mariadb:11.4
-    environment:
-      MARIADB_DATABASE: easy_quant
-      MARIADB_USER: easy_quant
-      MARIADB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD}
-    volumes: [ "mariadb-data:/var/lib/mysql" ]
-    healthcheck:
-      test: [ "CMD", "healthcheck.sh", "--connect", "--innodb_initialized" ]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-  migrate:
-    build: ../backend
-    command: [ "uv", "run", "--no-sync", "alembic", "upgrade", "head" ]
+  api:
+    image: ${IMAGE_PREFIX:-ghcr.io/chirumori/easy_quant}-backend:${IMAGE_TAG:-master}
     environment: &backend-env
-      EASY_QUANT_DATABASE_URL: mysql+pymysql://easy_quant:${DB_PASSWORD}@db:3306/easy_quant
+      EASY_QUANT_DATABASE_URL: ${DATABASE_URL:?set external MariaDB DATABASE_URL}
       EASY_QUANT_SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
       EASY_QUANT_CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?set CREDENTIAL_ENCRYPTION_KEY}
       EASY_QUANT_INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
       EASY_QUANT_INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?set INITIAL_ADMIN_PASSWORD}
       EASY_QUANT_SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
-      EASY_QUANT_INTRADAY_POLL_SECONDS: ${INTRADAY_POLL_SECONDS:-60}
+      EASY_QUANT_WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-1}
+      EASY_QUANT_STRATEGY_TIMEOUT_SECONDS: ${STRATEGY_TIMEOUT_SECONDS:-30}
+      EASY_QUANT_STRATEGY_OUTPUT_LIMIT_BYTES: ${STRATEGY_OUTPUT_LIMIT_BYTES:-65536}
+      EASY_QUANT_INTRADAY_RUN_TIME: ${INTRADAY_RUN_TIME:-14:50}
+      EASY_QUANT_DAILY_DATA_PUBLISH_TIME: ${DAILY_DATA_PUBLISH_TIME:-22:00}
       EASY_QUANT_NTFY_BASE_URL: ${NTFY_BASE_URL:-https://ntfy.sh}
       EASY_QUANT_SMTP_HOST: ${SMTP_HOST:-}
       EASY_QUANT_SMTP_PORT: ${SMTP_PORT:-25}
       EASY_QUANT_SMTP_SENDER: ${SMTP_SENDER:-}
       EASY_QUANT_SMTP_USERNAME: ${SMTP_USERNAME:-}
       EASY_QUANT_SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-    depends_on:
-      db: { condition: service_healthy }
-    restart: "no"
-  api:
-    build: ../backend
-    environment: *backend-env
-    depends_on:
-      migrate: { condition: service_completed_successfully }
     healthcheck:
-      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/v1/health')" ]
+      test: ["CMD", "/app/backend/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/v1/health', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    init: true
     restart: unless-stopped
   worker:
-    build: ../backend
-    command: [ "uv", "run", "--no-sync", "easy-quant-worker" ]
+    image: ${IMAGE_PREFIX:-ghcr.io/chirumori/easy_quant}-backend:${IMAGE_TAG:-master}
+    command: ["uv", "run", "--project", "backend", "--no-sync", "easy-quant-worker"]
     environment: *backend-env
     depends_on:
-      migrate: { condition: service_completed_successfully }
+      api: {condition: service_healthy}
+    init: true
+    stop_grace_period: 60s
     restart: unless-stopped
   web:
-    build: ../frontend
-    ports: [ "${WEB_PORT:-8080}:80" ]
+    image: ${IMAGE_PREFIX:-ghcr.io/chirumori/easy_quant}-frontend:${IMAGE_TAG:-master}
+    ports: ["${WEB_BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8080}:80"]
     depends_on:
-      api: { condition: service_healthy }
+      api: {condition: service_healthy}
     restart: unless-stopped
-volumes:
-  mariadb-data:

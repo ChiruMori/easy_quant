@@ -39,7 +39,9 @@ pnpm test:e2e
 pnpm hooks:install
 ```
 
-`pnpm fix` 会统一执行前端 Prettier/ESLint 和后端 Ruff 自动修复；完整门禁还会执行 TypeScript、Pyright 与测试。pre-commit 会在每次提交前执行快速格式化、自动修复和类型检查。所有自动化测试离线运行，不访问真实数据库或第三方服务。单机容器部署见 [部署与运维](docs/部署与运维.md) 和 `deploy/compose.yaml`。
+`pnpm fix` 会统一执行前端 Prettier/ESLint 和后端 Ruff 自动修复；完整门禁还会执行 TypeScript、Pyright 与测试。pre-commit 会在每次提交前执行快速格式化、自动修复和类型检查。所有自动化测试离线运行，不访问真实数据库或第三方服务。
+
+master 的应用与部署相关更新会通过 GitHub Actions 检查并发布 GHCR 前后端镜像，成功运行提供固定 SHA 的部署包。单机 Compose 只启动 API、Web、单 worker；MariaDB 和通知服务由外部配置。部署端无需构建源码，填写环境后拉取镜像、执行迁移即可启动。完整步骤见 [部署与运维](docs/部署与运维.md) 和 [Compose 配置](deploy/compose.yaml)。
 
 ## 目录
 

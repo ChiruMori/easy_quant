@@ -1,0 +1,127 @@
+name: 构建并发布容器镜像
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "deploy/**"
+      - "tools/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/containers.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: containers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: 安装冻结依赖
+        run: |
+          uv sync --project backend --frozen
+          pnpm install --frozen-lockfile
+          pnpm --dir frontend install --frozen-lockfile
+      - name: 项目离线门禁
+        run: pnpm check
+      - name: 安装验收浏览器
+        run: pnpm --dir frontend exec playwright install --with-deps chrome
+      - name: 离线浏览器验收
+        run: pnpm test:e2e
+      - name: 校验三服务部署配置
+        run: docker compose --env-file deploy/.env.example -f deploy/compose.yaml config --quiet
+
+  publish:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: 生成小写镜像路径
+        id: image
+        shell: bash
+        run: echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 构建并发布后端固定版本
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.prefix }}-backend:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: 构建并发布前端固定版本
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.prefix }}-frontend:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+      - name: 镜像离线冒烟
+        env:
+          IMAGE_PREFIX: ${{ steps.image.outputs.prefix }}
+        run: |
+          docker run --rm --network none "$IMAGE_PREFIX-backend:sha-$GITHUB_SHA" uv run --project backend --no-sync python -c "import os,json,subprocess,sys; from easy_quant.config import BACKEND_ROOT; from easy_quant.strategy_api.catalog import LIBRARY; import easy_quant.infrastructure.strategy_runtime.child as child; assert os.getuid() == 65532; assert len(list((BACKEND_ROOT / 'resources/examples').glob('*.py'))) == 2; assert LIBRARY; assert not (BACKEND_ROOT / '.env').exists(); result = subprocess.run([sys.executable, '-I', child.__file__], input=json.dumps({'source_code':'def before_market(context, parameters):\n    return []','parameters':{},'phase':'before_market','context':{}}), capture_output=True, text=True, check=True); assert json.loads(result.stdout)['ok'], result.stdout"
+          docker run --rm --network none "$IMAGE_PREFIX-backend:sha-$GITHUB_SHA" uv run --project backend --no-sync alembic -c backend/alembic.ini heads
+          docker run --rm --network none --add-host api:127.0.0.1 "$IMAGE_PREFIX-frontend:sha-$GITHUB_SHA" sh -c 'nginx -t && nginx && wget -qO- http://127.0.0.1/healthz && wget -qO /dev/null http://127.0.0.1/strategies'
+      - name: 两个镜像成功后更新滚动标签
+        env:
+          IMAGE_PREFIX: ${{ steps.image.outputs.prefix }}
+        run: |
+          docker buildx imagetools create --tag "$IMAGE_PREFIX-backend:master" "$IMAGE_PREFIX-backend:sha-$GITHUB_SHA"
+          docker buildx imagetools create --tag "$IMAGE_PREFIX-frontend:master" "$IMAGE_PREFIX-frontend:sha-$GITHUB_SHA"
+      - name: 生成固定版本部署包
+        env:
+          IMAGE_PREFIX: ${{ steps.image.outputs.prefix }}
+        run: |
+          mkdir -p delivery
+          cp deploy/compose.yaml delivery/compose.yaml
+          sed -e "s|^IMAGE_PREFIX=.*|IMAGE_PREFIX=$IMAGE_PREFIX|" -e "s|^IMAGE_TAG=.*|IMAGE_TAG=sha-$GITHUB_SHA|" deploy/.env.example > delivery/.env.example
+          cp docs/部署与运维.md delivery/部署与运维.md
+          echo "镜像版本：sha-$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "镜像前缀：$IMAGE_PREFIX" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deploy-${{ github.sha }}
+          path: delivery/
+          include-hidden-files: true
+          retention-days: 90

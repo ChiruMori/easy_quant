@@ -1,0 +1,14 @@
+*
+!Dockerfile
+!package.json
+!pnpm-lock.yaml
+!index.html
+!nginx.conf
+!tsconfig*.json
+!vite.config.ts
+!src/
+!src/**
+!public/
+!public/**
+**/.env
+**/*.env
