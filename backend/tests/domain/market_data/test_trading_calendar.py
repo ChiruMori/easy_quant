@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 from easy_quant.domain.market_data.calendar import FreshnessStatus, TradingCalendar
 
 
-def test_updated_always_uses_previous_trading_day_even_after_close() -> None:
+def test_data_before_nightly_publish_uses_previous_trading_day() -> None:
     calendar = TradingCalendar({date(2026, 9, 30), date(2026, 10, 1)})
     result = calendar.freshness(
         first_day=date(2020, 1, 1),
@@ -12,7 +12,7 @@ def test_updated_always_uses_previous_trading_day_even_after_close() -> None:
     )
     assert result.status is FreshnessStatus.UPDATED
     assert result.previous_trading_day == date(2026, 9, 30)
-    assert result.recommended_end_day == date(2026, 10, 1)
+    assert result.recommended_end_day == date(2026, 9, 30)
 
 
 def test_stale_history_recommends_previous_trading_day_before_close() -> None:

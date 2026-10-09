@@ -39,6 +39,11 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await expect(page.getByText(/5 日均线/).first()).toBeVisible()
   await expect(page.getByText(/context\.factor/).first()).toBeVisible()
 
+  await page.goto("/strategy-library")
+  await expect(page.getByRole("heading", { name: "策略公共库" })).toBeVisible()
+  await page.getByLabel("搜索库函数").fill("store")
+  await expect(page.getByText(/context\.store\.set/).first()).toBeVisible()
+
   await page.goto("/strategies")
   await page.getByRole("button", { name: "使用5 日均线选股" }).click()
   await page.getByLabel("名称").fill(`均线策略-${Date.now()}`)
@@ -64,7 +69,7 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
     `/api/v1/live-instances/${liveId}/analyze/before_market`,
     {
       headers,
-      data: { decision_at: "2026-09-29T01:00:00+00:00" },
+      data: { decision_at: "2026-01-30T01:00:00+00:00" },
     },
   )
   expect(analysis.ok()).toBeTruthy()
@@ -88,7 +93,8 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   const portfolio = (
     await (await page.request.get(`/api/v1/recommendations/portfolio/${liveId}`)).json()
   ).data
-  expect(portfolio.positions["000001"]).toBe("100")
+  expect(recommendation.ratio).toBe("0.10")
+  expect(portfolio.positions["000001"]).toBe(recommendation.quantity)
   expect(portfolio.ledger).toHaveLength(1)
   await page.reload()
   await expect(page.getByText(/已确认/)).toBeVisible()
@@ -101,31 +107,18 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   })
   expect(limitedResponse.ok()).toBeTruthy()
   const limited = (await limitedResponse.json()).data
-  expect(
-    (
-      await page.request.post(`/api/v1/live-instances/${limited.id}/analyze/before_market`, {
-        headers,
-        data: { decision_at: "2026-09-29T01:00:00+00:00" },
-      })
-    ).ok(),
-  ).toBeTruthy()
+  const limitedAnalysis = await page.request.post(
+    `/api/v1/live-instances/${limited.id}/analyze/before_market`,
+    { headers, data: { decision_at: "2026-01-30T01:00:00+00:00" } },
+  )
+  expect(limitedAnalysis.ok()).toBeTruthy()
+  expect((await limitedAnalysis.json()).data.created).toEqual([])
   await page.goto(`/live/${limited.id}`)
-  await page.getByRole("button", { name: "快速确认" }).click()
-  await expect(page.getByRole("alert")).toContainText("账本产生负现金")
+  await expect(page.getByRole("button", { name: "快速确认" })).toHaveCount(0)
   const unchanged = (
     await (await page.request.get(`/api/v1/recommendations/portfolio/${limited.id}`)).json()
   ).data
   expect(unchanged.cash).toBe("1")
   expect(unchanged.ledger).toHaveLength(0)
-  await expect(page.getByRole("button", { name: "修正成交" })).toBeEnabled()
-  await page.getByRole("button", { name: "修正成交" }).click()
-  await page.getByLabel("实际标的").fill("000001")
-  await page.getByLabel("实际数量").fill("1")
-  await page.getByLabel("实际价格").fill("0.5")
-  await page.getByRole("button", { name: "提交修正" }).click()
-  await expect(page.getByText(/已修正/)).toBeVisible()
-  await expect(page.getByRole("button", { name: "快速确认" })).toBeDisabled()
-  await page.reload()
-  await expect(page.getByText(/已修正/)).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath("atomic-live-actions.png"), fullPage: true })
 })

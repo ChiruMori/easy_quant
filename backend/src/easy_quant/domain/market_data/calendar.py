@@ -31,7 +31,7 @@ class TradingCalendar:
     def previous_trading_day(self, day: date) -> date:
         if self._trading_days is not None:
             known = [candidate for candidate in self._trading_days if candidate < day]
-            if known and (day - max(known)).days <= 7:
+            if known:
                 return max(known)
         candidate = day - timedelta(days=1)
         while candidate.weekday() >= 5:
@@ -44,7 +44,7 @@ class TradingCalendar:
         first_day: date | None,
         last_day: date | None,
         now: datetime,
-        close_time: time = time(15, 0),
+        close_time: time = time(22, 0),
     ) -> MarketDataFreshness:
         local_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
         previous = self.previous_trading_day(local_now.date())
@@ -53,7 +53,7 @@ class TradingCalendar:
             if self.is_trading_day(local_now.date()) and local_now.time() >= close_time
             else previous
         )
-        if last_day is not None and last_day >= previous:
+        if last_day is not None and last_day >= recommended:
             status = FreshnessStatus.UPDATED
         elif first_day is not None and last_day is not None and (last_day - first_day).days >= 90:
             status = FreshnessStatus.STALE

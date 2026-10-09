@@ -262,6 +262,9 @@ export function DatasetsPage() {
                       <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
                         <Badge variant="secondary">{item.sync_status}</Badge>
                         {item.status === "active" && item.updated && <Badge>已更新</Badge>}
+                        {item.publication_pending && (
+                          <Badge variant="outline">来源尚未发布新数据</Badge>
+                        )}
                         {item.status === "active" && item.stale && (
                           <Badge variant="destructive">已过时</Badge>
                         )}
@@ -273,31 +276,14 @@ export function DatasetsPage() {
                             onClick={() =>
                               void enqueueSync(
                                 item.symbol,
-                                item.previous_trading_day,
-                                item.last_trading_day ?? item.previous_trading_day,
+                                item.recommended_end_day,
+                                item.last_trading_day ?? item.recommended_end_day,
                               )
                             }
                           >
-                            更新至 {item.previous_trading_day}
+                            更新至 {item.recommended_end_day}
                           </Button>
                         )}
-                        {item.status === "active" &&
-                          item.stale &&
-                          item.recommended_end_day !== item.previous_trading_day && (
-                            <Button
-                              size="sm"
-                              disabled={syncingSymbol === item.symbol}
-                              onClick={() =>
-                                void enqueueSync(
-                                  item.symbol,
-                                  item.recommended_end_day,
-                                  item.last_trading_day ?? item.previous_trading_day,
-                                )
-                              }
-                            >
-                              更新至今日
-                            </Button>
-                          )}
                       </div>
                     </TableCell>
                   </TableRow>

@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, date, datetime, time
+from decimal import Decimal
 from time import perf_counter
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from easy_quant.application.services.instrument_eligibility import currently_unavailable_symbols
 from easy_quant.application.services.strategy_validation import extract_factor_dependencies
+from easy_quant.domain.backtesting.engine import PhasedBacktestSession
+from easy_quant.domain.backtesting.entities import BacktestConfig
+from easy_quant.domain.backtesting.execution import MarketBar
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.infrastructure.persistence.market_data_pages import DailyBarPageCache
-from easy_quant.infrastructure.strategy_runtime.runner import SubprocessStrategyRunner
+from easy_quant.infrastructure.strategy_runtime.runner import StreamingStrategyRunner
 
 QUICK_TEST_PRIOR_TRADING_DAYS = 5
 logger = logging.getLogger(__name__)
@@ -101,7 +105,11 @@ def execute_strategy_tick(
         include_today = phase == "after_market"
         cutoff = datetime.combine(
             trading_day,
-            time(23, 59, 59) if include_today else time(9),
+            time(23, 59, 59)
+            if include_today
+            else time.fromisoformat(container.settings.intraday_run_time)
+            if phase == "on_market"
+            else time(9),
             ZoneInfo("Asia/Shanghai"),
         ).astimezone(UTC)
         visible_bars = [
@@ -113,9 +121,9 @@ def execute_strategy_tick(
                 or (include_today and str(row["trading_day"]) == trading_day.isoformat())
             )
         ]
-        prices: dict[str, list[float]] = {}
+        prices: dict[str, list[str]] = {}
         for row in sorted(visible_bars, key=lambda item: str(item["trading_day"])):
-            prices.setdefault(str(row["symbol"]), []).append(float(str(row["close"])))
+            prices.setdefault(str(row["symbol"]), []).append(str(row["close"]))
         today_rows = [row for row in bars if str(row["trading_day"]) == trading_day.isoformat()]
         symbols = sorted(
             {str(row["symbol"]) for row in visible_bars}
@@ -137,8 +145,12 @@ def execute_strategy_tick(
                     "positions": {},
                     "trading_day": trading_day.isoformat(),
                     "phase": phase,
+                    "decision_at": cutoff.isoformat(),
                     "current_prices": {
-                        str(row["symbol"]): float(str(row["open"])) for row in today_rows
+                        str(row["symbol"]): str(
+                            (Decimal(str(row["open"])) + Decimal(str(row["close"]))) / 2
+                        )
+                        for row in today_rows
                     }
                     if phase == "on_market"
                     else {},
@@ -147,49 +159,136 @@ def execute_strategy_tick(
             )
         )
 
-    context_finished = perf_counter()
-    results = SubprocessStrategyRunner(timeout_seconds=30).run_many(
-        version, dict(payload.get("parameters", {})), contexts
+    session = PhasedBacktestSession(
+        BacktestConfig(
+            version_id,
+            (),
+            trading_day,
+            trading_day,
+            Decimal(str(payload.get("initial_cash", "1000000"))),
+            Decimal("0.0003"),
+            Decimal("0"),
+        )
     )
-    runtime_finished = perf_counter()
-    logger.info(
-        "快测阶段完成 job_id=%s context_seconds=%.3f subprocess_seconds=%.3f cache_hits=%d",
-        job_id,
-        context_finished - read_finished,
-        runtime_finished - context_finished,
-        page_cache.stats()["hits"],
-    )
+    today_rows = [row for row in bars if str(row["trading_day"]) == trading_day.isoformat()]
+    market_bars = [
+        MarketBar(
+            trading_day,
+            str(row["symbol"]),
+            Decimal(str(row["close"])),
+            True,
+            Decimal(str(row["open"])),
+            Decimal(str(row["high"])),
+            Decimal(str(row["low"])),
+        )
+        for row in today_rows
+    ]
     phase_results = []
-    failed = False
-    for phase, result in zip(phases, results, strict=True):
-        failed = failed or result.status != "succeeded"
-        phase_results.append(
-            {
-                "phase": phase,
-                "status": result.status.value,
-                "signals": [
-                    {
-                        "symbol": signal.symbol,
-                        "action": signal.action,
-                        "quantity": str(signal.quantity),
-                        "reason": signal.reason,
-                    }
-                    for signal in result.signals
-                    if signal.symbol not in excluded
-                ],
-                "stdout": result.stdout,
-                "error": result.error,
-            }
-        )
-    if failed:
-        messages = [str(item["error"]) for item in phase_results if item.get("error")]
-        raise StateConflictError(
-            "策略快速测试失败", {"phase_results": phase_results, "errors": messages}
-        )
+    mock_usage = []
+    visible_before = [
+        row
+        for row in bars
+        if str(row["trading_day"]) < trading_day.isoformat()
+        and datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
+        <= datetime.fromisoformat(str(contexts[0][0]["decision_at"]))
+    ]
+    visible_after = [
+        row
+        for row in bars
+        if row not in visible_before
+        and datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
+        <= datetime.fromisoformat(str(contexts[2][0]["decision_at"]))
+    ]
+    with StreamingStrategyRunner(version, dict(payload.get("parameters", {}))) as runner:
+
+        def strategy(phase):
+            context = contexts[phases.index(phase)][0]
+            result = runner.run_phase(
+                trading_day,
+                phase=phase,
+                expire_before=previous_days[0] if previous_days else trading_day,
+                prior_before=visible_before if phase == "before_market" else [],
+                prior_intraday=[
+                    row
+                    for row in bars
+                    if str(row["trading_day"]) < trading_day.isoformat()
+                    and datetime.fromisoformat(str(contexts[0][0]["decision_at"]))
+                    < datetime.fromisoformat(str(row["available_at"]))
+                    <= datetime.fromisoformat(str(contexts[1][0]["decision_at"]))
+                ]
+                if phase == "on_market"
+                else [],
+                prior_after=[
+                    row
+                    for row in visible_after
+                    if str(row["trading_day"]) < trading_day.isoformat()
+                ]
+                if phase == "after_market"
+                else [],
+                today_after=[
+                    row
+                    for row in visible_after
+                    if str(row["trading_day"]) == trading_day.isoformat()
+                ]
+                if phase == "after_market"
+                else [],
+                today_symbols=[str(row["symbol"]) for row in today_rows],
+                current_prices=cast(dict[str, Any], context["current_prices"]),
+                records={phase: context["records"]},
+                positions={key: str(value) for key, value in session.portfolio.positions.items()},
+                costs={key: str(value) for key, value in session.portfolio.costs.items()},
+                cash=str(session.portfolio.cash),
+                runtime="quick_test",
+                allow_mock=bool(payload.get("allow_mock", False)),
+                decision_at=str(context["decision_at"]),
+            )
+            mock_usage.extend(result.mock_usage)
+            phase_results.append(
+                {
+                    "phase": phase,
+                    "status": result.status.value,
+                    "signals": [
+                        {
+                            "symbol": signal.symbol,
+                            "action": signal.action,
+                            "quantity": str(signal.quantity),
+                            "reason": signal.reason,
+                            "ratio": str(signal.ratio) if signal.ratio is not None else None,
+                        }
+                        for signal in result.signals
+                        if signal.symbol not in excluded
+                    ],
+                    "stdout": result.stdout,
+                    "error": result.error,
+                    "mock_usage": result.mock_usage,
+                }
+            )
+            if result.status != "succeeded":
+                raise StateConflictError("策略快速测试失败", {"phase_results": phase_results})
+            return result.signals
+
+        session.advance(trading_day, market_bars, strategy)
+    logger.info("快测完成 job_id=%s seconds=%.3f", job_id, perf_counter() - started)
     return {
         "status": "succeeded",
         "strategy_id": strategy_id,
         "strategy_version_id": version_id,
         "trading_day": trading_day.isoformat(),
         "phase_results": phase_results,
+        "mock_usage": mock_usage,
+        "allow_mock": bool(payload.get("allow_mock", False)),
+        "intraday_quote": "open-close-midpoint-v1 (contains closing information)",
+        "portfolio": {
+            "cash": str(session.portfolio.cash),
+            "positions": {key: str(value) for key, value in session.portfolio.positions.items()},
+        },
+        "trades": [
+            {
+                "symbol": trade.symbol,
+                "action": trade.action,
+                "quantity": str(trade.quantity),
+                "price": str(trade.price),
+            }
+            for trade in session.trades
+        ],
     }

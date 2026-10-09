@@ -13,6 +13,8 @@ export interface Recommendation {
   action: string
   instrument_id: string
   quantity: string
+  ratio?: string | null
+  ratio_basis?: string | null
   reason: string
   status: string
   version: number

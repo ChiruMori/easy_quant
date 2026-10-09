@@ -51,6 +51,7 @@ class SimulatedTrade:
 class Portfolio:
     cash: Decimal
     positions: dict[str, Decimal] = field(default_factory=dict)
+    costs: dict[str, Decimal] = field(default_factory=dict)
 
     def position(self, symbol: str) -> Decimal:
         return self.positions.get(symbol, Decimal(0))

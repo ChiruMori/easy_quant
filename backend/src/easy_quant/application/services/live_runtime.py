@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,7 @@ from easy_quant.application.services.strategy_validation import (
     extract_factor_dependencies,
     extract_history_trading_days,
 )
+from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.infrastructure.core import UuidGenerator
 from easy_quant.infrastructure.persistence.market_data_pages import DailyBarPageCache
@@ -30,10 +32,19 @@ def analyze_live_instance(
 ) -> dict[str, object]:
     if phase not in {"before_market", "on_market", "after_market"}:
         raise ValueError("未知策略阶段")
+    _drain_live_notifications(container, instance_id)
     with container.live_tracking.transaction() as state:
         instance = state.instances.get(instance_id)
         if instance is None or instance.get("status") != "active":
             raise StateConflictError("实盘实例不存在或未运行")
+        trading_day = decision_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        if not TradingCalendar(container.market_data.list_trading_days() or None).is_trading_day(
+            trading_day
+        ):
+            return {"phase": phase, "created": [], "skipped": "非交易日"}
+        if str(instance.get("completed_phases", {}).get(phase, "")) >= trading_day.isoformat():
+            return {"phase": phase, "created": [], "skipped": "该阶段已执行"}
+        state_revision = int(instance.get("state_revision", 0))
         portfolio = actual_portfolio(state, instance_id)
         instance = {
             **instance,
@@ -64,7 +75,7 @@ def analyze_live_instance(
     cutoff = decision_at.astimezone(UTC)
     excluded = currently_unavailable_symbols(container.market_data)
     universe_symbols: set[str] = set()
-    prices: dict[str, list[float]] = {}
+    prices: dict[str, list[str]] = {}
     found_bars = False
     for day in (*previous_days, trading_day):
         for row in page_cache.day(day):
@@ -76,7 +87,7 @@ def analyze_live_instance(
             include_today = day == trading_day and phase == "after_market"
             if row_available_at <= cutoff and (day < trading_day or include_today):
                 universe_symbols.add(symbol)
-                prices.setdefault(symbol, []).append(float(str(row["close"])))
+                prices.setdefault(symbol, []).append(str(row["close"]))
             elif day == trading_day and phase == "on_market":
                 universe_symbols.add(symbol)
     if "daily-bars" in dependencies and not found_bars:
@@ -84,7 +95,9 @@ def analyze_live_instance(
             "实盘分析所需日线尚未同步",
             {"dataset": "daily-bars", "recommended_action": "请先在数据管理中同步行情。"},
         )
-    universe = sorted((universe_symbols | set(current_prices or {})) - excluded)
+    universe = sorted(
+        (universe_symbols | set(current_prices or {}) | set(portfolio.positions)) - excluded
+    )
     records: dict[str, dict[str, list[dict[str, object]]]] = {}
     for dataset in dependencies - {"daily-bars"}:
         dataset_rows = container.market_data.list_records(dataset)
@@ -104,10 +117,27 @@ def analyze_live_instance(
                 records.setdefault(dataset, {}).setdefault(str(row.get("symbol", "")), []).append(
                     row
                 )
-    result = SubprocessStrategyRunner(
+    quote_cache = dict(current_prices or {})
+
+    def requested_quotes(symbols: list[str]) -> dict[str, object]:
+        if set(symbols) & excluded:
+            raise StateConflictError("请求了停牌或退市标的报价")
+        missing = [symbol for symbol in symbols if symbol not in quote_cache]
+        if missing:
+            if phase != "on_market" or container.data_sync is None:
+                raise StateConflictError("实时价格服务不可用")
+            quote_cache.update(container.data_sync.quotes(missing, force=True))
+        unavailable = [symbol for symbol in symbols if symbol not in quote_cache]
+        if unavailable:
+            raise StateConflictError("实时价格缺失", {"symbols": unavailable})
+        return {symbol: quote_cache[symbol] for symbol in symbols}
+
+    runner = SubprocessStrategyRunner(
         container.settings.strategy_timeout_seconds,
         container.settings.strategy_output_limit_bytes,
-    ).run(
+    )
+    execute = runner.run_live if phase == "on_market" else runner.run
+    result = execute(
         version,
         dict(instance.get("parameters", {})),
         {
@@ -124,33 +154,54 @@ def analyze_live_instance(
             "costs": instance["costs"],
             "trading_day": trading_day.isoformat(),
             "phase": phase,
+            "decision_at": decision_at.isoformat(),
+            "strategy_state": instance.get("strategy_state", {}),
             "records": records,
         },
         phase=phase,
+        **({"quotes": requested_quotes} if phase == "on_market" else {}),
     )
     if result.status != "succeeded":
         raise StateConflictError(
             "实盘策略运行失败", {"phase": phase, "strategy_error": result.error}
         )
 
+    if phase == "on_market":
+        requested_quotes(
+            sorted(
+                {
+                    signal.symbol
+                    for signal in result.signals
+                    if signal.symbol not in excluded and signal.quantity > 0
+                }
+            )
+        )
     created: list[dict[str, object]] = []
     notifications: list[tuple[str, str, str]] = []
     with container.live_tracking.transaction() as state:
         current_instance = state.instances.get(instance_id)
         if current_instance is None or current_instance.get("status") != "active":
             raise StateConflictError("实盘实例已暂停或终止")
+        if int(current_instance.get("state_revision", 0)) != state_revision:
+            raise StateConflictError("策略状态已更新，请重试")
+        if (
+            str(current_instance.get("completed_phases", {}).get(phase, ""))
+            >= trading_day.isoformat()
+        ):
+            return {"phase": phase, "created": [], "skipped": "该阶段已执行"}
         latest_portfolio = actual_portfolio(state, instance_id)
         instance["positions"] = latest_portfolio.positions
         recommendations = list(state.recommendations.get(instance_id, []))
         if phase != "after_market":
             for signal in result.signals:
-                if signal.symbol in excluded:
+                if signal.symbol in excluded or signal.quantity <= 0:
                     continue
                 if phase == "on_market" and not _intraday_triggered(
                     signal.action,
                     signal.trigger_price,
-                    (current_prices or {}).get(signal.symbol),
+                    quote_cache.get(signal.symbol),
                     instance.get("positions", {}).get(signal.symbol, 0),
+                    signal.trigger_operator,
                 ):
                     continue
                 business_key = hashlib.sha256(
@@ -174,10 +225,16 @@ def analyze_live_instance(
                     "signal_key": phase,
                     "action": signal.action,
                     "quantity": str(signal.quantity),
+                    "ratio": str(signal.ratio) if signal.ratio is not None else None,
+                    "ratio_basis": str(signal.ratio_basis)
+                    if signal.ratio_basis is not None
+                    else None,
+                    "trigger_operator": signal.trigger_operator,
                     "reason": signal.reason,
                     "trigger_price": str(signal.trigger_price) if signal.trigger_price else None,
                     "suggested_price": str(
-                        (current_prices or {}).get(signal.symbol)
+                        quote_cache.get(signal.symbol)
+                        or signal.reference_price
                         or (prices.get(signal.symbol) or [None])[-1]
                         or ""
                     ),
@@ -213,7 +270,7 @@ def analyze_live_instance(
                 for item in recommendations
                 if str(item.get("decision_at", ""))[:10] == trading_day.isoformat()
             ]
-            if today_items:
+            if today_items and current_instance.get("after_market_enabled", False):
                 notifications.append(
                     (
                         f"{instance_id}:{trading_day.isoformat()}:position-reminder",
@@ -223,8 +280,18 @@ def analyze_live_instance(
                     )
                 )
         state.recommendations[instance_id] = recommendations
-    for notification_id, title, body in notifications:
-        notify_owner(container, str(instance["owner_id"]), notification_id, title, body)
+        current_instance["strategy_state"] = result.state
+        current_instance["state_revision"] = state_revision + 1
+        outbox = dict(current_instance.get("notification_outbox", {}))
+        for event_id, title, body in notifications:
+            outbox[event_id] = {"title": title, "body": body}
+        current_instance["notification_outbox"] = outbox
+        current_instance["completed_phases"] = {
+            **current_instance.get("completed_phases", {}),
+            phase: trading_day.isoformat(),
+        }
+        state.instances[instance_id] = current_instance
+    _drain_live_notifications(container, instance_id)
     return {
         "phase": phase,
         "trading_day": trading_day.isoformat(),
@@ -233,21 +300,39 @@ def analyze_live_instance(
     }
 
 
+def _drain_live_notifications(container: Any, instance_id: str) -> None:
+    with container.live_tracking.transaction() as state:
+        instance = state.instances.get(instance_id, {})
+        outbox = dict(instance.get("notification_outbox", {}))
+        owner_id = str(instance.get("owner_id", ""))
+    for event_id, message in outbox.items():
+        notify_owner(container, owner_id, event_id, str(message["title"]), str(message["body"]))
+        with container.live_tracking.transaction() as state:
+            current = state.instances.get(instance_id)
+            if current is not None:
+                pending = dict(current.get("notification_outbox", {}))
+                pending.pop(event_id, None)
+                current["notification_outbox"] = pending
+                state.instances[instance_id] = current
+
+
 def _intraday_triggered(
     action: str,
     trigger_price: object,
     current_price: object,
     position: object,
+    operator: str | None = None,
 ) -> bool:
-    if trigger_price is None or current_price is None:
+    if current_price is None:
         return False
-    from decimal import Decimal
-
-    trigger = Decimal(str(trigger_price))
     current = Decimal(str(current_price))
     quantity = Decimal(str(position or 0))
-    if action == "buy":
-        return quantity == 0 and current <= trigger
-    if action == "sell":
-        return quantity > 0 and current >= trigger
-    return False
+    if not current.is_finite() or current <= 0 or action not in {"buy", "sell"}:
+        return False
+    if action == "sell" and quantity <= 0:
+        return False
+    if trigger_price is None:
+        return True
+    trigger = Decimal(str(trigger_price))
+    direction = operator or ("lte" if action == "buy" else "gte")
+    return current <= trigger if direction == "lte" else current >= trigger

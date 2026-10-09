@@ -39,23 +39,26 @@ def start_live():
         "strategy_version_id": strategy_version_id,
         "status": "active",
         "next_decision_at": (now + timedelta(days=1)).isoformat(),
-        "parameters": payload.get("parameters", {}),
+        "parameters": payload.get("parameters", backtest["config"].get("parameters", {})),
         "initial_cash": str(payload.get("initial_cash", backtest["config"]["initial_cash"])),
         "positions": payload.get("positions", {}),
+        "after_market_enabled": bool(payload.get("after_market_enabled", False)),
     }
     instances[identifier] = item
     local_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
     schedules = get_container().state.schedules
-    schedule_specs = (
+    intraday_time = time.fromisoformat(get_container().settings.intraday_run_time)
+    schedule_specs = [
         ("before_market", "cron", "0 9 * * 1-5", time(9, 0)),
         (
             "on_market",
-            "interval",
-            str(get_container().settings.intraday_poll_seconds),
-            None,
+            "cron",
+            f"{intraday_time.minute} {intraday_time.hour} * * 1-5",
+            intraday_time,
         ),
-        ("after_market", "cron", "30 15 * * 1-5", time(15, 30)),
-    )
+    ]
+    if item["after_market_enabled"]:
+        schedule_specs.append(("after_market", "cron", "30 15 * * 1-5", time(15, 30)))
     for phase, kind, expression, local_time in schedule_specs:
         schedule_id = f"schedule-{UuidGenerator().new()}"
         if local_time is None:

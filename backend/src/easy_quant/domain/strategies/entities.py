@@ -41,6 +41,10 @@ class Signal:
     quantity: Decimal
     reason: str
     trigger_price: Decimal | None = None
+    trigger_operator: str | None = None
+    ratio: Decimal | None = None
+    ratio_basis: Decimal | None = None
+    reference_price: Decimal | None = None
 
 
 @dataclass(slots=True)
@@ -52,3 +56,5 @@ class StrategyRun:
     signals: list[Signal] = field(default_factory=list)
     stdout: str = ""
     error: str | None = None
+    state: dict[str, object] = field(default_factory=dict)
+    mock_usage: list[dict[str, object]] = field(default_factory=list)

@@ -4,7 +4,7 @@ import csv
 import hashlib
 import io
 import json
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, request
@@ -101,11 +101,32 @@ def market_data_coverage():
     rows = []
     calendar = TradingCalendar(store.list_trading_days() or None)
     now = get_container().authentication.clock.now()
+    observations = {
+        (str(row["symbol"]), str(row["requested_end_day"])): row
+        for row in store.list_records("daily-bar-availability")
+    }
     for summary in summaries:
         symbol = str(summary["symbol"])
         first_day = summary.get("first_day")
         last_day = summary.get("last_day")
-        freshness = calendar.freshness(first_day=first_day, last_day=last_day, now=now)
+        freshness = calendar.freshness(
+            first_day=first_day,
+            last_day=last_day,
+            now=now,
+            close_time=time.fromisoformat(get_container().settings.daily_data_publish_time),
+        )
+        observation = observations.get((symbol, freshness.recommended_end_day.isoformat()))
+        publication_pending = bool(
+            observation
+            and last_day
+            and (
+                not observation.get("latest_day")
+                or (
+                    observation["latest_day"] < freshness.recommended_end_day.isoformat()
+                    and last_day.isoformat() >= str(observation["latest_day"])
+                )
+            )
+        )
         delisted = summary.get("status") == "delisted"
         suspended = summary.get("status") == "suspended"
         rows.append(
@@ -129,7 +150,9 @@ def market_data_coverage():
                 if suspended
                 else freshness.status.value,
                 "updated": not (delisted or suspended) and freshness.status.value == "updated",
-                "stale": not (delisted or suspended) and freshness.status.value == "stale",
+                "stale": not (delisted or suspended or publication_pending)
+                and freshness.status.value == "stale",
+                "publication_pending": publication_pending,
                 "previous_trading_day": freshness.previous_trading_day.isoformat(),
                 "recommended_end_day": freshness.recommended_end_day.isoformat(),
             }

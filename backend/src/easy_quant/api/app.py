@@ -13,6 +13,7 @@ from easy_quant.api.blueprints.live_tracking import blueprint as live_tracking_b
 from easy_quant.api.blueprints.notifications import blueprint as notifications_blueprint
 from easy_quant.api.blueprints.recommendations import blueprint as recommendations_blueprint
 from easy_quant.api.blueprints.strategies import blueprint as strategies_blueprint
+from easy_quant.api.blueprints.strategy_library import blueprint as strategy_library_blueprint
 from easy_quant.api.errors import register_error_handlers
 from easy_quant.api.middleware.request_context import register_request_context
 from easy_quant.bootstrap import Container, build_container
@@ -50,6 +51,7 @@ def create_app(*, settings: Settings | None = None, container: Container | None 
     app.register_blueprint(notifications_blueprint)
     app.register_blueprint(recommendations_blueprint)
     app.register_blueprint(strategies_blueprint)
+    app.register_blueprint(strategy_library_blueprint)
     app.register_blueprint(admin_market_data_blueprint)
     app.register_blueprint(admin_scheduling_blueprint)
     app.register_blueprint(admin_users_blueprint)

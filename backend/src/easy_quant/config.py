@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +35,30 @@ class Settings(BaseSettings):
     smtp_username: str | None = None
     smtp_password: SecretStr | None = None
     intraday_poll_seconds: int = 60
+    intraday_run_time: str = "14:50"
+    daily_data_publish_time: str = "22:00"
+
+    @field_validator("intraday_run_time")
+    @classmethod
+    def trading_time(cls, value: str) -> str:
+        from datetime import time
+
+        parsed = time.fromisoformat(value)
+        if parsed.tzinfo or not (
+            time(9, 30) <= parsed <= time(11, 30) or time(13) <= parsed <= time(15)
+        ):
+            raise ValueError("盘中触发时间必须在交易时段内")
+        return value
+
+    @field_validator("intraday_run_time", "daily_data_publish_time")
+    @classmethod
+    def valid_time(cls, value: str) -> str:
+        from datetime import time
+
+        parsed = time.fromisoformat(value)
+        if parsed.second or parsed.microsecond or parsed.tzinfo or len(value) != 5:
+            raise ValueError("时间必须为 HH:MM")
+        return value
 
 
 @lru_cache(maxsize=1)

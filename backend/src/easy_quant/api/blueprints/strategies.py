@@ -15,59 +15,51 @@ from easy_quant.infrastructure.core import UuidGenerator
 blueprint = Blueprint("strategies", __name__, url_prefix="/api/v1/strategies")
 MOVING_AVERAGE_TEMPLATE = '''def before_market(context, parameters):
     """盘前使用此前已知日线，选择价格站上 5 日均线的股票。"""
-    quantity = int(parameters.get("quantity", 100))
+    ratio = parameters.get("ratio", "0.10")
     signals = []
     for symbol in context.universe():
         bars = context.factor("market.daily-bars", symbol=symbol)
         ma5 = context.factor("technical.ma", symbol=symbol, window=5)
         if ma5["available"] and bars[-1]["close"] > ma5["value"]:
-            signals.append({
-                "symbol": symbol,
-                "action": "buy",
-                "quantity": quantity,
-                "reason": "收盘价站上 5 日均线",
-            })
+            signals.append(context.signal(
+                symbol, "buy", ratio, "收盘价站上 5 日均线", price=bars[-1]["close"]
+            ))
     return signals
 
 
 def on_market(context, parameters):
-    """声明盘中触发价；平台盯盘命中条件后才通知，且不会自动下单。"""
+    """声明盘中触发价；平台每天统一时刻判断一次，不会自动下单。"""
     trigger = parameters.get("intraday_buy_price")
     if trigger is None:
         return []
     signals = []
     for symbol in context.universe():
         if context.position(symbol) == 0:
-            signals.append({
-                "symbol": symbol,
-                "action": "buy",
-                "quantity": int(parameters.get("quantity", 100)),
-                "trigger_price": trigger,
-                "reason": "盘中价格到达预设买点",
-            })
+            signals.append(context.signal(
+                symbol, "buy", parameters.get("ratio", "0.10"),
+                "盘中价格到达预设买点", price=trigger, trigger_price=trigger,
+            ))
     return signals
 
 
 def after_market(context, parameters):
     """盘后可读取当日收盘数据，本示例只输出运行信息。"""
-    print("盘后检查完成")
     return []
 '''
 
 POSITIVE_EXPECTATION_TEMPLATE = '''def before_market(context, parameters):
     """以市值和历史预期回报筛选候选股票。"""
-    quantity = int(parameters.get("quantity", 100))
+    ratio = parameters.get("ratio", "0.10")
     signals = []
     for symbol in context.universe():
         value = context.factor("market.value", symbol=symbol)
         expected = context.factor("stat.expected-return", symbol=symbol)
         if value and expected["available"] and expected["expected_return"] > 0:
-            signals.append({
-                "symbol": symbol,
-                "action": "buy",
-                "quantity": quantity,
-                "reason": "正预期回报候选",
-            })
+            bars = context.factor("market.daily-bars", symbol=symbol)
+            if bars:
+                signals.append(context.signal(
+                    symbol, "buy", ratio, "正预期回报候选", price=bars[-1]["close"]
+                ))
     return signals
 
 
@@ -190,6 +182,8 @@ def run_strategy(strategy_id: str):
                 "strategy_version_id": version.id,
                 "trading_day": payload.trading_day.isoformat(),
                 "parameters": payload.parameters,
+                "allow_mock": payload.allow_mock,
+                "initial_cash": str(payload.initial_cash),
             },
             get_container().authentication.clock.now(),
         )
@@ -233,6 +227,10 @@ def list_strategy_runs(strategy_id: str):
                 "phase_results": job.result_summary.get("phase_results")
                 or job.error_summary.get("details", {}).get("phase_results", []),
                 "error": job.error_summary.get("message"),
+                "mock_usage": job.result_summary.get("mock_usage", []),
+                "allow_mock": job.payload.get("allow_mock", False),
+                "portfolio": job.result_summary.get("portfolio"),
+                "trades": job.result_summary.get("trades", []),
             }
         )
     return success(list(reversed(rows)))

@@ -41,6 +41,21 @@ class FactorRegistry:
 
     def call(self, key: str, context: FactorContext, parameters: dict[str, object]) -> object:
         definition = self.get(key)
+        defaults: dict[str, dict[str, object]] = {
+            "technical.ma": {"window": 5},
+            "technical.rsi": {"window": 14},
+            "technical.macd": {"fast": 12, "slow": 26, "signal": 9},
+        }
+        parameters = {**defaults.get(key, {}), **parameters}
+        for name in ("window", "fast", "slow", "signal"):
+            if name in parameters:
+                try:
+                    value = int(str(parameters[name]))
+                except ValueError as error:
+                    raise ValidationError("因子窗口必须为整数") from error
+                if not 1 <= value <= 2500:
+                    raise ValidationError("因子窗口必须在 1–2500 之间")
+                parameters[name] = value
         missing = definition.parameters.keys() - parameters.keys()
         if missing:
             raise ValidationError("缺少因子参数", {"fields": sorted(missing)})

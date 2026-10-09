@@ -24,6 +24,7 @@ import { LiveDetailPage } from "@/features/live-tracking/pages/live-detail-page"
 import { LiveListPage } from "@/features/live-tracking/pages/live-list-page"
 import { NotificationSettingsPage } from "@/features/notifications/pages/notification-settings-page"
 import { StrategiesPage } from "@/features/strategies/pages/strategies-page"
+import { StrategyLibraryPage } from "@/features/strategies/pages/strategy-library-page"
 
 import { AppLayout } from "./layout"
 import { AdminGuard, AuthenticatedGuard } from "./route-guards"
@@ -72,6 +73,7 @@ const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: "strategies", element: <StrategiesPage /> },
       { path: "factors", element: <FactorCatalogPage /> },
+      { path: "strategy-library", element: <StrategyLibraryPage /> },
       { path: "backtests/new", element: <BacktestCreatePage /> },
       { path: "backtests", element: <BacktestListPage /> },
       { path: "backtests/:runId", element: <BacktestDetailRoute /> },

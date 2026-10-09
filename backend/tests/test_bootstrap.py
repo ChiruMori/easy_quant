@@ -10,6 +10,39 @@ def test_package_imports() -> None:
     assert __version__ == "0.1.0"
 
 
+def test_worker_migrates_old_intraday_schedule_before_its_due_time(monkeypatch):
+    from datetime import UTC, datetime
+
+    from tests.fakes.core import FixedClock
+    from tests.fakes.platform import make_test_container
+
+    container = make_test_container()
+    clock = cast(FixedClock, container.authentication.clock)
+    clock.current = datetime(2026, 9, 29, 6, tzinfo=UTC)
+    container.state.schedules["old"] = {
+        "id": "old",
+        "task_type": "live-analysis",
+        "schedule_kind": "interval",
+        "schedule_expression": "60",
+        "timezone": "Asia/Shanghai",
+        "enabled": True,
+        "configuration": {"instance_id": "l", "phase": "on_market"},
+        "next_run_at": "2026-09-29T07:00:00+00:00",
+    }
+    monkeypatch.setattr(bootstrap, "get_settings", lambda: container.settings)
+    monkeypatch.setattr(bootstrap, "build_container", lambda _: container)
+    worker = bootstrap.build_worker()
+    assert worker.poll_hook is not None
+    worker.poll_hook()
+    assert container.state.schedules["old"]["next_run_at"] == "2026-09-29T06:50:00+00:00"
+    assert container.jobs.list_all() == []
+    clock.current = datetime(2026, 9, 29, 6, 50, tzinfo=UTC)
+    worker.poll_hook()
+    worker.poll_hook()
+    assert len(container.jobs.list_all()) == 1
+    assert container.state.schedules["old"]["schedule_expression"] == "50 14 * * 1-5"
+
+
 def test_legacy_dataset_label_is_updated_without_changing_source_configuration() -> None:
     sources = [{"key": "eastmoney", "enabled": False}]
     datasets = [

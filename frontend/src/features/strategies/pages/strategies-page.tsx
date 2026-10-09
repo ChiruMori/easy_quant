@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { localizedLabel } from "@/lib/labels"
 
@@ -66,6 +67,7 @@ export function StrategiesPage() {
   const templates = useQuery({ queryKey: ["strategy-templates"], queryFn: listStrategyTemplates })
   const draft = loadDraft()
   const [selected, setSelected] = useState("new")
+  const [allowMock, setAllowMock] = useState(false)
   const [name, setName] = useState(draft.name ?? "")
   const [description, setDescription] = useState(draft.description ?? "")
   const [source, setSource] = useState(draft.source ?? FALLBACK)
@@ -242,7 +244,12 @@ export function StrategiesPage() {
                   onClick={async () => {
                     try {
                       if (selected === "new") return
-                      const queued = await runStrategy(selected, tradingDay, { quantity: 100 })
+                      const queued = await runStrategy(
+                        selected,
+                        tradingDay,
+                        { quantity: 100 },
+                        allowMock,
+                      )
                       setResult(queued)
                       setMessage(`快速测试任务 ${queued.id} 已进入队列`)
                       setTab("result")
@@ -255,6 +262,13 @@ export function StrategiesPage() {
                   运行当前版本
                 </Button>
               </div>
+              <Field>
+                <FieldLabel htmlFor="quick-test-mock">允许快测补足技术指标历史</FieldLabel>
+                <Switch id="quick-test-mock" checked={allowMock} onCheckedChange={setAllowMock} />
+                <FieldDescription>
+                  仅重复首个已知价格补足技术窗口；不补造财报，结果会标记 Mock，不代表真实收益。
+                </FieldDescription>
+              </Field>
               <p className="text-sm text-muted-foreground">
                 实盘与回测中的策略因子默认可回溯此前 250
                 个交易日；需要更长历史时，在策略源码顶层声明 HISTORY_TRADING_DAYS（最多
@@ -299,6 +313,21 @@ export function StrategiesPage() {
                   <p className="text-sm text-muted-foreground">
                     交易日 {visibleRun.trading_day} · 任务 {visibleRun.id}
                   </p>
+                  <p className="text-sm text-muted-foreground">
+                    盘中模拟报价使用开收盘均值，包含当日收盘信息。
+                  </p>
+                  {visibleRun.allow_mock && (
+                    <Badge variant="outline">
+                      Mock 模式 · 补值{" "}
+                      {visibleRun.mock_usage?.reduce((total, item) => total + item.count, 0) ?? 0}{" "}
+                      条
+                    </Badge>
+                  )}
+                  {visibleRun.portfolio && (
+                    <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
+                      模拟组合：{JSON.stringify(visibleRun.portfolio, null, 2)}
+                    </pre>
+                  )}
                   {visibleRun.phase_results.map((phase) => (
                     <div className="flex flex-col gap-2" key={phase.phase}>
                       <h3 className="font-medium">{localizedLabel(phase.phase)}</h3>
