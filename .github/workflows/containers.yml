@@ -102,7 +102,36 @@ jobs:
         run: |
           docker run --rm --network none "$IMAGE_PREFIX-backend:sha-$GITHUB_SHA" uv run --project backend --no-sync python -c "import os,json,subprocess,sys; from easy_quant.config import BACKEND_ROOT; from easy_quant.strategy_api.catalog import LIBRARY; import easy_quant.infrastructure.strategy_runtime.child as child; assert os.getuid() == 65532; assert len(list((BACKEND_ROOT / 'resources/examples').glob('*.py'))) == 2; assert LIBRARY; assert not (BACKEND_ROOT / '.env').exists(); result = subprocess.run([sys.executable, '-I', child.__file__], input=json.dumps({'source_code':'def before_market(context, parameters):\n    return []','parameters':{},'phase':'before_market','context':{}}), capture_output=True, text=True, check=True); assert json.loads(result.stdout)['ok'], result.stdout"
           docker run --rm --network none "$IMAGE_PREFIX-backend:sha-$GITHUB_SHA" uv run --project backend --no-sync alembic -c backend/alembic.ini heads
-          docker run --rm --network none --add-host api:127.0.0.1 "$IMAGE_PREFIX-frontend:sha-$GITHUB_SHA" sh -c 'nginx -t && nginx && wget -qO- http://127.0.0.1/healthz && wget -qO /dev/null http://127.0.0.1/strategies'
+          docker run --rm --network none --add-host api:127.0.0.1 "$IMAGE_PREFIX-frontend:sha-$GITHUB_SHA" sh -c 'nginx -t && nginx && curl --fail --silent --show-error http://127.0.0.1/healthz && curl --fail --silent --show-error --output /dev/null http://127.0.0.1/strategies'
+      - name: 默认入口与旧宿主机系统调用兼容验收
+        env:
+          IMAGE_PREFIX: ${{ steps.image.outputs.prefix }}
+        shell: bash
+        run: |
+          for profile in default tools/fixtures/seccomp-deny-pwritev2.json; do
+            security_args=()
+            if [ "$profile" != default ]; then
+              security_args=(--security-opt "seccomp=$profile")
+            fi
+            container=$(docker run -d --network none --add-host api:127.0.0.1 "${security_args[@]}" "$IMAGE_PREFIX-frontend:sha-$GITHUB_SHA")
+            trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+            ready=false
+            for attempt in {1..20}; do
+              if docker exec "$container" curl --fail --silent --show-error http://127.0.0.1/healthz >/dev/null 2>&1; then
+                ready=true
+                break
+              fi
+              sleep 1
+            done
+            if [ "$ready" != true ]; then
+              docker logs "$container"
+              exit 1
+            fi
+            docker exec "$container" nginx -t
+            docker exec "$container" curl --fail --silent --show-error --output /dev/null http://127.0.0.1/strategies
+            docker rm -f "$container" >/dev/null
+            trap - EXIT
+          done
       - name: 两个镜像成功后更新滚动标签
         env:
           IMAGE_PREFIX: ${{ steps.image.outputs.prefix }}
