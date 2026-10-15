@@ -1,3 +1,5 @@
+import type { RunTiming } from "@/components/run-timing"
+
 export interface StrategyVersion {
   id: string
   number: number
@@ -12,6 +14,7 @@ export interface Strategy {
   versions: StrategyVersion[]
 }
 export interface StrategyRun {
+  timing?: RunTiming
   id: string
   status: string
   strategy_version_id: string

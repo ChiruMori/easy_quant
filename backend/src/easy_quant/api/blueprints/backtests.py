@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from flask import Blueprint, g, request
 
 from easy_quant.api.dependencies import get_container
@@ -13,6 +11,34 @@ from easy_quant.domain.scheduling.entities import Job
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("backtests", __name__, url_prefix="/api/v1/backtests")
+
+
+def _with_job_failure(run):
+    # 兼容旧 worker 曾未能保存回测失败状态的记录；读取时不改写历史。
+    if run.get("status") not in {"queued", "running"} or not run.get("job_id"):
+        return run
+    job = get_container().jobs.get(str(run["job_id"]))
+    if job is None:
+        return {
+            **run,
+            "status": "failed",
+            "progress": 100,
+            "error": "回测任务未成功入队，请重新创建回测",
+            "error_details": {},
+        }
+    if job.status.value != "failed" or job.payload.get("backtest_id") != run["id"]:
+        return run
+    error = job.error_summary
+    domain_failure = error.get("code") != "job_failed"
+    return {
+        **run,
+        "status": "failed",
+        "progress": 100,
+        "error": error.get("message")
+        if domain_failure
+        else "后台回测任务已失败，请检查 worker 日志并重新创建回测",
+        "error_details": error.get("details", {}) if domain_failure else {},
+    }
 
 
 def _find_owned_version(owner_id: str, version_id: str):
@@ -63,15 +89,16 @@ def create_backtest():
         },
         "strategy_outputs": [],
     }
-    container.backtests.save(run, json.dumps([], ensure_ascii=False).encode("utf-8"))
-    container.jobs.enqueue(
+    container.backtests.create_with_job(
+        run,
         Job(
             job_id,
             "backtest.run",
             f"backtest:{run_id}",
             {"backtest_id": run_id, "owner_id": g.current_user.id},
             container.authentication.clock.now(),
-        )
+        ),
+        container.jobs,
     )
     record_audit(
         container,
@@ -87,7 +114,10 @@ def create_backtest():
 @blueprint.get("")
 @require_user
 def list_backtests():
-    rows = list(get_container().backtests.list_for_owner(g.current_user.id))
+    rows = [
+        _with_job_failure(run)
+        for run in get_container().backtests.list_for_owner(g.current_user.id)
+    ]
     return success(sorted(rows, key=lambda item: str(item["created_at"]), reverse=True))
 
 
@@ -97,7 +127,7 @@ def get_backtest(run_id: str):
     run = get_container().backtests.get(run_id)
     if run is None or run["owner_id"] != g.current_user.id:
         return success(None, status=404)
-    return success(run)
+    return success(_with_job_failure(run))
 
 
 @blueprint.post("/compare")

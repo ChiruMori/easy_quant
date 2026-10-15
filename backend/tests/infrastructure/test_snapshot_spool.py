@@ -55,4 +55,6 @@ def test_snapshot_scan_uses_primary_for_short_range_and_years() -> None:
     sql = [str(statement.compile(dialect=mysql.dialect())) for statement in session.statements]
     assert "FORCE INDEX (ix_daily_bars_day_symbol)" in sql[0]
     assert "FORCE INDEX (PRIMARY)" in sql[1]
-    assert "FORCE INDEX (PRIMARY)" in sql[2]
+    assert "FORCE INDEX (ix_daily_bars_day_symbol)" in sql[2]
+    assert "FORCE INDEX (PRIMARY)" in sql[3]
+    assert "daily_bars.symbol IN" in sql[3]

@@ -5,14 +5,14 @@ from contextlib import contextmanager
 from datetime import date, datetime
 from typing import cast
 
-from sqlalchemy import Table, func, select, text
+from sqlalchemy import Table, func, or_, select, text
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from easy_quant.application.services.tdx_incremental import DailyArchive, DayCheckpoint
+from easy_quant.infrastructure.persistence.bar_storage import BAR_STORAGE
 from easy_quant.infrastructure.persistence.models.market_data_records import (
-    DailyBarModel,
     HistoryImportStockModel,
     InstrumentModel,
     TdxDailyCheckpointModel,
@@ -20,7 +20,6 @@ from easy_quant.infrastructure.persistence.models.market_data_records import (
 )
 from easy_quant.infrastructure.persistence.repositories.history_import import (
     bar_values,
-    bars_upsert,
 )
 
 _LOCK = "CONCAT('easy_quant_tdx_', LEFT(SHA2(DATABASE(), 256), 40))"
@@ -61,6 +60,8 @@ class SqlDailyStore:
         try:
             self._ensure_lock()
             with self.factory.begin() as session:
+                storage = BAR_STORAGE
+                Bar = storage.logical
                 symbols = [bar.symbol for bar in archive.bars]
                 # 全量股票检查点与整只股票的不复权历史同事务写入；已有写入口
                 # 均禁止切换口径。利用该凭据，避免每日再次扫描千万行历史。
@@ -68,9 +69,10 @@ class SqlDailyStore:
                 unchecked = set(symbols) - imported
                 conflict = (
                     session.scalar(
-                        select(DailyBarModel.symbol)
+                        select(Bar.symbol)
                         .where(
-                            DailyBarModel.symbol.in_(unchecked), DailyBarModel.adjustment != "none"
+                            Bar.symbol.in_(unchecked),
+                            or_(Bar.adjustment != "none", Bar.adjustment.is_(None)),
                         )
                         .limit(1)
                     )
@@ -81,7 +83,9 @@ class SqlDailyStore:
                     raise ValueError("已有日线口径非不复权，拒绝混入增量行情")
                 values = [bar_values(bar, archive.sha256) for bar in archive.bars]
                 for offset in range(0, len(values), 2000):
-                    session.execute(bars_upsert(), values[offset : offset + 2000])
+                    session.execute(
+                        storage.upsert(), storage.encode(session, values[offset : offset + 2000])
+                    )
                 instruments = []
                 for symbol in symbols:
                     exchange = (

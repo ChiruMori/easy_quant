@@ -31,8 +31,13 @@ def test_daily_pages_hit_miss_and_lru_eviction() -> None:
     assert store.calls == [(first, second)]
     cache.day(third)
     cache.day(second)
-    assert store.calls == [(first, second), (third, third), (second, second)]
-    assert cache.stats() == {"hits": 1, "misses": 4, "pages": 2}
+    assert store.calls == [(first, second), (date(2026, 9, 1), date(2026, 9, 30))]
+    cache.day(date(2026, 10, 1))
+    cache.day(second)
+    cache.day(date(2026, 11, 1))
+    cache.day(date(2026, 10, 2))
+    assert store.calls[-1] == (date(2026, 10, 1), date(2026, 10, 31))
+    assert cache.stats() == {"hits": 3, "misses": 6, "pages": 2, "queries": 5}
 
 
 def test_new_task_cache_sees_revised_data() -> None:
@@ -40,7 +45,7 @@ def test_new_task_cache_sees_revised_data() -> None:
         close = "10"
 
         def list_runtime_bars(self, start_day: date, end_day: date):
-            return [{"close": self.close}]
+            return [{"close": self.close, "trading_day": str(start_day)}]
 
     store = Store()
     day = date(2026, 9, 1)
@@ -49,7 +54,7 @@ def test_new_task_cache_sees_revised_data() -> None:
     assert DailyBarPageCache(store).day(day)[0]["close"] == "11"
 
 
-def test_many_days_are_fetched_in_one_window_but_only_twelve_pages_remain() -> None:
+def test_many_days_are_fetched_in_one_window_and_retained_in_one_month() -> None:
     calls: list[tuple[date, date]] = []
 
     class Store:
@@ -65,7 +70,7 @@ def test_many_days_are_fetched_in_one_window_but_only_twelve_pages_remain() -> N
     cache = DailyBarPageCache(Store())
     assert len(cache.days(days)) == 30
     assert calls == [(days[0], days[-1])]
-    assert cache.stats() == {"hits": 0, "misses": 30, "pages": 12}
+    assert cache.stats() == {"hits": 0, "misses": 30, "pages": 1, "queries": 1}
 
 
 def test_prefetch_keeps_previously_cached_pages_when_lru_evicts_them() -> None:
@@ -78,11 +83,43 @@ def test_prefetch_keeps_previously_cached_pages_when_lru_evicts_them() -> None:
 
     start = date(2026, 9, 1)
     dates = [start + timedelta(days=index) for index in range(6)]
-    cache = DailyBarPageCache(Store(), max_pages=2)
+    cache = DailyBarPageCache(Store(), max_pages=1)
     cache.day(dates[-1])
-    cache.day(dates[-2])
+    dates.append(date(2026, 10, 5))
     assert [row["trading_day"] for row in cache.days(dates)] == [day.isoformat() for day in dates]
-    assert cache.stats() == {"hits": 2, "misses": 6, "pages": 2}
+    assert cache.stats() == {"hits": 6, "misses": 2, "pages": 1, "queries": 2}
+
+
+def test_empty_days_are_cached_and_month_prefetch_does_not_leak_future_days():
+    class Store:
+        calls = 0
+
+        def list_runtime_bars(self, first, last):
+            self.calls += 1
+            return [{"symbol": "000001", "trading_day": "2026-09-30", "close": "99"}]
+
+    store = Store()
+    cache = DailyBarPageCache(store)
+    assert cache.day(date(2026, 9, 1)) == ()
+    assert cache.day(date(2026, 9, 2)) == ()
+    assert store.calls == 1
+
+
+def test_sparse_month_requests_do_not_fetch_intervening_years():
+    class Store:
+        calls = []
+
+        def list_runtime_bars(self, first, last):
+            self.calls.append((first, last))
+            return []
+
+    store = Store()
+    cache = DailyBarPageCache(store)
+    assert cache.days([date(2000, 1, 1), date(2026, 9, 1)]) == []
+    assert store.calls == [
+        (date(2000, 1, 1), date(2000, 1, 1)),
+        (date(2026, 9, 1), date(2026, 9, 1)),
+    ]
 
 
 def test_runtime_query_discovers_symbols_then_reads_primary_key_ranges() -> None:

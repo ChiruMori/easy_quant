@@ -5,15 +5,19 @@ import json
 import zlib
 from bisect import bisect_left, bisect_right
 from calendar import monthrange
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import Table, case, delete, func, or_, select, tuple_
+from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
+from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import StateConflictError
+from easy_quant.infrastructure.persistence.bar_storage import BAR_STORAGE
 from easy_quant.infrastructure.persistence.models.backtesting import (
     BacktestMetricModel,
     BacktestPeriodModel,
@@ -28,20 +32,23 @@ from easy_quant.infrastructure.persistence.models.market_data_records import (
     JsonMarketRecordModel,
     TradingDayModel,
 )
+from easy_quant.infrastructure.persistence.repositories.jobs import SqlAlchemyJobRepository
 from easy_quant.infrastructure.persistence.snapshot_spool import SnapshotSpool
 
 
-def bar_coverage_statement():
+def bar_coverage_statement(*, include_count: bool = True, Bar: Any = DailyBarModel) -> Any:
     # MariaDB 在大库中可能仍选择较宽的聚簇主键；明确读取股票/日期二级索引。
+    fields = [
+        Bar.symbol,
+        func.min(Bar.trading_day),
+        func.max(Bar.trading_day),
+    ]
+    if include_count:
+        fields.append(func.count())
     return (
-        select(
-            DailyBarModel.symbol,
-            func.min(DailyBarModel.trading_day),
-            func.max(DailyBarModel.trading_day),
-            func.count(),
-        )
-        .with_hint(DailyBarModel, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql")
-        .group_by(DailyBarModel.symbol)
+        select(*fields)
+        .with_hint(Bar, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql")
+        .group_by(Bar.symbol)
     )
 
 
@@ -57,34 +64,36 @@ def _single_bar_adjustment(symbol: str, adjustments: set[str]) -> str | None:
 RUNTIME_SYMBOL_BATCH = 500
 
 
-def runtime_symbols_statement(start_day: date, end_day: date):
+def runtime_symbols_statement(start_day: date, end_day: date, Bar: Any = DailyBarModel):
     return (
-        select(DailyBarModel.symbol)
-        .with_hint(DailyBarModel, "FORCE INDEX (ix_daily_bars_day_symbol)", dialect_name="mysql")
-        .where(DailyBarModel.trading_day >= start_day, DailyBarModel.trading_day <= end_day)
+        select(Bar.symbol)
+        .with_hint(Bar, "FORCE INDEX (ix_daily_bars_day_symbol)", dialect_name="mysql")
+        .where(Bar.trading_day >= start_day, Bar.trading_day <= end_day)
         .distinct()
-        .order_by(DailyBarModel.symbol)
+        .order_by(Bar.symbol)
     )
 
 
-def runtime_batch_statement(symbols: list[str], start_day: date, end_day: date):
+def runtime_batch_statement(
+    symbols: list[str], start_day: date, end_day: date, Bar: Any = DailyBarModel
+):
     return (
         select(
-            DailyBarModel.symbol,
-            DailyBarModel.trading_day,
-            DailyBarModel.available_at,
-            DailyBarModel.open,
-            DailyBarModel.high,
-            DailyBarModel.low,
-            DailyBarModel.close,
+            Bar.symbol,
+            Bar.trading_day,
+            Bar.available_at,
+            Bar.open,
+            Bar.high,
+            Bar.low,
+            Bar.close,
         )
-        .with_hint(DailyBarModel, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
+        .with_hint(Bar, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
         .where(
-            DailyBarModel.symbol.in_(symbols),
-            DailyBarModel.trading_day >= start_day,
-            DailyBarModel.trading_day <= end_day,
+            Bar.symbol.in_(symbols),
+            Bar.trading_day >= start_day,
+            Bar.trading_day <= end_day,
         )
-        .order_by(DailyBarModel.symbol, DailyBarModel.trading_day)
+        .order_by(Bar.symbol, Bar.trading_day)
     )
 
 
@@ -145,6 +154,9 @@ class InMemoryMarketDataStore:
             item["count"] += 1
         return result
 
+    def bar_bounds(self) -> dict[str, dict[str, Any]]:
+        return self.bar_coverage()
+
     def bar_adjustment(self, symbol: str) -> str | None:
         return _single_bar_adjustment(
             symbol,
@@ -170,6 +182,10 @@ class InMemoryMarketDataStore:
             return False
         self.instruments[symbol]["status"] = status
         return True
+
+    def set_instrument_statuses(self, symbols: list[str], status: str) -> None:
+        for symbol in symbols:
+            self.set_instrument_status(symbol, status)
 
     def mark_missing_instruments_delisted(self, active_symbols: set[str]) -> None:
         for symbol, instrument in self.instruments.items():
@@ -223,6 +239,7 @@ class InMemoryMarketDataStore:
         status: str = "",
         after_symbol: str = "",
         before_symbol: str = "",
+        target_day: date | None = None,
     ):
         coverage = self.bar_coverage()
         symbols = sorted(set(self.instruments) | set(coverage))
@@ -238,6 +255,8 @@ class InMemoryMarketDataStore:
         def sync_status(summary):
             if not summary:
                 return "未同步"
+            if target_day and summary["last_day"] < target_day:
+                return "数据落后"
             days = (summary["last_day"] - summary["first_day"]).days
             return "完全同步" if days >= 3652 else "部分同步" if days >= 1095 else "数据不足"
 
@@ -297,54 +316,102 @@ class InMemoryMarketDataStore:
 class SqlAlchemyMarketDataStore:
     def __init__(self, session: Session) -> None:
         self.session = session
+        self.storage = BAR_STORAGE
 
     def upsert_bars(self, rows: list[dict[str, Any]]) -> int:
+        Bar = self.storage.logical
+        PhysicalBar = self.storage.physical
         incoming = {str(row["symbol"]): str(row.get("adjustment", "unknown")) for row in rows}
+        for row in rows:
+            symbol = str(row["symbol"])
+            if str(row.get("adjustment", "unknown")) != incoming[symbol]:
+                raise StateConflictError("批次内复权口径冲突，拒绝混合写入", {"symbol": symbol})
         if incoming:
             existing = self.session.execute(
-                select(DailyBarModel.symbol, DailyBarModel.adjustment)
-                .where(DailyBarModel.symbol.in_(incoming))
-                .distinct()
+                select(Bar.symbol, Bar.adjustment).where(Bar.symbol.in_(incoming)).distinct()
             )
             for symbol, adjustment in existing:
                 if adjustment != incoming[symbol]:
                     raise StateConflictError("日线复权口径冲突，拒绝混合写入", {"symbol": symbol})
         overwritten = 0
+        values = []
+        seen: set[tuple[str, date]] = set()
         for item in rows:
             symbol, day = str(item["symbol"]), date.fromisoformat(str(item["trading_day"]))
-            overwritten += int(self.session.get(DailyBarModel, (symbol, day)) is not None)
-            row = DailyBarModel(
-                symbol=symbol,
-                trading_day=day,
-                open=Decimal(str(item["open"])),
-                high=Decimal(str(item["high"])),
-                low=Decimal(str(item["low"])),
-                close=Decimal(str(item["close"])),
-                volume=Decimal(str(item["volume"])),
-                available_at=datetime.fromisoformat(str(item["available_at"])),
-                source=str(item.get("source", "unknown")),
-                adjustment=str(item.get("adjustment", "unknown")),
-                amount=Decimal(str(item["amount"])) if item.get("amount") is not None else None,
-                archive_sha256=item.get("archive_sha256"),
+            overwritten += int((symbol, day) in seen)
+            seen.add((symbol, day))
+            values.append(
+                dict(
+                    symbol=symbol,
+                    trading_day=day,
+                    open=Decimal(str(item["open"])),
+                    high=Decimal(str(item["high"])),
+                    low=Decimal(str(item["low"])),
+                    close=Decimal(str(item["close"])),
+                    volume=Decimal(str(item["volume"])),
+                    available_at=datetime.fromisoformat(str(item["available_at"])),
+                    source=str(item.get("source", "unknown")),
+                    adjustment=str(item.get("adjustment", "unknown")),
+                    amount=Decimal(str(item["amount"])) if item.get("amount") is not None else None,
+                    archive_sha256=item.get("archive_sha256"),
+                )
             )
-            self.session.merge(row)
-            self.session.merge(TradingDayModel(trading_day=day))
+        keys = sorted(seen)
+        for offset in range(0, len(keys), 500):
+            overwritten += len(
+                list(
+                    self.session.execute(
+                        select(PhysicalBar.symbol, PhysicalBar.trading_day).where(
+                            tuple_(PhysicalBar.symbol, PhysicalBar.trading_day).in_(
+                                keys[offset : offset + 500]
+                            )
+                        )
+                    )
+                )
+            )
+        values = self.storage.encode(self.session, values)
+        for offset in range(0, len(values), 500):
+            self.session.execute(
+                self.storage.upsert(),
+                values[offset : offset + 500],
+            )
+        days = sorted({day for _, day in keys})
+        calendar_insert = insert(cast(Table, TradingDayModel.__table__))
+        calendar_upsert = calendar_insert.on_duplicate_key_update(
+            trading_day=calendar_insert.inserted.trading_day
+        )
+        for offset in range(0, len(days), 500):
+            self.session.execute(
+                calendar_upsert, [{"trading_day": day} for day in days[offset : offset + 500]]
+            )
         self.session.commit()
         return overwritten
 
     def bar_coverage(self) -> dict[str, dict[str, Any]]:
-        statement = bar_coverage_statement()
+        statement = bar_coverage_statement(Bar=self.storage.physical)
+        rows = cast(Iterable[tuple[str, date, date, int]], self.session.execute(statement))
         return {
             symbol: {"first_day": first, "last_day": last, "count": count}
-            for symbol, first, last, count in self.session.execute(statement)
+            for symbol, first, last, count in rows
         }
 
-    def bar_adjustment(self, symbol: str) -> str | None:
-        adjustments = set(
-            self.session.scalars(
-                select(DailyBarModel.adjustment).where(DailyBarModel.symbol == symbol).distinct()
-            )
+    def bar_bounds(self) -> dict[str, dict[str, Any]]:
+        # 没有 COUNT 才能利用 MIN/MAX 的 loose index scan 跳到每个标的端点。
+        rows = cast(
+            Iterable[tuple[str, date, date]],
+            self.session.execute(
+                bar_coverage_statement(include_count=False, Bar=self.storage.physical)
+            ),
         )
+        return {symbol: {"first_day": first, "last_day": last} for symbol, first, last in rows}
+
+    def bar_adjustment(self, symbol: str) -> str | None:
+        Bar = self.storage.logical
+        adjustments = set(
+            self.session.scalars(select(Bar.adjustment).where(Bar.symbol == symbol).distinct())
+        )
+        if None in adjustments:
+            raise RuntimeError("日线来源引用缺失，拒绝推断复权口径")
         return _single_bar_adjustment(symbol, adjustments)
 
     def upsert_instruments(self, rows: list[dict[str, Any]]) -> None:
@@ -378,6 +445,14 @@ class SqlAlchemyMarketDataStore:
         self.session.commit()
         return True
 
+    def set_instrument_statuses(self, symbols: list[str], status: str) -> None:
+        if not symbols:
+            return
+        self.session.query(InstrumentModel).filter(InstrumentModel.symbol.in_(symbols)).update(
+            {InstrumentModel.status: status}, synchronize_session=False
+        )
+        self.session.commit()
+
     def mark_missing_instruments_delisted(self, active_symbols: set[str]) -> None:
         self.session.query(InstrumentModel).filter(
             InstrumentModel.symbol.not_in(active_symbols),
@@ -391,42 +466,33 @@ class SqlAlchemyMarketDataStore:
         end_day: date | None = None,
         symbol: str | None = None,
     ):
-        statement = select(DailyBarModel)
+        Bar = self.storage.logical
+        statement = select(Bar)
         if start_day is not None:
-            statement = statement.where(DailyBarModel.trading_day >= start_day)
+            statement = statement.where(Bar.trading_day >= start_day)
         if end_day is not None:
-            statement = statement.where(DailyBarModel.trading_day <= end_day)
+            statement = statement.where(Bar.trading_day <= end_day)
         if symbol is not None:
-            statement = statement.where(DailyBarModel.symbol == symbol)
+            statement = statement.where(Bar.symbol == symbol)
         if start_day is not None and symbol is None:
             statement = statement.with_hint(
-                DailyBarModel, "FORCE INDEX (ix_daily_bars_day_symbol)", dialect_name="mysql"
+                self.storage.table, "FORCE INDEX (ix_daily_bars_day_symbol)", dialect_name="mysql"
             )
-        statement = statement.order_by(DailyBarModel.trading_day)
-        return [
-            {
-                "symbol": row.symbol,
-                "trading_day": row.trading_day.isoformat(),
-                "open": str(row.open),
-                "high": str(row.high),
-                "low": str(row.low),
-                "close": str(row.close),
-                "volume": str(row.volume),
-                "available_at": row.available_at.isoformat(),
-                "amount": str(row.amount) if row.amount is not None else None,
-                "source": row.source,
-                "adjustment": row.adjustment,
-                "archive_sha256": row.archive_sha256,
-            }
-            for row in self.session.scalars(statement)
-        ]
+        statement = statement.order_by(Bar.trading_day)
+        return [self._snapshot_row(row) for row in self.session.scalars(statement)]
 
     def list_runtime_bars(self, start_day: date, end_day: date) -> list[dict[str, Any]]:
-        symbols = list(self.session.scalars(runtime_symbols_statement(start_day, end_day)))
+        symbols = list(
+            self.session.scalars(
+                runtime_symbols_statement(start_day, end_day, self.storage.physical)
+            )
+        )
         rows: list[dict[str, Any]] = []
         for offset in range(0, len(symbols), RUNTIME_SYMBOL_BATCH):
             batch = symbols[offset : offset + RUNTIME_SYMBOL_BATCH]
-            result = self.session.execute(runtime_batch_statement(batch, start_day, end_day))
+            result = self.session.execute(
+                runtime_batch_statement(batch, start_day, end_day, self.storage.physical)
+            )
             rows.extend(
                 {
                     "symbol": symbol,
@@ -453,35 +519,33 @@ class SqlAlchemyMarketDataStore:
             cursor = chunk_end + timedelta(days=1)
 
     def iter_snapshot_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
-        # 短区间按标的主键范围取；长区间顺序扫描聚簇主键，避免数百万随机回表。
-        if (end_day - start_day).days <= 30:
-            symbols = list(self.session.scalars(runtime_symbols_statement(start_day, end_day)))
-            statements = (
-                select(DailyBarModel)
-                .with_hint(DailyBarModel, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
-                .where(
-                    DailyBarModel.symbol.in_(symbols[offset : offset + RUNTIME_SYMBOL_BATCH]),
-                    DailyBarModel.trading_day >= start_day,
-                    DailyBarModel.trading_day <= end_day,
-                )
-                .order_by(DailyBarModel.symbol, DailyBarModel.trading_day)
-                .execution_options(yield_per=1000)
-                for offset in range(0, len(symbols), RUNTIME_SYMBOL_BATCH)
+        Bar = self.storage.logical
+        # 只定位区间内代码，再读对应主键范围；长区间也不扫描区间外整张聚簇表。
+        symbols = list(
+            self.session.scalars(
+                runtime_symbols_statement(start_day, end_day, self.storage.physical)
             )
-        else:
-            statements = (
-                select(DailyBarModel)
-                .with_hint(DailyBarModel, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
-                .where(DailyBarModel.trading_day >= start_day, DailyBarModel.trading_day <= end_day)
-                .order_by(DailyBarModel.symbol, DailyBarModel.trading_day)
-                .execution_options(yield_per=1000),
+        )
+        statements = (
+            select(Bar)
+            .with_hint(self.storage.table, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
+            .where(
+                Bar.symbol.in_(symbols[offset : offset + RUNTIME_SYMBOL_BATCH]),
+                Bar.trading_day >= start_day,
+                Bar.trading_day <= end_day,
             )
+            .order_by(Bar.symbol, Bar.trading_day)
+            .execution_options(yield_per=1000)
+            for offset in range(0, len(symbols), RUNTIME_SYMBOL_BATCH)
+        )
         for statement in statements:
             for row in self.session.scalars(statement):
                 yield self._snapshot_row(row)
 
     @staticmethod
-    def _snapshot_row(row: DailyBarModel) -> dict[str, Any]:
+    def _snapshot_row(row: Any) -> dict[str, Any]:
+        if row.source is None or row.adjustment is None:
+            raise RuntimeError("日线来源引用缺失，拒绝生成快照")
         return {
             "symbol": row.symbol,
             "trading_day": row.trading_day.isoformat(),
@@ -532,7 +596,9 @@ class SqlAlchemyMarketDataStore:
         status: str = "",
         after_symbol: str = "",
         before_symbol: str = "",
+        target_day: date | None = None,
     ):
+        Bar = self.storage.physical
         # 页码跳转仅跳过主键；详情和日线聚合只读取选中的一页。
         symbols = select(InstrumentModel.symbol)
         if status == "已退市":
@@ -542,19 +608,18 @@ class SqlAlchemyMarketDataStore:
         elif status:
             coverage = (
                 select(
-                    DailyBarModel.symbol.label("symbol"),
-                    func.min(DailyBarModel.trading_day).label("first_day"),
-                    func.max(DailyBarModel.trading_day).label("last_day"),
+                    Bar.symbol.label("symbol"),
+                    func.min(Bar.trading_day).label("first_day"),
+                    func.max(Bar.trading_day).label("last_day"),
                 )
-                .with_hint(
-                    DailyBarModel, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql"
-                )
-                .group_by(DailyBarModel.symbol)
+                .with_hint(Bar, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql")
+                .group_by(Bar.symbol)
                 .subquery()
             )
             days = func.datediff(coverage.c.last_day, coverage.c.first_day)
             status_expr = case(
                 (coverage.c.first_day.is_(None), "未同步"),
+                *([(coverage.c.last_day < target_day, "数据落后")] if target_day else []),
                 (days >= 3652, "完全同步"),
                 (days >= 1095, "部分同步"),
                 else_="数据不足",
@@ -608,14 +673,14 @@ class SqlAlchemyMarketDataStore:
         }
         coverage_rows = self.session.execute(
             select(
-                DailyBarModel.symbol,
-                func.min(DailyBarModel.trading_day),
-                func.max(DailyBarModel.trading_day),
+                Bar.symbol,
+                func.min(Bar.trading_day),
+                func.max(Bar.trading_day),
                 func.count(),
             )
-            .with_hint(DailyBarModel, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql")
-            .where(DailyBarModel.symbol.in_(selected_symbols))
-            .group_by(DailyBarModel.symbol)
+            .with_hint(Bar, "FORCE INDEX (ix_daily_bars_coverage)", dialect_name="mysql")
+            .where(Bar.symbol.in_(selected_symbols))
+            .group_by(Bar.symbol)
         )
         selected_coverage = {
             symbol: {"first_day": first, "last_day": last, "count": count}
@@ -640,8 +705,13 @@ class SqlAlchemyMarketDataStore:
         return set(self.session.scalars(select(TradingDayModel.trading_day)))
 
     def upsert_trading_days(self, days: list[date]) -> None:
-        for day in days:
-            self.session.merge(TradingDayModel(trading_day=day))
+        values = sorted(set(days))
+        statement = insert(cast(Table, TradingDayModel.__table__))
+        statement = statement.on_duplicate_key_update(trading_day=statement.inserted.trading_day)
+        for offset in range(0, len(values), 500):
+            self.session.execute(
+                statement, [{"trading_day": day} for day in values[offset : offset + 500]]
+            )
         self.session.commit()
 
     def upsert_records(self, dataset_key: str, rows: list[dict[str, Any]]) -> int:
@@ -677,6 +747,15 @@ class InMemoryBacktestStore:
     def save(self, run: dict[str, Any], snapshot_payload: bytes | SnapshotSpool) -> None:
         self.rows[str(run["id"])] = run
 
+    def create_with_job(self, run: dict[str, Any], job: Job, jobs: Any) -> None:
+        run_id = str(run["id"])
+        self.rows[run_id] = run
+        try:
+            jobs.enqueue(job)
+        except Exception:
+            self.rows.pop(run_id, None)
+            raise
+
     def get(self, run_id: str) -> dict[str, Any] | None:
         return self.rows.get(run_id)
 
@@ -687,15 +766,30 @@ class InMemoryBacktestStore:
     def mark_running(self, run_id: str) -> None:
         self.rows[run_id].update({"status": "running", "progress": 5})
 
+    def update_status(self, run_id: str, updates: dict[str, Any]) -> None:
+        self.rows[run_id].update(updates)
+
     def list_for_owner(self, owner_id: str) -> list[dict[str, Any]]:
         return [row for row in self.rows.values() if row["owner_id"] == owner_id]
 
 
 class SqlAlchemyBacktestStore:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self, session: Session, status_sessions: Callable[[], Session] | None = None
+    ) -> None:
         self.session = session
+        self.status_sessions = status_sessions
 
-    def save(self, run: dict[str, Any], snapshot_payload: bytes | SnapshotSpool) -> None:
+    def create_with_job(self, run: dict[str, Any], job: Job, _jobs: Any) -> None:
+        if self.status_sessions is None:
+            raise RuntimeError("回测提交需要独立事务 Session")
+        with self.status_sessions() as session, session.begin():
+            SqlAlchemyBacktestStore(session).save(run, b"[]", commit=False)
+            SqlAlchemyJobRepository(session).enqueue(job, commit=False)
+
+    def save(
+        self, run: dict[str, Any], snapshot_payload: bytes | SnapshotSpool, *, commit: bool = True
+    ) -> None:
         snapshot_id = str(run["snapshot_id"])
         if self.session.get(DataSnapshotModel, snapshot_id) is None:
             count = (
@@ -710,6 +804,9 @@ class SqlAlchemyBacktestStore:
                     record_count=count,
                 )
             )
+            # 模型未声明 ORM relationship，先写入父记录再添加外键分块。
+            # flush 保留在当前事务中，不提前提交快照。
+            self.session.flush()
             chunks = (
                 streamed_snapshot_chunks(snapshot_payload)
                 if isinstance(snapshot_payload, SnapshotSpool)
@@ -754,6 +851,8 @@ class SqlAlchemyBacktestStore:
             self.session.execute(
                 delete(BacktestMetricModel).where(BacktestMetricModel.run_id == row.id)
             )
+        # 新建运行的结果明细同样依赖父记录；不能依赖 mapper 的默认顺序。
+        self.session.flush()
         for item in run.get("periods", []):
             self.session.add(
                 BacktestPeriodModel(
@@ -780,29 +879,28 @@ class SqlAlchemyBacktestStore:
                     value=Decimal(value) if value is not None else None,
                 )
             )
-        self.session.commit()
+        if commit:
+            self.session.commit()
 
     def mark_failed(self, run_id: str, message: str) -> None:
-        row = self.session.get(BacktestRunModel, run_id)
-        if row is None:
-            return
-        payload = json.loads(row.payload_json)
-        payload.update({"status": "failed", "progress": 100, "error": message})
-        row.status = "failed"
-        row.progress = 100
-        row.payload_json = json.dumps(payload, ensure_ascii=False, default=str)
-        self.session.commit()
+        self.update_status(run_id, {"status": "failed", "progress": 100, "error": message})
 
     def mark_running(self, run_id: str) -> None:
-        row = self.session.get(BacktestRunModel, run_id)
-        if row is None:
-            return
-        payload = json.loads(row.payload_json)
-        payload.update({"status": "running", "progress": 5})
-        row.status = "running"
-        row.progress = 5
-        row.payload_json = json.dumps(payload, ensure_ascii=False, default=str)
-        self.session.commit()
+        self.update_status(run_id, {"status": "running", "progress": 5})
+
+    def update_status(self, run_id: str, updates: dict[str, Any]) -> None:
+        # 独立短事务，不能提交行情读取事务或复用已失效的读连接。
+        scope = self.status_sessions() if self.status_sessions else nullcontext(self.session)
+        with scope as session:
+            row = session.get(BacktestRunModel, run_id)
+            if row is None:
+                return
+            payload = json.loads(row.payload_json)
+            payload.update(updates)
+            row.status = str(payload["status"])
+            row.progress = int(payload["progress"])
+            row.payload_json = json.dumps(payload, ensure_ascii=False, default=str)
+            session.commit()
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         row = self.session.get(BacktestRunModel, run_id)

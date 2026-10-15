@@ -1,69 +1,120 @@
-"""单任务日线页缓存；因子重叠请求只读取同一个交易日页一次。"""
+"""单任务区段缓存：批量窗口按需读；单日缺失预取整月，按月块做 LRU。"""
 
 from __future__ import annotations
 
+from calendar import monthrange
 from collections import OrderedDict
 from collections.abc import Iterable
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any
 
 
+@dataclass
+class MonthPage:
+    ranges: list[tuple[date, date]] = field(default_factory=list)
+    rows: dict[date, tuple[dict[str, Any], ...]] = field(default_factory=dict)
+
+    def covers(self, day: date) -> bool:
+        return any(first <= day <= last for first, last in self.ranges)
+
+
 class DailyBarPageCache:
-    def __init__(self, store: Any, *, max_pages: int = 12) -> None:
+    def __init__(self, store: Any, *, max_pages: int = 2) -> None:
         if max_pages < 1:
             raise ValueError("max_pages 必须为正数")
         self._store = store
         self._max_pages = max_pages
-        self._pages: OrderedDict[date, tuple[dict[str, Any], ...]] = OrderedDict()
-        self._hits = 0
-        self._misses = 0
+        self._pages: OrderedDict[date, MonthPage] = OrderedDict()
+        self._hits = self._misses = self._queries = 0
 
-    def _remember(self, day: date, rows: tuple[dict[str, Any], ...]) -> None:
-        self._pages[day] = rows
-        self._pages.move_to_end(day)
-        if len(self._pages) > self._max_pages:
-            self._pages.popitem(last=False)
+    @staticmethod
+    def _month(day: date) -> date:
+        return day.replace(day=1)
+
+    def _cached(self, day: date) -> tuple[dict[str, Any], ...] | None:
+        key = self._month(day)
+        page = self._pages.get(key)
+        if page is None or not page.covers(day):
+            return None
+        self._pages.move_to_end(key)
+        return page.rows.get(day, ())
+
+    def _read(self, first: date, last: date) -> dict[date, tuple[dict[str, Any], ...]]:
+        self._queries += 1
+        fetched: dict[date, list[dict[str, Any]]] = {}
+        for row in self._store.list_runtime_bars(first, last):
+            day = date.fromisoformat(str(row["trading_day"]))
+            if first <= day <= last:
+                fetched.setdefault(day, []).append(row)
+        cursor = self._month(first)
+        while cursor <= last:
+            end = date(cursor.year, cursor.month, monthrange(cursor.year, cursor.month)[1])
+            page = self._pages.setdefault(cursor, MonthPage())
+            begin, stop = max(first, cursor), min(last, end)
+            page.ranges.append((begin, stop))
+            for offset in range((stop - begin).days + 1):
+                day = begin + timedelta(days=offset)
+                page.rows[day] = tuple(fetched.get(day, []))
+            self._pages.move_to_end(cursor)
+            if len(self._pages) > self._max_pages:
+                self._pages.popitem(last=False)
+            cursor = end + timedelta(days=1)
+        return {day: tuple(rows) for day, rows in fetched.items()}
 
     def day(self, day: date) -> tuple[dict[str, Any], ...]:
-        if day in self._pages:
+        cached = self._cached(day)
+        if cached is not None:
             self._hits += 1
-            self._pages.move_to_end(day)
-            return self._pages[day]
+            return cached
         self._misses += 1
-        rows = tuple(self._store.list_runtime_bars(day, day))
-        self._remember(day, rows)
-        return rows
+        first = self._month(day)
+        last = date(day.year, day.month, monthrange(day.year, day.month)[1])
+        return self._read(first, last).get(day, ())
 
     def days(self, trading_days: Iterable[date]) -> list[dict[str, Any]]:
         dates = list(trading_days)
-        result: list[dict[str, Any]] = []
-        # 批量范围读取可跨多页；LRU 仍只留 max_pages 页。
-        fetch_days = max(12, self._max_pages * 4)
-        for offset in range(0, len(dates), fetch_days):
-            window = dates[offset : offset + fetch_days]
-            cached_before = {day: self._pages[day] for day in window if day in self._pages}
-            missing = sorted({day for day in window if day not in self._pages})
-            fetched: dict[date, list[dict[str, Any]]] = {
-                **{day: list(rows) for day, rows in cached_before.items()},
-                **{day: [] for day in missing},
-            }
-            if missing:
-                for row in self._store.list_runtime_bars(missing[0], missing[-1]):
-                    row_day = date.fromisoformat(str(row["trading_day"]))
-                    if row_day in fetched:
-                        fetched[row_day].append(row)
+        result = []
+        for offset in range(0, len(dates), 48):
+            window = dates[offset : offset + 48]
+            cached_before = {}
             for day in window:
-                if day in self._pages:
-                    result.extend(self.day(day))
+                cached = self._cached(day)
+                if cached is not None:
+                    cached_before[day] = cached
+            missing = sorted(set(window) - cached_before.keys())
+            fetched = {}
+            ranges: list[list[date]] = []
+            for day in missing:
+                if (
+                    not ranges
+                    or (day.year * 12 + day.month)
+                    - (ranges[-1][-1].year * 12 + ranges[-1][-1].month)
+                    > 1
+                ):
+                    ranges.append([day])
                 else:
-                    if day in cached_before:
-                        self._hits += 1
-                    else:
-                        self._misses += 1
-                    rows = tuple(fetched[day])
-                    self._remember(day, rows)
-                    result.extend(rows)
+                    ranges[-1].append(day)
+            for group in ranges:
+                fetched.update(self._read(group[0], group[-1]))
+            seen = set()
+            for day in window:
+                if day in cached_before or day in seen:
+                    self._hits += 1
+                else:
+                    self._misses += 1
+                seen.add(day)
+                # 预取可能淘汰早期月份，当前请求使用独立的临时返回值。
+                result.extend(cached_before.get(day, fetched.get(day, ())))
+                month = self._month(day)
+                if month in self._pages:
+                    self._pages.move_to_end(month)
         return result
 
     def stats(self) -> dict[str, int]:
-        return {"hits": self._hits, "misses": self._misses, "pages": len(self._pages)}
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "pages": len(self._pages),
+            "queries": self._queries,
+        }

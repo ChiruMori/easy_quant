@@ -1,3 +1,4 @@
+from datetime import date
 from typing import cast
 
 from sqlalchemy.dialects import mysql
@@ -48,3 +49,10 @@ def test_page_jump_skips_only_primary_keys_and_cursor_pages_avoid_offset() -> No
     assert "GROUP BY daily_bars.symbol" in filtered_sql
     assert "count(daily_bars" not in filtered_sql
     assert "LIMIT %s, %s" not in filtered_sql
+
+    store.coverage_page(page=1, page_size=50, status="数据落后", target_day=date(2026, 10, 14))
+    query = session.page_queries.pop()
+    compiled = query.compile(dialect=mysql.dialect())
+    assert "anon_1.last_day <" in str(compiled)
+    assert date(2026, 10, 14) in compiled.params.values()
+    assert "数据落后" in compiled.params.values()

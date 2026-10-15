@@ -225,4 +225,11 @@ def after_market(context, parameters):
     with pytest.raises(StateConflictError) as error:
         execute_backtest(container, "b")
     assert error.value.details["phase"] == "on_market"
-    assert container.backtests.get("b") == original
+    current = container.backtests.get("b")
+    # 允许持久进度更新，失败仍不得发布部分交易、权益或指标。
+    for key, value in original.items():
+        if key not in {"status", "progress"}:
+            assert current[key] == value
+    assert not current.get("trades")
+    assert not current.get("periods")
+    assert not current.get("metrics")

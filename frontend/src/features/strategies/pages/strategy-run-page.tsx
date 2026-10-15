@@ -1,3 +1,4 @@
+import { RunTimingPanel } from "@/components/run-timing"
 import { localizedLabel } from "@/lib/labels"
 
 import type { StrategyRun } from "../types"
@@ -8,6 +9,7 @@ export function StrategyRunPage({ run }: { run: StrategyRun }) {
       <h1 className="text-2xl font-semibold">运行结果</h1>
       <p>状态：{localizedLabel(run.status)}</p>
       {run.error && <p role="alert">{run.error}</p>}
+      <RunTimingPanel timing={run.timing} />
       {run.phase_results.map((phase) => (
         <section key={phase.phase}>
           <h2>{localizedLabel(phase.phase)}</h2>

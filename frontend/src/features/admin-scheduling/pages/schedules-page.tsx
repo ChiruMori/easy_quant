@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -31,41 +32,67 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Textarea } from "@/components/ui/textarea"
 import { localizedLabel } from "@/lib/labels"
 
-import { createSchedule, listSchedules, updateSchedule } from "../api"
+import { createSchedule, listSchedules, runSchedule, type Schedule, updateSchedule } from "../api"
 
 export function SchedulesPage() {
   const client = useQueryClient()
   const query = useQuery({ queryKey: ["admin", "schedules"], queryFn: listSchedules })
   const [taskType, setTaskType] = useState("market-data-nightly")
+  const [editing, setEditing] = useState<Schedule | null>(null)
+  const [message, setMessage] = useState("")
+  const [pending, setPending] = useState(false)
+  const [runKeys] = useState(() => new Map<string, string>())
+  const refresh = () => client.invalidateQueries({ queryKey: ["admin", "schedules"] })
   if (query.isLoading) return <LoadingState label="正在加载定时任务" />
   if (query.error) return <ErrorState title="无法加载定时任务" message={query.error.message} />
   return (
     <div className="flex flex-col gap-5">
       <div>
         <h1 className="text-2xl font-semibold">定时任务</h1>
-        <p className="text-muted-foreground">配置数据拉取和实盘分析计划，并随时停用。</p>
+        <p className="text-muted-foreground">
+          停用后可编辑计划，也可随时手动执行一次；不改变下次定时执行时间。
+        </p>
       </div>
       <Card className="max-w-2xl">
         <CardHeader>
-          <CardTitle>新增定时任务</CardTitle>
+          <CardTitle>{editing ? "编辑定时任务" : "新增定时任务"}</CardTitle>
           <CardDescription>使用五段 Cron 表达式，时区默认为 Asia/Shanghai。</CardDescription>
         </CardHeader>
         <form
+          key={editing?.id ?? "new"}
           onSubmit={async (event) => {
             event.preventDefault()
             const form = event.currentTarget
+            if (pending) return
             const data = new FormData(form)
-            await createSchedule({
-              task_type: taskType,
-              schedule_kind: "cron",
-              schedule_expression: String(data.get("expression")),
-              timezone: String(data.get("timezone")),
-              enabled: true,
-            })
-            form.reset()
-            await client.invalidateQueries({ queryKey: ["admin", "schedules"] })
+            setPending(true)
+            setMessage("")
+            try {
+              const payload = {
+                task_type: taskType,
+                schedule_kind: String(data.get("kind")),
+                schedule_expression: String(data.get("expression")),
+                timezone: String(data.get("timezone")),
+                enabled: !editing,
+                configuration: JSON.parse(String(data.get("configuration") || "{}")) as Record<
+                  string,
+                  unknown
+                >,
+              }
+              if (editing) await updateSchedule(editing.id, payload)
+              else await createSchedule(payload)
+              form.reset()
+              setEditing(null)
+              setMessage("计划已保存")
+              await refresh()
+            } catch (error) {
+              setMessage(error instanceof Error ? error.message : "无法保存计划")
+            } finally {
+              setPending(false)
+            }
           }}
         >
           <CardContent>
@@ -73,7 +100,7 @@ export function SchedulesPage() {
               <Field>
                 <FieldLabel>任务类型</FieldLabel>
                 <Select value={taskType} onValueChange={setTaskType}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full" aria-label="任务类型">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -97,20 +124,66 @@ export function SchedulesPage() {
                 )}
               </Field>
               <Field>
+                <FieldLabel htmlFor="kind">计划方式</FieldLabel>
+                <select
+                  id="kind"
+                  name="kind"
+                  defaultValue={editing?.schedule_kind ?? "cron"}
+                  className="rounded-md border p-2"
+                >
+                  <option value="cron">Cron</option>
+                  <option value="interval">固定间隔（秒）</option>
+                </select>
+              </Field>
+              <Field>
                 <FieldLabel htmlFor="expression">Cron 表达式</FieldLabel>
-                <Input id="expression" name="expression" defaultValue="0 22 * * 1-5" required />
+                <Input
+                  id="expression"
+                  name="expression"
+                  defaultValue={editing?.schedule_expression ?? "0 22 * * 1-5"}
+                  required
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="timezone">时区</FieldLabel>
-                <Input id="timezone" name="timezone" defaultValue="Asia/Shanghai" required />
+                <Input
+                  id="timezone"
+                  name="timezone"
+                  defaultValue={editing?.timezone ?? "Asia/Shanghai"}
+                  required
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="schedule-configuration">任务配置 JSON</FieldLabel>
+                <Textarea
+                  id="schedule-configuration"
+                  name="configuration"
+                  defaultValue={JSON.stringify(editing?.configuration ?? {}, null, 2)}
+                />
+                <FieldDescription>
+                  沿用任务配置；数据拉取每日更新可使用 {'{"mode": "daily-update"}'}。
+                </FieldDescription>
               </Field>
             </FieldGroup>
           </CardContent>
           <CardFooter>
-            <Button type="submit">创建任务</Button>
+            <Button type="submit" disabled={pending}>
+              {pending ? "保存中…" : editing ? "保存计划" : "创建任务"}
+            </Button>
+            {editing && (
+              <Button variant="outline" type="button" onClick={() => setEditing(null)}>
+                取消编辑
+              </Button>
+            )}
           </CardFooter>
         </form>
       </Card>
+      {message && (
+        <Alert>
+          <AlertTitle>操作结果</AlertTitle>
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      )}
       <Table>
         <TableHeader>
           <TableRow>
@@ -119,6 +192,7 @@ export function SchedulesPage() {
             <TableHead>时区</TableHead>
             <TableHead>状态</TableHead>
             <TableHead>启停</TableHead>
+            <TableHead>操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -134,11 +208,55 @@ export function SchedulesPage() {
                 <Switch
                   aria-label={`${item.task_type}启停`}
                   checked={item.enabled}
+                  disabled={pending}
                   onCheckedChange={async (enabled) => {
-                    await updateSchedule(item.id, { enabled })
-                    await client.invalidateQueries({ queryKey: ["admin", "schedules"] })
+                    setPending(true)
+                    try {
+                      await updateSchedule(item.id, { enabled })
+                      await refresh()
+                    } catch (error) {
+                      setMessage(error instanceof Error ? error.message : "操作失败")
+                    } finally {
+                      setPending(false)
+                    }
                   }}
                 />
+              </TableCell>
+              <TableCell>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={item.enabled || pending}
+                    onClick={() => {
+                      setEditing(item)
+                      setTaskType(item.task_type)
+                    }}
+                  >
+                    编辑
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pending}
+                    onClick={async () => {
+                      setPending(true)
+                      const key = runKeys.get(item.id) ?? crypto.randomUUID()
+                      runKeys.set(item.id, key)
+                      try {
+                        const job = await runSchedule(item.id, key)
+                        runKeys.delete(item.id)
+                        setMessage(`任务 ${job.id} 已进入队列，可在后台任务页面查看结果`)
+                      } catch (error) {
+                        setMessage(error instanceof Error ? error.message : "执行失败")
+                      } finally {
+                        setPending(false)
+                      }
+                    }}
+                  >
+                    立即执行
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ))}

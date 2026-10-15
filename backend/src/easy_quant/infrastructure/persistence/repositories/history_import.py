@@ -4,14 +4,14 @@ from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any, cast
 
-from sqlalchemy import Table, select
+from sqlalchemy import Table, or_, select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from easy_quant.domain.market_data.history import HistoryBar
+from easy_quant.infrastructure.persistence.bar_storage import BAR_STORAGE
 from easy_quant.infrastructure.persistence.models.market_data_records import (
-    DailyBarModel,
     HistoryImportStockModel,
     InstrumentModel,
     TradingDayModel,
@@ -33,17 +33,6 @@ def bar_values(bar: HistoryBar, archive_sha256: str) -> dict[str, Any]:
         "adjustment": "none",
         "archive_sha256": archive_sha256,
     }
-
-
-def bars_upsert():
-    statement = insert(cast(Table, DailyBarModel.__table__))
-    return statement.on_duplicate_key_update(
-        **{
-            column.name: statement.inserted[column.name]
-            for column in DailyBarModel.__table__.columns
-            if column.name not in {"symbol", "trading_day"}
-        }
-    )
 
 
 class SqlHistoryStore:
@@ -76,11 +65,16 @@ class SqlHistoryStore:
         try:
             symbols = [symbol for symbol, _bars in stocks]
             with self.factory.begin() as session:
+                storage = BAR_STORAGE
+                Bar = storage.logical
                 if self._known_days is None:
                     self._known_days = set(session.scalars(select(TradingDayModel.trading_day)))
                 conflict = session.scalar(
-                    select(DailyBarModel.symbol)
-                    .where(DailyBarModel.symbol.in_(symbols), DailyBarModel.adjustment != "none")
+                    select(Bar.symbol)
+                    .where(
+                        Bar.symbol.in_(symbols),
+                        or_(Bar.adjustment != "none", Bar.adjustment.is_(None)),
+                    )
                     .limit(1)
                 )
                 if conflict is not None:
@@ -92,7 +86,10 @@ class SqlHistoryStore:
                     for offset in range(0, len(bars), batch_size):
                         batch = bars[offset : offset + batch_size]
                         session.execute(
-                            bars_upsert(), [bar_values(bar, archive_sha256) for bar in batch]
+                            storage.upsert(),
+                            storage.encode(
+                                session, [bar_values(bar, archive_sha256) for bar in batch]
+                            ),
                         )
                 new_days = {bar.trading_day for bar in bars} - self._known_days
                 if new_days:

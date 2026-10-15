@@ -31,6 +31,7 @@ def test_all_daily_rows_and_success_checkpoint_commit_in_one_transaction() -> No
     store.write_day(parse_daily(zip_bytes(daily_members()), DAY))
     assert factory.transaction.committed
     assert factory.transaction.writes == [
+        "bar_provenance",
         "daily_bars",
         "instruments",
         "trading_days",

@@ -9,6 +9,7 @@ import {
   useState,
 } from "react"
 
+import { RequestLoading } from "@/components/request-loading"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { apiRequest, setCsrfToken } from "@/lib/api/client"
 import type { CurrentSession, CurrentUser } from "@/lib/api/types"
@@ -73,7 +74,10 @@ export function AppProviders({ children }: PropsWithChildren) {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <AuthenticationProvider>{children}</AuthenticationProvider>
+        <AuthenticationProvider>
+          {children}
+          <RequestLoading />
+        </AuthenticationProvider>
       </TooltipProvider>
     </QueryClientProvider>
   )

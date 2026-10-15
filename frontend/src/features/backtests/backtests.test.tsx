@@ -20,6 +20,14 @@ describe("回测详情", () => {
             periods: [],
             trades: [],
             assumptions: { frequency: "daily" },
+            timing: {
+              total_seconds: 2,
+              stages: { warmup: 0.5, strategy: 1.5 },
+              hooks: {
+                before_market: { count: 1, total_seconds: 1, average_seconds: 1, max_seconds: 1 },
+              },
+              daily_hooks: [{ trading_day: "2026-10-09", hook: "before_market", seconds: 1 }],
+            },
           }}
         />
       </MemoryRouter>,
@@ -28,5 +36,8 @@ describe("回测详情", () => {
     expect(screen.getByText("累计收益率")).toBeInTheDocument()
     expect(screen.getByText("10%")).toBeInTheDocument()
     expect(screen.getByText(/快照 s1/)).toBeInTheDocument()
+    expect(screen.getByText("运行耗时")).toBeInTheDocument()
+    expect(screen.getByText("平均耗时（秒）")).toBeInTheDocument()
+    expect(screen.getByText("2026-10-09")).toBeInTheDocument()
   })
 })

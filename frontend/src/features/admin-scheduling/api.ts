@@ -8,15 +8,31 @@ export interface Schedule {
   timezone: string
   enabled: boolean
   next_run_at: string
+  configuration?: Record<string, unknown>
 }
 export const listSchedules = () => apiRequest<Schedule[]>("/admin/schedules")
 export const createSchedule = (payload: Omit<Schedule, "id" | "next_run_at">) =>
   apiRequest<Schedule>("/admin/schedules", { method: "POST", body: JSON.stringify(payload) })
 export const updateSchedule = (
   id: string,
-  payload: Partial<Pick<Schedule, "enabled" | "schedule_expression" | "timezone">>,
+  payload: Partial<
+    Pick<
+      Schedule,
+      | "enabled"
+      | "task_type"
+      | "schedule_kind"
+      | "schedule_expression"
+      | "timezone"
+      | "configuration"
+    >
+  >,
 ) =>
   apiRequest<Schedule>(`/admin/schedules/${id}`, { method: "PATCH", body: JSON.stringify(payload) })
+export const runSchedule = (id: string, key: string) =>
+  apiRequest<{ id: string; status: string }>(`/admin/schedules/${id}/run`, {
+    method: "POST",
+    headers: { "Idempotency-Key": key },
+  })
 export interface JobRecord {
   id: string
   job_type: string

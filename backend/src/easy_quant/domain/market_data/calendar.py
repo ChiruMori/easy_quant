@@ -24,17 +24,23 @@ class TradingCalendar:
         self._trading_days = trading_days
 
     def is_trading_day(self, day: date) -> bool:
-        if self._trading_days is not None:
+        if not self.is_estimated(day):
+            assert self._trading_days is not None
             return day in self._trading_days
         return day.weekday() < 5
 
+    def is_estimated(self, day: date) -> bool:
+        return not self._trading_days or not (
+            min(self._trading_days) <= day <= max(self._trading_days)
+        )
+
     def previous_trading_day(self, day: date) -> date:
-        if self._trading_days is not None:
+        if self._trading_days and not self.is_estimated(day - timedelta(days=1)):
             known = [candidate for candidate in self._trading_days if candidate < day]
             if known:
                 return max(known)
         candidate = day - timedelta(days=1)
-        while candidate.weekday() >= 5:
+        while not self.is_trading_day(candidate):
             candidate -= timedelta(days=1)
         return candidate
 

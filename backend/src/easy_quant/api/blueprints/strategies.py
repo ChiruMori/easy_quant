@@ -231,6 +231,8 @@ def list_strategy_runs(strategy_id: str):
                 "allow_mock": job.payload.get("allow_mock", False),
                 "portfolio": job.result_summary.get("portfolio"),
                 "trades": job.result_summary.get("trades", []),
+                "timing": job.result_summary.get("timing")
+                or job.error_summary.get("details", {}).get("timing"),
             }
         )
     return success(list(reversed(rows)))

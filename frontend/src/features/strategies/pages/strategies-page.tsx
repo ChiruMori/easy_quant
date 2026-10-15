@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { RunTimingPanel } from "@/components/run-timing"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -235,7 +236,7 @@ export function StrategiesPage() {
                     onChange={(event) => setTradingDay(event.target.value)}
                   />
                   <FieldDescription>
-                    快测只运行所选交易日，读取该日及此前最多 5 个交易日的行情；更长历史请使用回测。
+                    快测只运行所选交易日，按因子窗口读取所需预热历史，不会模拟此前交易。
                   </FieldDescription>
                 </Field>
                 <Button
@@ -270,9 +271,8 @@ export function StrategiesPage() {
                 </FieldDescription>
               </Field>
               <p className="text-sm text-muted-foreground">
-                实盘与回测中的策略因子默认可回溯此前 250
-                个交易日；需要更长历史时，在策略源码顶层声明 HISTORY_TRADING_DAYS（最多
-                2500），保存为新版本。快测仍固定为 5 日。
+                MA、RSI 按因子所需窗口预热，回测仍覆盖完整日期区间。动态历史与统计/EMA 默认回溯 250
+                个交易日；可声明 HISTORY_TRADING_DAYS（最多 2500），保存为新版本。
               </p>
             </CardFooter>
           </Card>
@@ -328,6 +328,7 @@ export function StrategiesPage() {
                       模拟组合：{JSON.stringify(visibleRun.portfolio, null, 2)}
                     </pre>
                   )}
+                  <RunTimingPanel timing={visibleRun.timing} />
                   {visibleRun.phase_results.map((phase) => (
                     <div className="flex flex-col gap-2" key={phase.phase}>
                       <h3 className="font-medium">{localizedLabel(phase.phase)}</h3>

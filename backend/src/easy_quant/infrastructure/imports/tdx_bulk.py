@@ -9,12 +9,13 @@ from pymysql import MySQLError
 from sqlalchemy.orm import Session
 
 from easy_quant.domain.market_data.history import HistoryBar
+from easy_quant.infrastructure.persistence.bar_storage import BAR_STORAGE
 
 LOAD_SQL = (
     "LOAD DATA LOCAL INFILE %s REPLACE INTO TABLE daily_bars CHARACTER SET ascii "
     "FIELDS TERMINATED BY '\\t' LINES TERMINATED BY '\\n' "
     "(symbol,trading_day,open,high,low,close,volume,amount,available_at) "
-    "SET source='tdx-official',adjustment='none',archive_sha256=%s"
+    "SET provenance_id=%s"
 )
 
 
@@ -37,6 +38,9 @@ class LocalFileHistoryLoader:
         self.directory = directory
 
     def __call__(self, session: Session, bars: list[HistoryBar], digest: str) -> None:
+        identity = BAR_STORAGE.encode(
+            session, [{"source": "tdx-official", "adjustment": "none", "archive_sha256": digest}]
+        )[0]["provenance_id"]
         self.directory.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="ascii", dir=self.directory, suffix=".tsv", delete=False
@@ -46,7 +50,7 @@ class LocalFileHistoryLoader:
         try:
             cursor = session.connection().connection.cursor()
             try:
-                cursor.execute(LOAD_SQL, (str(path.resolve()), digest))
+                cursor.execute(LOAD_SQL, (str(path.resolve()), identity))
                 cursor.execute("SHOW WARNINGS LIMIT 1")
                 warning = cursor.fetchone()
                 if warning is not None:

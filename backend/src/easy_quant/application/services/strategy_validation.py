@@ -9,6 +9,40 @@ DEFAULT_HISTORY_TRADING_DAYS = 250
 MAX_HISTORY_TRADING_DAYS = 2500
 
 
+def _tail_history_window(tree: ast.AST, call: ast.Call) -> int:
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    parent = parents.get(call)
+    uses: list[ast.AST] = [call]
+    if (
+        isinstance(parent, ast.Assign)
+        and len(parent.targets) == 1
+        and isinstance(parent.targets[0], ast.Name)
+    ):
+        name = parent.targets[0].id
+        uses = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)
+        ]
+    windows = [1]
+    for use in uses:
+        subscript = parents.get(use)
+        if not isinstance(subscript, ast.Subscript) or subscript.value is not use:
+            return DEFAULT_HISTORY_TRADING_DAYS
+        index = subscript.slice
+        if (
+            isinstance(index, ast.UnaryOp)
+            and isinstance(index.op, ast.USub)
+            and isinstance(index.operand, ast.Constant)
+            and type(index.operand.value) is int
+            and index.operand.value > 0
+        ):
+            windows.append(index.operand.value)
+        else:
+            return DEFAULT_HISTORY_TRADING_DAYS
+    return max(windows)
+
+
 def extract_history_trading_days(source_code: str) -> int:
     declaration: int | None = None
     for node in ast.parse(source_code).body:
@@ -28,7 +62,53 @@ def extract_history_trading_days(source_code: str) -> int:
             raise ValidationError("HISTORY_TRADING_DAYS 必须是唯一的整数常量")
         declaration = value.value
     if declaration is None:
-        return DEFAULT_HISTORY_TRADING_DAYS
+        windows: list[int] = []
+        tree = ast.parse(source_code)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "data":
+                windows.append(DEFAULT_HISTORY_TRADING_DAYS)
+                continue
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr in {"history", "daily_bars"}:
+                windows.append(DEFAULT_HISTORY_TRADING_DAYS)
+                continue
+            if node.func.attr != "factor":
+                continue
+            if not node.args or not isinstance(node.args[0], ast.Constant):
+                windows.append(DEFAULT_HISTORY_TRADING_DAYS)
+                continue
+            key = node.args[0].value
+            if key == "market.daily-bars":
+                required = _tail_history_window(tree, node)
+                if required > MAX_HISTORY_TRADING_DAYS:
+                    raise ValidationError("因子所需历史超过 2500 个交易日")
+                windows.append(required)
+                continue
+            if key in {"stat.expected-return", "technical.macd"}:
+                # EMA/统计依赖整个输入序列，保留既有口径而非只取最小样本。
+                windows.append(DEFAULT_HISTORY_TRADING_DAYS)
+                continue
+            if key not in {"technical.ma", "technical.rsi"}:
+                continue
+            if any(keyword.arg is None for keyword in node.keywords):
+                windows.append(DEFAULT_HISTORY_TRADING_DAYS)
+                continue
+            value = next((kw.value for kw in node.keywords if kw.arg == "window"), None)
+            if value is None:
+                window = 5 if key == "technical.ma" else 14
+            elif isinstance(value, ast.Constant) and type(value.value) is int:
+                window = value.value
+            else:
+                windows.append(DEFAULT_HISTORY_TRADING_DAYS)
+                continue
+            if not 1 <= window <= MAX_HISTORY_TRADING_DAYS:
+                raise ValidationError("因子窗口必须在 1 至 2500 之间")
+            required = window + int(key == "technical.rsi")
+            if required > MAX_HISTORY_TRADING_DAYS:
+                raise ValidationError("因子所需历史超过 2500 个交易日")
+            windows.append(required)
+        return max(windows) if windows else DEFAULT_HISTORY_TRADING_DAYS
     if not 1 <= declaration <= MAX_HISTORY_TRADING_DAYS:
         raise ValidationError(f"HISTORY_TRADING_DAYS 必须在 1 至 {MAX_HISTORY_TRADING_DAYS} 之间")
     return declaration

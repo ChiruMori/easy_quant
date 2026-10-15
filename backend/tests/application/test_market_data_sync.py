@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from easy_quant.application.services.acquisition import AcquisitionFailed
 from easy_quant.application.services.market_data_sync import MarketDataSyncService
 from easy_quant.domain.market_data.entities import (
     AttemptStatus,
@@ -18,9 +19,11 @@ class FakeAcquisition:
         self.payload = payload
         self.source = source
         self.requests = []
+        self.source_keys = []
 
     def acquire_with_attempts(self, request, *, force=False, source_keys=None):
         self.requests.append(request)
+        self.source_keys.append(source_keys)
         now = datetime(2026, 10, 1, tzinfo=UTC)
         envelope = RawEnvelope(
             request.identity,
@@ -31,6 +34,177 @@ class FakeAcquisition:
             now + timedelta(hours=1),
         )
         return envelope, [SourceAttempt(self.source, 1, AttemptStatus.SUCCEEDED)]
+
+
+def test_explicit_suspension_in_securities_is_not_mistaken_for_delisting():
+    store = InMemoryMarketDataStore({}, {}, set())
+    service = MarketDataSyncService(
+        {"securities": FakeAcquisition([{"code": "600293", "status": "停牌"}])}, store
+    )
+    service.sync("securities")
+    assert (store.get_instrument("600293") or {})["status"] == "suspended"
+
+
+def test_suspension_sync_updates_only_confirmed_symbols_and_skips_daily_acquisition():
+    store = InMemoryMarketDataStore({}, {}, set())
+    symbols = ["600293", "601059", "601198", "688496"]
+    store.upsert_instruments([{"symbol": symbol, "status": "active"} for symbol in symbols])
+    store.upsert_instruments([{"symbol": "000001", "status": "suspended"}])
+    feed = FakeAcquisition(
+        [{"symbol": symbol, "status": "suspended", "as_of_day": "2026-09-30"} for symbol in symbols]
+    )
+    daily = FakeAcquisition([])
+    service = MarketDataSyncService({"trading-status": feed, "daily-bars": daily}, store)
+    result = service.sync("trading-status", end_day=date(2026, 9, 30))
+    assert result["record_count"] == 4
+    assert all((store.get_instrument(symbol) or {})["status"] == "suspended" for symbol in symbols)
+    assert len(store.list_records("security-status")) == 4
+    feed.payload = []
+    service.sync("trading-status", end_day=date(2026, 9, 30))
+    assert (store.get_instrument("600293") or {})["status"] == "suspended"
+    assert (store.get_instrument("000001") or {})["status"] == "suspended"
+    assert daily.requests
+    daily.requests.clear()
+    result = service.sync(
+        "daily-bars", symbols=symbols, start_day=date(2026, 9, 1), end_day=date(2026, 9, 30)
+    )
+    assert not daily.requests
+    assert result["skipped_suspended_symbols"] == sorted(symbols)
+    assert not store.list_records("daily-bar-availability")
+
+
+def test_invalid_suspension_batch_does_not_partially_update():
+    store = InMemoryMarketDataStore({}, {}, set())
+    store.upsert_instruments([{"symbol": "600293", "status": "active"}])
+    service = MarketDataSyncService(
+        {
+            "trading-status": FakeAcquisition(
+                [
+                    {"symbol": "600293", "status": "suspended", "as_of_day": "2026-09-30"},
+                    {"symbol": "601059", "status": "active"},
+                ]
+            )
+        },
+        store,
+    )
+    with pytest.raises(ValueError):
+        service.sync("trading-status", end_day=date(2026, 9, 30))
+    assert (store.get_instrument("600293") or {})["status"] == "active"
+
+
+def _traded_bar(day="2026-09-30", volume="100", close="10"):
+    return {"date": day, "open": "10", "high": "11", "low": "9", "close": close, "volume": volume}
+
+
+def test_automatic_resumption_uses_traded_day_and_enabled_sources_and_is_idempotent():
+    store = InMemoryMarketDataStore({}, {}, set())
+    store.upsert_instruments(
+        [
+            {"symbol": "600293", "name": "三峡新材", "status": "suspended"},
+            {"symbol": "000001", "status": "delisted"},
+        ]
+    )
+    daily = FakeAcquisition([_traded_bar()], "confirmed-source")
+    service = MarketDataSyncService(
+        {"trading-status": FakeAcquisition([]), "daily-bars": daily}, store
+    )
+    result = service.sync(
+        "trading-status", end_day=date(2026, 9, 30), confirmation_source_keys={"confirmed-source"}
+    )
+    assert result["resumed_symbols"] == ["600293"]
+    assert result["unconfirmed_symbols"] == []
+    assert (store.get_instrument("600293") or {})["status"] == "active"
+    assert (store.get_instrument("000001") or {})["status"] == "delisted"
+    assert len(daily.requests) == 1
+    assert daily.requests[0].parameters == {
+        "symbol": "600293",
+        "start_date": "2026-09-30",
+        "end_date": "2026-09-30",
+        "adjustment": "none",
+    }
+    assert daily.source_keys == [{"confirmed-source"}]
+    record = store.list_records("security-status")[0]
+    assert record["previous_status"] == "suspended"
+    assert record["status"] == "active"
+    assert record["source"] == "confirmed-source"
+    assert record["evidence"] == "traded-daily-bar"
+    assert record["evidence_volume"] == "100"
+    service.sync("trading-status", end_day=date(2026, 9, 30))
+    assert len(daily.requests) == 1
+    assert len(store.list_records("security-status")) == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        [_traded_bar("2026-09-29")],
+        [_traded_bar("2026-10-01")],
+        [_traded_bar(volume="0")],
+        [_traded_bar(volume="NaN")],
+        [_traded_bar(close="0")],
+        [_traded_bar(close="NaN")],
+    ],
+)
+def test_absent_suspension_or_invalid_trading_evidence_does_not_resume(payload):
+    store = InMemoryMarketDataStore({}, {}, set())
+    store.upsert_instruments([{"symbol": "600293", "status": "suspended"}])
+    daily = FakeAcquisition(payload)
+    service = MarketDataSyncService(
+        {"trading-status": FakeAcquisition([]), "daily-bars": daily}, store
+    )
+    result = service.sync("trading-status", end_day=date(2026, 9, 30))
+    assert result["unconfirmed_symbols"] == ["600293"]
+    assert (store.get_instrument("600293") or {})["status"] == "suspended"
+    # 下一次盘后自动重试，不需要人工操作。
+    daily.payload = [_traded_bar()]
+    result = service.sync("trading-status", end_day=date(2026, 9, 30))
+    assert result["resumed_symbols"] == ["600293"]
+
+
+def test_confirmation_failure_keeps_status_and_exposes_source_attempts():
+    store = InMemoryMarketDataStore({}, {}, set())
+    store.upsert_instruments([{"symbol": "600293", "status": "suspended"}])
+
+    class FailedAcquisition:
+        def acquire_with_attempts(self, *_args, **_kwargs):
+            raise AcquisitionFailed(
+                "所有数据来源均失败",
+                {
+                    "attempts": [
+                        {
+                            "source_key": "fake",
+                            "attempt": 1,
+                            "status": "failed",
+                            "message": "连接中断",
+                        }
+                    ]
+                },
+            )
+
+    service = MarketDataSyncService(
+        {"trading-status": FakeAcquisition([]), "daily-bars": FailedAcquisition()}, store
+    )
+    result = service.sync("trading-status", end_day=date(2026, 9, 30))
+    assert result["unconfirmed_symbols"] == ["600293"]
+    assert "下次盘后自动重试" in str(result["message"])
+    attempts = result["attempts"]
+    assert isinstance(attempts, list)
+    assert attempts[-1]["purpose"] == "resume-confirmation"
+    assert (store.get_instrument("600293") or {})["status"] == "suspended"
+
+
+def test_historical_status_replay_cannot_undo_a_later_suspension():
+    store = InMemoryMarketDataStore({}, {}, set())
+    store.upsert_instruments([{"symbol": "600293", "status": "suspended"}])
+    daily = FakeAcquisition([_traded_bar("2026-09-28")])
+    service = MarketDataSyncService(
+        {"trading-status": FakeAcquisition([]), "daily-bars": daily}, store
+    )
+    with pytest.raises(ValueError, match="不得覆盖当前状态"):
+        service.sync("trading-status", end_day=date(2026, 9, 28))
+    assert not daily.requests
+    assert (store.get_instrument("600293") or {})["status"] == "suspended"
 
 
 def test_sync_normalizes_securities_calendar_and_daily_bars() -> None:

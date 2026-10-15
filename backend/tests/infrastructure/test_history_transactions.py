@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pytest
+from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -18,6 +19,7 @@ class Transaction:
         self.committed = False
         self.rolled_back = False
         self.writes: list[str] = []
+        self.metadata = {}
 
     def __enter__(self):
         return self
@@ -33,10 +35,19 @@ class Transaction:
     def scalars(self, _query):
         return []
 
-    def execute(self, query, _rows):
+    def execute(self, query, _rows=None):
+        sql = str(query.compile(dialect=mysql.dialect()))
+        if sql.startswith("SELECT bar_provenance.id"):
+            return [(identity, *key) for key, identity in self.metadata.items()]
         self.writes.append(query.table.name)
-        if self.fail and len(self.writes) == 2:
+        if query.table.name == "bar_provenance":
+            assert _rows is not None
+            for row in _rows:
+                key = row["source"], row["adjustment"], row["archive_sha256"]
+                self.metadata.setdefault(key, len(self.metadata) + 1)
+        if self.fail and query.table.name == "daily_bars":
             raise SQLAlchemyError("SECRET_CONNECTION_DETAIL")
+        return []
 
 
 class Factory:
