@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -77,19 +77,19 @@ def analyze_live_instance(
     universe_symbols: set[str] = set()
     prices: dict[str, list[str]] = {}
     found_bars = False
-    for day in (*previous_days, trading_day):
-        for row in page_cache.day(day):
-            symbol = str(row["symbol"])
-            if symbol in excluded:
-                continue
-            found_bars = True
-            row_available_at = datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
-            include_today = day == trading_day and phase == "after_market"
-            if row_available_at <= cutoff and (day < trading_day or include_today):
-                universe_symbols.add(symbol)
-                prices.setdefault(symbol, []).append(str(row["close"]))
-            elif day == trading_day and phase == "on_market":
-                universe_symbols.add(symbol)
+    for row in page_cache.days((*previous_days, trading_day)):
+        day = date.fromisoformat(str(row["trading_day"]))
+        symbol = str(row["symbol"])
+        if symbol in excluded:
+            continue
+        found_bars = True
+        row_available_at = datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
+        include_today = day == trading_day and phase == "after_market"
+        if row_available_at <= cutoff and (day < trading_day or include_today):
+            universe_symbols.add(symbol)
+            prices.setdefault(symbol, []).append(str(row["close"]))
+        elif day == trading_day and phase == "on_market":
+            universe_symbols.add(symbol)
     if "daily-bars" in dependencies and not found_bars:
         raise StateConflictError(
             "实盘分析所需日线尚未同步",

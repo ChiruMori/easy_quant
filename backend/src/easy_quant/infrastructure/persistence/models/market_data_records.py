@@ -3,10 +3,37 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, Index, Numeric, String
+from sqlalchemy import Column, Computed, Date, Index, Numeric, String, Table, UniqueConstraint
+from sqlalchemy.dialects.mysql import INTEGER, VARBINARY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from easy_quant.infrastructure.persistence.base import Base, UtcDateTime
+
+provenance = Table(
+    "bar_provenance",
+    Base.metadata,
+    Column("id", INTEGER(unsigned=True), primary_key=True, autoincrement=True),
+    Column("source", String(40, collation="utf8mb4_bin"), nullable=False),
+    Column("adjustment", String(20, collation="utf8mb4_bin"), nullable=False),
+    Column("archive_sha256", String(64, collation="utf8mb4_bin")),
+    Column(
+        "archive_key",
+        VARBINARY(256),
+        Computed("CAST(IFNULL(archive_sha256, '') AS BINARY)", persisted=True),
+    ),
+    Column(
+        "archive_is_null",
+        INTEGER(unsigned=True),
+        Computed("archive_sha256 IS NULL", persisted=True),
+    ),
+    Column("source_key", VARBINARY(160), Computed("CAST(source AS BINARY)", persisted=True)),
+    Column("adjustment_key", VARBINARY(80), Computed("CAST(adjustment AS BINARY)", persisted=True)),
+    UniqueConstraint(
+        "source_key", "adjustment_key", "archive_key", "archive_is_null", name="uq_bar_provenance"
+    ),
+    mysql_charset="utf8mb4",
+    mysql_engine="InnoDB",
+)
 
 
 class DailyBarModel(Base):
@@ -24,9 +51,7 @@ class DailyBarModel(Base):
     volume: Mapped[Decimal] = mapped_column(Numeric(28, 4))
     available_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(28, 4))
-    source: Mapped[str] = mapped_column(String(40), server_default="unknown", nullable=False)
-    adjustment: Mapped[str] = mapped_column(String(20), server_default="unknown", nullable=False)
-    archive_sha256: Mapped[str | None] = mapped_column(String(64))
+    provenance_id: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False)
 
 
 class HistoryImportStockModel(Base):

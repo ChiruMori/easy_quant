@@ -8,7 +8,11 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from easy_quant.application.services.instrument_eligibility import currently_unavailable_symbols
-from easy_quant.application.services.strategy_validation import extract_factor_dependencies
+from easy_quant.application.services.run_profile import RunProfile
+from easy_quant.application.services.strategy_validation import (
+    extract_factor_dependencies,
+    extract_history_trading_days,
+)
 from easy_quant.domain.backtesting.engine import PhasedBacktestSession
 from easy_quant.domain.backtesting.entities import BacktestConfig
 from easy_quant.domain.backtesting.execution import MarketBar
@@ -44,6 +48,18 @@ def _visible_records(rows: list[dict[str, object]], cutoff: datetime) -> list[di
 def execute_strategy_tick(
     container: Any, payload: dict[str, Any], *, job_id: str = ""
 ) -> dict[str, object]:
+    profile = RunProfile()
+    try:
+        return _execute_strategy_tick(container, payload, job_id=job_id, profile=profile)
+    except StateConflictError as error:
+        raise StateConflictError(
+            error.message, {**error.details, "timing": profile.snapshot()}
+        ) from error
+
+
+def _execute_strategy_tick(
+    container: Any, payload: dict[str, Any], *, job_id: str, profile: RunProfile
+) -> dict[str, object]:
     started = perf_counter()
     strategy_id = str(payload["strategy_id"])
     version_id = str(payload["strategy_version_id"])
@@ -63,10 +79,11 @@ def execute_strategy_tick(
         raise StateConflictError("策略版本不存在")
 
     dependencies = extract_factor_dependencies(version.source_code)
+    history_window = extract_history_trading_days(version.source_code)
+    profile.enter("loading_data")
+    logger.info("快测正在读取行情 job_id=%s history_days=%d", job_id, history_window)
     trading_days = container.market_data.list_trading_days()
-    previous_days = sorted(day for day in trading_days if day < trading_day)[
-        -QUICK_TEST_PRIOR_TRADING_DAYS:
-    ]
+    previous_days = sorted(day for day in trading_days if day < trading_day)[-history_window:]
     page_cache = DailyBarPageCache(container.market_data)
     excluded = currently_unavailable_symbols(container.market_data)
     bars = [
@@ -100,6 +117,7 @@ def execute_strategy_tick(
         ]
 
     phases = ("before_market", "on_market", "after_market")
+    profile.enter("context")
     contexts: list[tuple[dict[str, object], str]] = []
     for phase in phases:
         include_today = phase == "after_market"
@@ -192,17 +210,20 @@ def execute_strategy_tick(
         and datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
         <= datetime.fromisoformat(str(contexts[0][0]["decision_at"]))
     ]
+    visible_before_keys = {(str(row["symbol"]), str(row["trading_day"])) for row in visible_before}
     visible_after = [
         row
         for row in bars
-        if row not in visible_before
+        if (str(row["symbol"]), str(row["trading_day"])) not in visible_before_keys
         and datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
         <= datetime.fromisoformat(str(contexts[2][0]["decision_at"]))
     ]
     with StreamingStrategyRunner(version, dict(payload.get("parameters", {}))) as runner:
+        profile.enter("strategy")
 
         def strategy(phase):
             context = contexts[phases.index(phase)][0]
+            hook_started = profile.timer()
             result = runner.run_phase(
                 trading_day,
                 phase=phase,
@@ -242,6 +263,7 @@ def execute_strategy_tick(
                 allow_mock=bool(payload.get("allow_mock", False)),
                 decision_at=str(context["decision_at"]),
             )
+            profile.record_hook(trading_day.isoformat(), phase, hook_started)
             mock_usage.extend(result.mock_usage)
             phase_results.append(
                 {
@@ -261,6 +283,7 @@ def execute_strategy_tick(
                     "stdout": result.stdout,
                     "error": result.error,
                     "mock_usage": result.mock_usage,
+                    "elapsed_seconds": profile.hooks[-1]["seconds"],
                 }
             )
             if result.status != "succeeded":
@@ -271,6 +294,8 @@ def execute_strategy_tick(
     logger.info("快测完成 job_id=%s seconds=%.3f", job_id, perf_counter() - started)
     return {
         "status": "succeeded",
+        "timing": profile.snapshot(),
+        "history_trading_days": history_window,
         "strategy_id": strategy_id,
         "strategy_version_id": version_id,
         "trading_day": trading_day.isoformat(),

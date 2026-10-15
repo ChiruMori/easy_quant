@@ -81,3 +81,46 @@ def test_backtest_missing_data_is_reported_by_worker() -> None:
     failed = client.get(f"/api/v1/backtests/{run['id']}").get_json()["data"]
     assert failed["status"] == "failed"
     assert "行情数据尚未同步" in failed["error"]
+
+
+def test_legacy_running_backtest_shows_associated_job_failure_without_rewriting_history():
+    from easy_quant.domain.scheduling.entities import Job, JobStatus
+
+    container = make_test_container(initialize_admin=True)
+    client = create_app(settings=container.settings, container=container).test_client()
+    login = client.post(
+        "/api/v1/auth/login", json={"username": "admin", "password": "change-this-admin-password"}
+    )
+    owner = login.get_json()["data"]["user"]["id"]
+    run = {
+        "id": "old",
+        "owner_id": owner,
+        "job_id": "old-job",
+        "status": "running",
+        "progress": 5,
+        "created_at": "2026-10-12T02:57:35+00:00",
+    }
+    container.state.backtests["old"] = run
+    job = Job(
+        "old-job",
+        "backtest.run",
+        "old",
+        {"backtest_id": "old"},
+        container.authentication.clock.now(),
+        status=JobStatus.FAILED,
+        error_summary={
+            "code": "state_conflict",
+            "message": "数据不足",
+            "details": {"action_url": "/admin/data"},
+        },
+    )
+    container.jobs.enqueue(job)
+    response = client.get("/api/v1/backtests/old").get_json()["data"]
+    assert response["status"] == "failed" and response["error"] == "数据不足"
+    assert response["error_details"]["action_url"] == "/admin/data"
+    assert container.state.backtests["old"]["status"] == "running"
+    assert client.get("/api/v1/backtests").get_json()["data"][0]["status"] == "failed"
+    container.jobs.items.pop("old-job")
+    orphan = client.get("/api/v1/backtests/old").get_json()["data"]
+    assert orphan["status"] == "failed" and "未成功入队" in orphan["error"]
+    assert container.state.backtests["old"]["status"] == "running"

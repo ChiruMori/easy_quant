@@ -13,12 +13,36 @@ export class ApiError extends Error {
 }
 
 let csrfToken: string | undefined
+let pendingWrites = 0
+const pendingListeners = new Set<() => void>()
+
+export const getPendingWrites = () => pendingWrites
+export function subscribePendingWrites(listener: () => void) {
+  pendingListeners.add(listener)
+  return () => {
+    pendingListeners.delete(listener)
+  }
+}
+function changePendingWrites(delta: number) {
+  pendingWrites += delta
+  pendingListeners.forEach((listener) => listener())
+}
 
 export function setCsrfToken(value?: string) {
   csrfToken = value
 }
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const writing = !["GET", "HEAD", "OPTIONS"].includes((options.method ?? "GET").toUpperCase())
+  if (writing) changePendingWrites(1)
+  try {
+    return await performRequest<T>(path, options)
+  } finally {
+    if (writing) changePendingWrites(-1)
+  }
+}
+
+async function performRequest<T>(path: string, options: RequestInit): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase()
   const headers = new Headers(options.headers)
   headers.set("Accept", "application/json")

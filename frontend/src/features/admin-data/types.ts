@@ -27,6 +27,8 @@ export interface ImportPreview {
 
 export interface MarketDataCoverage {
   instrument_count: number
+  recommended_end_day: string
+  calendar_estimated: boolean
   total: number
   page: number
   page_size: number
@@ -41,7 +43,7 @@ export interface MarketDataCoverage {
     first_trading_day: string | null
     last_trading_day: string | null
     record_count: number
-    sync_status: "完全同步" | "部分同步" | "数据不足" | "未同步" | "已停牌" | "已退市"
+    sync_status: "完全同步" | "部分同步" | "数据不足" | "未同步" | "已停牌" | "已退市" | "数据落后"
     freshness_status: "updated" | "stale" | "not_updated" | "suspended" | "delisted"
     updated: boolean
     stale: boolean

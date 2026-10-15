@@ -18,13 +18,14 @@ def test_bulk_rows_keep_prices_units_and_utc_availability() -> None:
         lines[0] == "000001\t2026-09-29\t10\t11\t9\t10.5\t1000\t12345.5000\t2026-09-29 07:00:00\n"
     )
     assert len(lines) == 2
-    assert "archive_sha256=%s" in LOAD_SQL
-    assert "adjustment='none'" in LOAD_SQL
+    assert "provenance_id=%s" in LOAD_SQL
+    assert "archive_sha256" not in LOAD_SQL
 
 
 @pytest.mark.parametrize("failure", ["warning", "db-error", "interrupt", None])
 def test_native_loader_checks_warnings_redacts_errors_and_removes_owned_file(monkeypatch, failure):
     state = {"closed": False, "removed": False}
+    loads = []
 
     class MemoryFile(io.StringIO):
         name = "internal.tsv"
@@ -44,6 +45,8 @@ def test_native_loader_checks_warnings_redacts_errors_and_removes_owned_file(mon
 
     class Cursor:
         def execute(self, _sql, *_args):
+            if _sql.startswith("LOAD DATA"):
+                loads.append((_sql, _args[0]))
             if failure == "db-error":
                 raise OperationalError(1234, "SECRET_CONNECTION_DETAIL")
             if failure == "interrupt":
@@ -67,6 +70,11 @@ def test_native_loader_checks_warnings_redacts_errors_and_removes_owned_file(mon
             return Cursor()
 
     class FakeSession:
+        def execute(self, query, _values=None):
+            if str(query).startswith("SELECT"):
+                return [(17, "tdx-official", "none", "a" * 64)]
+            return []
+
         def connection(self):
             return Connection()
 
@@ -84,3 +92,7 @@ def test_native_loader_checks_warnings_redacts_errors_and_removes_owned_file(mon
     else:
         loader(cast(Session, FakeSession()), parse_day(fixture_bytes(), "000001"), "a" * 64)
     assert state == {"closed": True, "removed": True}
+    assert loads
+    statement, values = loads[0]
+    assert "SET provenance_id=%s" in statement
+    assert "archive_sha256" not in statement and values[1] == 17

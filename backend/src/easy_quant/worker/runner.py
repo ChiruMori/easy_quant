@@ -26,10 +26,25 @@ class Worker:
     poll_seconds: float = 1.0
     poll_hook: Callable[[], None] | None = None
     failure_hook: Callable[[], None] | None = None
+    session_cleanup: Callable[[], None] | None = None
 
     def run_once(self) -> bool:
-        if self.poll_hook is not None:
-            self.poll_hook()
+        try:
+            self._release_session()
+            if self.poll_hook is not None:
+                self.poll_hook()
+            # 调度读取可能建立 REPEATABLE READ 快照；不能带入独立领取后的任务。
+            self._release_session()
+            return self._run_job()
+        finally:
+            # 包括空队列、调度/领取/保存异常，不把事务留到睡眠或下一轮。
+            self._release_session()
+
+    def _release_session(self) -> None:
+        if self.session_cleanup is not None:
+            self.session_cleanup()
+
+    def _run_job(self) -> bool:
         now = self.clock.now()
         job = self.jobs.claim_due(self.worker_id, now, now + self.lease_duration)
         if job is None:

@@ -48,11 +48,15 @@ def test_legacy_dataset_label_is_updated_without_changing_source_configuration()
     datasets = [
         {"key": "daily-bars", "description": "前复权日线开高低收与成交量", "sources": sources},
         {"key": "daily-bars", "description": "自定义说明", "sources": sources},
+        {"key": "trading-status", "name": "整日停牌状态", "sources": sources},
     ]
     bootstrap._refresh_dataset_description(datasets)
     assert "不复权" in datasets[0]["description"]
     assert datasets[0]["sources"] == sources
     assert datasets[1]["description"] == "自定义说明"
+    assert datasets[2]["name"] == "停复牌状态"
+    assert "自动" in datasets[2]["description"]
+    assert datasets[2]["sources"] == sources
 
 
 def test_existing_daily_dataset_gets_independent_source_once() -> None:
@@ -103,8 +107,10 @@ def test_runtime_container_always_uses_configured_database(monkeypatch) -> None:
     monkeypatch.setattr(bootstrap, "SqlAlchemyIdentityRepository", lambda _session: Identity())
     monkeypatch.setattr(bootstrap, "SqlAlchemyStrategyRepository", lambda _session: object())
     monkeypatch.setattr(bootstrap, "SqlAlchemyMarketDataStore", lambda _session: object())
-    monkeypatch.setattr(bootstrap, "SqlAlchemyBacktestStore", lambda _session: object())
-    monkeypatch.setattr(bootstrap, "SqlAlchemyJobRepository", lambda _session: object())
+    monkeypatch.setattr(
+        bootstrap, "SqlAlchemyBacktestStore", lambda _session, _status_factory: object()
+    )
+    monkeypatch.setattr(bootstrap, "SqlAlchemyJobRepository", lambda _session, _factory: object())
     monkeypatch.setattr(bootstrap, "SqlAlchemyCompressedRawCache", lambda _session: object())
     monkeypatch.setattr(bootstrap, "SqlJsonList", lambda _session, _namespace: [])
     monkeypatch.setattr(bootstrap, "SqlJsonDict", lambda _session, _namespace: {})
@@ -207,3 +213,21 @@ def test_tencent_daily_bars_use_market_prefix_and_adjustment(monkeypatch) -> Non
         ("sh600000", "qfq"),
         ("bj830001", ""),
     ]
+
+
+def test_worker_binds_scoped_session_cleanup_for_poll_and_task_boundaries(monkeypatch):
+    from types import SimpleNamespace
+
+    from tests.fakes.platform import make_test_container
+
+    container = make_test_container()
+    calls = []
+    container.database_session = SimpleNamespace(
+        remove=lambda: calls.append("remove"), rollback=lambda: calls.append("rollback")
+    )
+    monkeypatch.setattr(bootstrap, "get_settings", lambda: container.settings)
+    monkeypatch.setattr(bootstrap, "build_container", lambda _settings: container)
+    worker = bootstrap.build_worker()
+    assert worker.session_cleanup == container.database_session.remove
+    assert worker.run_once() is False
+    assert calls and set(calls) == {"remove"}

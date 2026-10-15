@@ -4,11 +4,13 @@ import hashlib
 import json
 from dataclasses import asdict
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
+from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.entities import SemanticRequest
-from easy_quant.domain.shared.errors import StateConflictError
+from easy_quant.domain.shared.errors import DomainError, StateConflictError
 
 
 class AcquisitionClient(Protocol):
@@ -60,9 +62,14 @@ class MarketDataSyncService:
         end_day: date | None = None,
         force: bool = False,
         source_keys: set[str] | None = None,
+        confirmation_source_keys: set[str] | None = None,
     ) -> dict[str, object]:
         if dataset_key in {"securities", "security-status"}:
             return self._sync_securities(force, source_keys, symbols)
+        if dataset_key == "trading-status":
+            if end_day is None:
+                raise ValueError("同步停牌状态需要指定交易日")
+            return self._sync_suspensions(end_day, force, source_keys, confirmation_source_keys)
         if dataset_key == "trading-calendar":
             return self._sync_calendar(start_day, end_day, force, source_keys)
         if dataset_key == "daily-bars":
@@ -175,10 +182,15 @@ class MarketDataSyncService:
                     "status": "delisted"
                     if str(row.get("status") or row.get("状态") or "").lower()
                     in {"delisted", "退市", "已退市"}
+                    else "suspended"
+                    if str(row.get("status") or row.get("状态") or "").lower()
+                    in {"suspended", "停牌", "已停牌"}
                     else "active",
                 }
             )
-        active_symbols = {str(item["symbol"]) for item in instruments if item["status"] == "active"}
+        active_symbols = {
+            str(item["symbol"]) for item in instruments if item["status"] != "delisted"
+        }
         if not symbols and not active_symbols:
             raise ValueError("证券清单缺少在市股票，已取消退市状态更新")
         self.store.upsert_instruments(instruments)
@@ -201,6 +213,146 @@ class MarketDataSyncService:
             ],
         )
         return {"record_count": len(instruments), "attempts": attempts, "source_key": source}
+
+    def _sync_suspensions(
+        self,
+        day: date,
+        force: bool,
+        source_keys: set[str] | None,
+        confirmation_source_keys: set[str] | None,
+    ) -> dict[str, object]:
+        value, attempts, source, fetched_at = self._acquire(
+            "trading-status", {"end_day": day.isoformat()}, force, source_keys
+        )
+        local_day = fetched_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        calendar = TradingCalendar(self.store.list_trading_days() or None)
+        if not calendar.previous_trading_day(local_day) <= day <= local_day:
+            raise ValueError("停复牌状态仅支持最近交易日，历史或未来任务不得覆盖当前状态")
+        if not isinstance(value, list):
+            raise ValueError("停牌状态数据格式无效")
+        instruments = {str(item["symbol"]): item for item in self.store.list_instruments()}
+        # 一次取各标的索引边界，不逐股票查询日线。较新实盘行情会使旧停牌证据失效。
+        bounds = self.store.bar_bounds()
+        records = []
+        confirmed_suspended = set()
+        for row in value:
+            if (
+                not isinstance(row, dict)
+                or row.get("status") != "suspended"
+                or row.get("as_of_day") != day.isoformat()
+            ):
+                raise ValueError("停牌状态数据契约无效")
+            symbol = str(row["symbol"])
+            confirmed_suspended.add(symbol)
+            instrument = instruments.get(symbol)
+            latest = bounds.get(symbol, {}).get("last_day")
+            if (
+                instrument is None
+                or instrument.get("status") == "delisted"
+                or (latest is not None and latest >= day)
+            ):
+                continue
+            records.append(
+                {
+                    **instrument,
+                    **row,
+                    "previous_status": instrument.get("status", "active"),
+                    "is_st": "ST" in str(instrument.get("name", "")).upper()
+                    if instrument.get("name")
+                    else None,
+                    "record_key": f"{symbol}:{fetched_at.isoformat()}",
+                    "available_at": fetched_at.isoformat(),
+                    "source": source,
+                }
+            )
+        unresolved = []
+        resumed = []
+        for symbol, instrument in instruments.items():
+            if instrument.get("status") != "suspended" or symbol in confirmed_suspended:
+                continue
+            latest = bounds.get(symbol, {}).get("last_day")
+            if latest is not None and latest > day:
+                continue
+            # 名单缺席仅产生候选；必须有指定交易日真实成交才能自动复牌。
+            try:
+                evidence, current_attempts, evidence_source, observed_at = self._acquire(
+                    "daily-bars",
+                    {
+                        "symbol": symbol,
+                        "start_date": day.isoformat(),
+                        "end_date": day.isoformat(),
+                        "adjustment": "none",
+                    },
+                    force,
+                    confirmation_source_keys,
+                )
+                attempts.extend(
+                    {**item, "symbol": symbol, "purpose": "resume-confirmation"}
+                    for item in current_attempts
+                )
+                bars = self._normalize_bars(symbol, evidence)
+                traded = next(
+                    (
+                        bar
+                        for bar in bars
+                        if str(bar["trading_day"]) == day.isoformat()
+                        and Decimal(str(bar["volume"])).is_finite()
+                        and Decimal(str(bar["volume"])) > 0
+                        and Decimal(str(bar["close"])).is_finite()
+                        and Decimal(str(bar["close"])) > 0
+                    ),
+                    None,
+                )
+            except (DomainError, ValueError, InvalidOperation) as error:
+                details = getattr(error, "details", {})
+                attempts.extend(
+                    {**item, "symbol": symbol, "purpose": "resume-confirmation"}
+                    for item in details.get("attempts", [])
+                )
+                unresolved.append(symbol)
+                continue
+            if traded is None:
+                unresolved.append(symbol)
+                continue
+            resumed.append(symbol)
+            records.append(
+                {
+                    **instrument,
+                    "symbol": symbol,
+                    "status": "active",
+                    "previous_status": "suspended",
+                    "is_st": "ST" in str(instrument.get("name", "")).upper()
+                    if instrument.get("name")
+                    else None,
+                    "as_of_day": day.isoformat(),
+                    "evidence": "traded-daily-bar",
+                    "evidence_volume": traded["volume"],
+                    "evidence_close": traded["close"],
+                    "record_key": f"{symbol}:{observed_at.isoformat()}",
+                    "available_at": observed_at.isoformat(),
+                    "source": evidence_source,
+                }
+            )
+        # 完整校验后分组批量写入；复牌后夜间处理器会自动重新读取股票池。
+        for status in ("suspended", "active"):
+            self.store.set_instrument_statuses(
+                [str(row["symbol"]) for row in records if row["status"] == status], status
+            )
+        self.store.upsert_records("security-status", records)
+        suspended_count = sum(row["status"] == "suspended" for row in records)
+        return {
+            "record_count": len(records),
+            "attempts": attempts,
+            "source_key": source,
+            "resumed_symbols": sorted(resumed),
+            "unconfirmed_symbols": sorted(unresolved),
+            "message": f"已确认 {suspended_count} 只股票整日停牌，{len(resumed)} 只股票已复牌；"
+            + (
+                f"{len(unresolved)} 只复牌证据尚不足，下次盘后自动重试"
+                if unresolved
+                else "状态已自动更新"
+            ),
+        }
 
     def _sync_calendar(
         self,
@@ -238,8 +390,15 @@ class MarketDataSyncService:
         sources: set[str] = set()
         incomplete: list[str] = []
         availability: list[dict[str, object]] = []
+        suspended = {
+            str(item["symbol"])
+            for item in self.store.list_instruments()
+            if item.get("status") == "suspended"
+        }
         for input_symbol in symbols:
             symbol = str(input_symbol).zfill(6)
+            if symbol in suspended:
+                continue
             adjustment = self.store.bar_adjustment(symbol) or "qfq"
             if adjustment not in {"none", "qfq"}:
                 raise StateConflictError(
@@ -287,6 +446,7 @@ class MarketDataSyncService:
             "new_record_count": len(normalized) - overwritten,
             "attempts": all_attempts,
             "source_keys": sorted(sources),
+            "skipped_suspended_symbols": sorted(set(symbols) & suspended),
             "message": (
                 f"请求截至 {end_day.isoformat()}，来源返回的 K 线：{'、'.join(incomplete)}；"
                 "其后暂无新交易数据，请核实停牌或来源延迟，系统不会补造行情。"

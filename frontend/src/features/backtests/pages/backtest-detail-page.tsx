@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom"
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
+import { executionStageLabel, RunTimingPanel } from "@/components/run-timing"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -52,15 +53,58 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
               ? `任务 ${run.job_id} 正在${run.status === "queued" ? "排队" : "运行"}`
               : "正在处理"}
             ，页面会自动刷新。
+            {run.execution && (
+              <p role="status">
+                {executionStageLabel(run.execution.stage)}
+                {run.execution.trading_day && ` · ${run.execution.trading_day}`}
+                {run.execution.hook && ` · ${run.execution.hook}`}
+                {run.execution.elapsed_seconds !== undefined &&
+                  ` · 已用 ${run.execution.elapsed_seconds.toFixed(1)} 秒`}
+              </p>
+            )}
           </AlertDescription>
         </Alert>
       )}
       {run.status === "failed" && (
         <Alert variant="destructive">
           <AlertTitle>回测失败</AlertTitle>
-          <AlertDescription>{run.error ?? "请在后台任务中查看失败原因。"}</AlertDescription>
+          <AlertDescription>
+            {run.error ?? "请在后台任务中查看失败原因。"}
+            {run.error_details?.action_url && (
+              <a href={run.error_details.action_url} className="underline">
+                前往数据管理补齐数据
+              </a>
+            )}
+            {run.error_details?.missing_data && (
+              <div className="max-h-64 overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>标的</TableHead>
+                      <TableHead>需要区间</TableHead>
+                      <TableHead>已同步区间</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {run.error_details.missing_data.map((item, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{item.symbol}</TableCell>
+                        <TableCell>
+                          {item.start_day} 至 {item.end_day}
+                        </TableCell>
+                        <TableCell>
+                          {item.available_start} 至 {item.available_end}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </AlertDescription>
         </Alert>
       )}
+      <RunTimingPanel timing={run.timing} />
       <Card>
         <CardHeader>
           <CardTitle>回测指标</CardTitle>

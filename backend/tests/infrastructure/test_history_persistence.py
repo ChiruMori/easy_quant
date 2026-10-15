@@ -13,26 +13,27 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.schema import CreateIndex, CreateTable
 
 from easy_quant.infrastructure.imports.tdx import parse_day
+from easy_quant.infrastructure.persistence.bar_storage import BAR_STORAGE
 from easy_quant.infrastructure.persistence.models.market_data_records import DailyBarModel
 from easy_quant.infrastructure.persistence.repositories.history_import import (
     SqlHistoryStore,
     bar_values,
-    bars_upsert,
 )
 from easy_quant.infrastructure.persistence.repositories.runtime import (
     SqlAlchemyMarketDataStore,
     bar_coverage_statement,
 )
+from tests.infrastructure.test_compact_bars import CompactSession
 from tests.infrastructure.test_tdx_archive import fixture_bytes
 
 
 def test_mysql_bulk_upsert_preserves_identity_and_price_metadata() -> None:
     rows = [bar_values(bar, "a" * 64) for bar in parse_day(fixture_bytes(), "000001")]
-    compiled = bars_upsert().values(rows).compile(dialect=mysql.dialect())
+    encoded = BAR_STORAGE.encode(cast(Session, CompactSession()), rows)
+    compiled = BAR_STORAGE.upsert().values(encoded).compile(dialect=mysql.dialect())
     assert "ON DUPLICATE KEY UPDATE" in str(compiled)
-    assert compiled.params["adjustment_m0"] == "none"
-    assert compiled.params["source_m0"] == "tdx-official"
-    assert compiled.params["archive_sha256_m0"] == "a" * 64
+    assert compiled.params["provenance_id_m0"] == 1
+    assert "source_m0" not in compiled.params
     assert str(compiled.params["close_m0"]) == "10.5"
 
 

@@ -115,6 +115,42 @@ def test_coverage_uses_aggregate_without_loading_daily_rows(monkeypatch) -> None
     assert data["items"][0]["sync_status"] == "完全同步"
 
 
+def test_old_history_is_stale_with_expired_calendar_and_filters_agree(monkeypatch) -> None:
+    from datetime import date
+
+    from tests.fakes.platform import make_test_container
+
+    container = make_test_container(initialize_admin=True)
+    cast(FixedClock, container.authentication.clock).current = datetime(2026, 10, 15, 8, tzinfo=UTC)
+    container.market_data.upsert_trading_days([date(2015, 1, 5), date(2026, 10, 8)])
+    monkeypatch.setattr(
+        container.market_data,
+        "bar_coverage",
+        lambda: {
+            "000001": {"first_day": date(2015, 1, 5), "last_day": date(2026, 10, 8), "count": 2800},
+        },
+    )
+    client = create_app(settings=container.settings, container=container).test_client()
+    client.post(
+        "/api/v1/auth/login",
+        json={
+            "username": "admin",
+            "password": container.settings.initial_admin_password.get_secret_value(),
+        },
+    )
+    data = client.get("/api/v1/admin/market-data/coverage").get_json()["data"]
+    assert data["recommended_end_day"] == "2026-10-14"
+    assert data["calendar_estimated"] is True
+    assert data["items"][0]["sync_status"] == "数据落后"
+    assert data["items"][0]["stale"] is True
+    for status, total in (("完全同步", 0), ("数据落后", 1)):
+        filtered = client.get(
+            "/api/v1/admin/market-data/coverage", query_string={"status": status}
+        ).get_json()["data"]
+        assert filtered["total"] == total
+        assert len(filtered["items"]) == total
+
+
 def test_coverage_is_paginated_and_searchable_with_status_filter() -> None:
     from tests.fakes.platform import make_test_container
 
@@ -229,9 +265,21 @@ def test_admin_can_mark_suspension_without_losing_historical_bars() -> None:
         ).status_code
         == 200
     )
+    container.market_data.upsert_records(
+        "daily-bar-availability",
+        [
+            {
+                "record_key": "000016:2026-09-28",
+                "symbol": "000016",
+                "requested_end_day": "2026-09-28",
+                "latest_day": "2026-09-03",
+            }
+        ],
+    )
     coverage = client.get("/api/v1/admin/market-data/coverage").get_json()["data"]["items"][0]
     assert coverage["sync_status"] == "已停牌"
     assert coverage["stale"] is False
+    assert coverage["publication_pending"] is False
     assert container.market_data.list_bars(symbol="000016")
     container.market_data.upsert_instruments(
         [{"symbol": "000016", "name": "新名称", "exchange": "深圳证券交易所", "status": "active"}]

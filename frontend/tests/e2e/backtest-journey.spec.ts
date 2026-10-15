@@ -53,6 +53,7 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await page.getByLabel("快速测试交易日").fill("2026-01-30")
   await page.getByRole("button", { name: "运行当前版本" }).click()
   await expect(page.getByText("已成功")).toBeVisible()
+  await expect(page.getByText("运行耗时", { exact: true })).toBeVisible()
 
   await page.goto("/backtests/new")
   await page.getByRole("combobox").click()
@@ -62,6 +63,7 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await page.getByRole("button", { name: "开始回测" }).click()
   await expect(page.getByRole("heading", { name: "回测详情" })).toBeVisible()
   await expect(page.getByText(/状态：已完成/)).toBeVisible({ timeout: 30000 })
+  await expect(page.getByText("平均耗时（秒）", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "开启实盘跟踪" }).click()
   await expect(page.getByRole("heading", { name: /实盘实例/ })).toBeVisible()
   const liveId = page.url().split("/").at(-1)

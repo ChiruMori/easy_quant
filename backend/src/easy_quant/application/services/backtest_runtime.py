@@ -13,6 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from easy_quant.application.services.instrument_eligibility import delisted_symbols
+from easy_quant.application.services.run_profile import RunProfile
 from easy_quant.application.services.strategy_validation import (
     extract_factor_dependencies,
     extract_history_trading_days,
@@ -29,10 +30,51 @@ from easy_quant.infrastructure.strategy_runtime.runner import StreamingStrategyR
 logger = logging.getLogger(__name__)
 
 
-def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
+def execute_backtest(
+    container: Any, run_id: str, *, profile: RunProfile | None = None
+) -> dict[str, object]:
+    return _execute_backtest(container, run_id, profile or RunProfile())
+
+
+def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[str, object]:
     run = container.backtests.get(run_id)
     if run is None:
         raise StateConflictError("回测记录不存在")
+
+    last_report = 0.0
+
+    def report(
+        stage: str, progress: int, *, day: date | None = None, hook: str = "", force: bool = False
+    ) -> None:
+        nonlocal last_report
+        now = clock.monotonic()
+        if force or now - last_report >= 2:
+            container.backtests.update_status(
+                run_id,
+                {
+                    "status": "running",
+                    "progress": progress,
+                    "execution": {
+                        "stage": stage,
+                        "trading_day": day.isoformat() if day else None,
+                        "hook": hook,
+                        "elapsed_seconds": profile.snapshot()["total_seconds"],
+                    },
+                    "timing": profile.snapshot(),
+                },
+            )
+            logger.info(
+                "回测进度 run_id=%s stage=%s progress=%d day=%s hook=%s elapsed_seconds=%.3f",
+                run_id,
+                stage,
+                progress,
+                day,
+                hook,
+                now - profile.started,
+            )
+            last_report = now
+
+    report("validation", 5, force=True)
     payload = run["config"]
     strategy_version_id = str(run["strategy_version_id"])
     definition = next(
@@ -78,7 +120,6 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 "action_url": "/admin/data/acquisitions",
             },
         )
-    coverage: dict[str, tuple[date, date]] = {}
     calendar = TradingCalendar(container.market_data.list_trading_days() or None)
     expected_days = [
         start_day + timedelta(days=offset)
@@ -88,6 +129,41 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
     if not expected_days:
         raise StateConflictError("所选区间不包含交易日")
     expected_start, expected_end = expected_days[0], expected_days[-1]
+    # 只读覆盖索引摘要，先报告缺失，避免跑完整策略后才阻止结果。
+    coverage = container.market_data.bar_bounds()
+    instruments = {str(item["symbol"]): item for item in container.market_data.list_instruments()}
+    missing = []
+    for symbol, item in coverage.items():
+        if symbol in excluded or instruments.get(symbol, {}).get("status") == "suspended":
+            continue
+        available_start, available_end = item["first_day"], item["last_day"]
+        # 原运行股票池来自区间内行情，完全不相交的历史/新上市证券不属于本次股票池。
+        if available_start > expected_end or available_end < expected_start:
+            continue
+        listed_on = instruments.get(symbol, {}).get("listed_on")
+        listed_day = date.fromisoformat(str(listed_on)) if listed_on else expected_start
+        listed_days = [day for day in expected_days if day >= listed_day]
+        if not listed_days:
+            continue
+        required_start = listed_days[0]
+        if available_start > required_start or available_end < expected_end:
+            missing.append(
+                {
+                    "dataset": "日线 K 线",
+                    "symbol": symbol,
+                    "start_day": required_start.isoformat(),
+                    "end_day": expected_end.isoformat(),
+                    "available_start": available_start.isoformat(),
+                    "available_end": available_end.isoformat(),
+                }
+            )
+    if not coverage:
+        raise StateConflictError("回测所需行情数据尚未同步", {"action_url": "/admin/data"})
+    if missing:
+        raise StateConflictError(
+            "部分策略标的行情覆盖不足，回测已阻止",
+            {"missing_data": missing, "action_url": "/admin/data"},
+        )
     config = BacktestConfig(
         strategy_version_id,
         (),
@@ -136,6 +212,8 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
     row_count = 0
     day_count = 0
     started = clock.monotonic()
+    profile.enter("warmup")
+    report("warmup", 10, force=True)
     for row in container.market_data.iter_runtime_bars(
         history_start, start_day - timedelta(days=1)
     ):
@@ -143,6 +221,7 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
             available_at = datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
             heapq.heappush(pending, (available_at, sequence, row))
             sequence += 1
+            report("warmup", 10)
 
     def due_rows(cutoff: datetime, earliest_day: date) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
@@ -152,6 +231,8 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 rows.append(row)
         return rows
 
+    profile.enter("loading_data")
+    report("loading_data", 15, force=True)
     rows = (
         row
         for row in container.market_data.iter_runtime_bars(start_day, end_day)
@@ -163,14 +244,11 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
         for trading_day_text, day_group in groupby(rows, key=lambda row: str(row["trading_day"])):
             trading_day = date.fromisoformat(trading_day_text)
             today_rows = list(day_group)
+            profile.enter("strategy")
             row_count += len(today_rows)
             day_count += 1
             recent_days.append(trading_day)
             expire_before = recent_days[0]
-            for row in today_rows:
-                symbol = str(row["symbol"])
-                first, last = coverage.get(symbol, (trading_day, trading_day))
-                coverage[symbol] = min(first, trading_day), max(last, trading_day)
             before_cutoff = datetime.combine(
                 trading_day, time(9), ZoneInfo("Asia/Shanghai")
             ).astimezone(UTC)
@@ -245,8 +323,20 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 phase: str,
                 day: date = trading_day,
                 inputs: dict[str, dict[str, Any]] = phase_inputs,
+                completed_days: int = day_count,
             ) -> list[Signal]:
                 portfolio = backtest_session.portfolio
+                progress = 15 + int(
+                    70 * min(completed_days, len(expected_days)) / len(expected_days)
+                )
+                report(
+                    "strategy",
+                    progress,
+                    day=day,
+                    hook=phase,
+                    force=completed_days == 1 and phase == "before_market",
+                )
+                hook_started = profile.timer()
                 result = runner.run_phase(
                     day,
                     phase=phase,
@@ -259,6 +349,7 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                     slippage_rate=str(config.slippage_rate),
                     **inputs[phase],
                 )
+                profile.record_hook(day.isoformat(), phase, hook_started)
                 if result.status != "succeeded":
                     raise StateConflictError(
                         "策略运行失败",
@@ -279,6 +370,12 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 return [signal for signal in result.signals if signal.symbol not in excluded]
 
             backtest_session.advance(trading_day, day_bars, strategy)
+            report(
+                "loading_data",
+                15 + int(70 * min(day_count, len(expected_days)) / len(expected_days)),
+                day=trading_day,
+            )
+            profile.enter("loading_data")
 
     if not row_count:
         raise StateConflictError(
@@ -289,23 +386,6 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 "end_day": end_day.isoformat(),
             },
         )
-    missing = [
-        {
-            "dataset": "日线 K 线",
-            "symbol": symbol,
-            "start_day": expected_start.isoformat(),
-            "end_day": expected_end.isoformat(),
-            "available_start": available_start.isoformat(),
-            "available_end": available_end.isoformat(),
-        }
-        for symbol, (available_start, available_end) in coverage.items()
-        if available_start > expected_start or available_end < expected_end
-    ]
-    if missing:
-        raise StateConflictError(
-            "部分策略标的行情覆盖不足，回测已阻止",
-            {"missing_data": missing, "action_url": "/admin/data"},
-        )
     periods, trades, metrics = backtest_session.finish()
     logger.info(
         "回测策略阶段完成 run_id=%s days=%d rows=%d elapsed_seconds=%.3f",
@@ -315,9 +395,13 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
         clock.monotonic() - started,
     )
     with SnapshotSpool() as snapshot:
+        profile.enter("snapshot")
+        report("snapshot", 90, force=True)
         for row in container.market_data.iter_snapshot_bars(history_start, end_day):
             if str(row["symbol"]) not in excluded:
                 snapshot.append(row)
+                if snapshot.record_count % 1000 == 0:
+                    report("snapshot", 90)
         snapshot_id = snapshot.finish()
         completed = {
             **run,
@@ -351,16 +435,28 @@ def execute_backtest(container: Any, run_id: str) -> dict[str, object]:
                 "strategy_context_protocol": "strategy-library-v2",
                 "intraday_quote": "open-close-midpoint-v1 (contains closing information)",
                 "warmup_start_day": history_start.isoformat(),
+                "history_trading_days": str(history_window),
                 "fundamental_snapshot_sha256": hashlib.sha256(
                     json.dumps(generic_records, sort_keys=True, default=str).encode()
                 ).hexdigest(),
                 "fee_rate": str(config.fee_rate),
                 "slippage_rate": str(config.slippage_rate),
                 "excluded_delisted_symbols": sorted(excluded),
+                "coverage_exempt_suspended_symbols": sorted(
+                    symbol
+                    for symbol, item in instruments.items()
+                    if item.get("status") == "suspended"
+                ),
             },
             "strategy_outputs": strategy_outputs,
+            "execution": {"stage": "completed", "trading_day": end_day.isoformat()},
         }
+        profile.enter("saving")
+        report("saving", 98, force=True)
+        completed["timing"] = profile.snapshot()
         container.backtests.save(completed, snapshot)
+        profile.enter("completed")
+        container.backtests.update_status(run_id, {"timing": profile.snapshot()})
     logger.info(
         "回测快照保存完成 run_id=%s days=%d rows=%d elapsed_seconds=%.3f",
         run_id,

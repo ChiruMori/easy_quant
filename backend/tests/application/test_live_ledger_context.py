@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -168,5 +168,6 @@ def test_live_analysis_uses_declared_window_and_hides_today_before_market(
         wraps=container.market_data.list_runtime_bars,
     ) as bars:
         live_runtime.analyze_live_instance(container, "l", "before_market", fixed_now)
-    assert bars.call_count == 3
+    assert bars.call_count == 1
+    assert bars.call_args.args == (date(2026, 9, 27), date(2026, 9, 29))
     assert seen[0]["prices"]["000001"] == ["12", "11"]

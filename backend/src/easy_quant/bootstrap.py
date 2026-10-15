@@ -46,6 +46,7 @@ from easy_quant.infrastructure.security import SecretBox
 
 _DAILY_BARS_DESCRIPTION = "日线行情；公开接口提供前复权，通达信全量导入为不复权"
 _TENCENT_DAILY_SOURCE = {"key": "tencent", "name": "腾讯行情", "enabled": True}
+_TRADING_STATUS_DESCRIPTION = "盘后自动确认停牌及真实成交复牌；不以行情缺失或预计复牌日推断状态"
 
 
 def _refresh_dataset_description(datasets: Any) -> None:
@@ -55,6 +56,12 @@ def _refresh_dataset_description(datasets: Any) -> None:
             and dataset.get("description") == "前复权日线开高低收与成交量"
         ):
             dataset["description"] = _DAILY_BARS_DESCRIPTION
+            datasets[index] = dataset
+        if dataset.get("key") == "trading-status" and (
+            dataset.get("name") != "停复牌状态"
+            or dataset.get("description") != _TRADING_STATUS_DESCRIPTION
+        ):
+            dataset.update(name="停复牌状态", description=_TRADING_STATUS_DESCRIPTION)
             datasets[index] = dataset
 
 
@@ -71,6 +78,12 @@ def _ensure_independent_daily_source(datasets: Any) -> None:
 
 def _default_datasets() -> list[dict[str, Any]]:
     return [
+        {
+            "key": "trading-status",
+            "name": "停复牌状态",
+            "description": _TRADING_STATUS_DESCRIPTION,
+            "sources": [{"key": "eastmoney", "name": "东方财富", "enabled": True}],
+        },
         {
             "key": "sw-industry-memberships",
             "name": "申万一级行业成分",
@@ -229,9 +242,9 @@ def build_container(settings: Settings | None = None) -> Container:
         authentication=AuthenticationService(identity, SystemClock(), UuidGenerator()),
         state=state,
         market_data=SqlAlchemyMarketDataStore(session),
-        backtests=SqlAlchemyBacktestStore(session),
+        backtests=SqlAlchemyBacktestStore(session, create_session_factory(engine)),
         database_session=scoped,
-        jobs=SqlAlchemyJobRepository(session),
+        jobs=SqlAlchemyJobRepository(session, create_session_factory(engine)),
         live_tracking=SqlLiveTrackingStore(create_session_factory(engine)),
     )
     raw_cache = SqlAlchemyCompressedRawCache(session)
@@ -404,6 +417,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
     return MarketDataSyncService(
         {
             "securities": acquisition([securities_ak, eastmoney]),
+            "trading-status": acquisition([eastmoney]),
             "daily-bars": acquisition([daily_ak, eastmoney, daily_tencent]),
             "trading-calendar": acquisition([calendar_ak]),
             "live-quotes": quotes_acquisition,
@@ -456,8 +470,6 @@ def build_worker():
         container.state.schedules[schedule_id] = schedule
 
     def pump_schedules() -> None:
-        if container.database_session is not None:
-            container.database_session.remove()
         now = container.authentication.clock.now()
         for schedule_id, schedule in list(container.state.schedules.items()):
             if not schedule.get("enabled", True):
@@ -533,6 +545,9 @@ def build_worker():
         sleeper=SystemSleeper(),
         poll_seconds=settings.worker_poll_seconds,
         poll_hook=pump_schedules,
+        session_cleanup=container.database_session.remove
+        if container.database_session is not None
+        else None,
         failure_hook=container.database_session.rollback
         if container.database_session is not None
         else None,

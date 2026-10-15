@@ -1,3 +1,4 @@
+import type { RunTiming } from "@/components/run-timing"
 import { apiRequest } from "@/lib/api/client"
 
 export interface Backtest {
@@ -21,6 +22,9 @@ export interface Backtest {
   }>
   assumptions: Record<string, string>
   error?: string
+  timing?: RunTiming
+  execution?: { stage: string; trading_day?: string; hook?: string; elapsed_seconds?: number }
+  error_details?: { action_url?: string; missing_data?: Array<Record<string, string>> }
 }
 
 export const createBacktest = (payload: Record<string, unknown>) =>

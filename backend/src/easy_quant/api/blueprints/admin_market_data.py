@@ -34,9 +34,11 @@ def _exchange(symbol: str) -> str:
     return "深圳证券交易所"
 
 
-def _coverage_status(first_day: date | None, last_day: date | None) -> str:
+def _coverage_status(first_day: date | None, last_day: date | None, target_day: date) -> str:
     if first_day is None or last_day is None:
         return "未同步"
+    if last_day < target_day:
+        return "数据落后"
     days = (last_day - first_day).days
     if days >= 3652:
         return "完全同步"
@@ -90,6 +92,14 @@ def market_data_coverage():
         raise ValidationError("after 和 before 不能同时指定")
     page = max(1, request.args.get("page", 1, type=int) or 1)
     page_size = min(100, max(10, request.args.get("page_size", 50, type=int) or 50))
+    calendar = TradingCalendar(store.list_trading_days() or None)
+    now = get_container().authentication.clock.now()
+    target = calendar.freshness(
+        first_day=None,
+        last_day=None,
+        now=now,
+        close_time=time.fromisoformat(get_container().settings.daily_data_publish_time),
+    )
     instrument_count, total, page, summaries = store.coverage_page(
         page=page,
         page_size=page_size,
@@ -97,10 +107,9 @@ def market_data_coverage():
         status=sync_status,
         after_symbol=after_symbol,
         before_symbol=before_symbol,
+        target_day=target.recommended_end_day,
     )
     rows = []
-    calendar = TradingCalendar(store.list_trading_days() or None)
-    now = get_container().authentication.clock.now()
     observations = {
         (str(row["symbol"]), str(row["requested_end_day"])): row
         for row in store.list_records("daily-bar-availability")
@@ -143,7 +152,7 @@ def market_data_coverage():
                 if delisted
                 else "已停牌"
                 if suspended
-                else _coverage_status(first_day, last_day),
+                else _coverage_status(first_day, last_day, target.recommended_end_day),
                 "freshness_status": "delisted"
                 if delisted
                 else "suspended"
@@ -151,8 +160,9 @@ def market_data_coverage():
                 else freshness.status.value,
                 "updated": not (delisted or suspended) and freshness.status.value == "updated",
                 "stale": not (delisted or suspended or publication_pending)
-                and freshness.status.value == "stale",
-                "publication_pending": publication_pending,
+                and last_day is not None
+                and last_day < target.recommended_end_day,
+                "publication_pending": not (delisted or suspended) and publication_pending,
                 "previous_trading_day": freshness.previous_trading_day.isoformat(),
                 "recommended_end_day": freshness.recommended_end_day.isoformat(),
             }
@@ -160,6 +170,8 @@ def market_data_coverage():
     return success(
         {
             "instrument_count": instrument_count,
+            "recommended_end_day": target.recommended_end_day.isoformat(),
+            "calendar_estimated": calendar.is_estimated(target.recommended_end_day),
             "total": total,
             "page": page,
             "page_size": page_size,

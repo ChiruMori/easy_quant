@@ -4,7 +4,10 @@ import hashlib
 import json
 from decimal import Decimal
 
+import pytest
+
 from easy_quant.application.services import backtest_runtime, live_runtime, strategy_quick_test
+from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.domain.strategies.entities import (
     Signal,
     StrategyDefinition,
@@ -138,6 +141,59 @@ def test_backtest_excludes_delisted_bars_and_hardcoded_signals(monkeypatch, fixe
         [_bar("000001"), _bar("000003")], ensure_ascii=False, sort_keys=True
     ).encode("utf-8")
     assert run["snapshot_id"] == hashlib.sha256(expected).hexdigest()
+
+
+@pytest.mark.parametrize("status", ["suspended", "active"])
+def test_truncated_suspended_history_does_not_block_but_active_gaps_do(
+    monkeypatch, fixed_now, status
+):
+    container = make_test_container()
+    _prepare(container, fixed_now)
+    container.market_data.set_instrument_status("000003", status)
+    container.market_data.upsert_bars(
+        [
+            {
+                **_bar("000001"),
+                "trading_day": "2026-09-30",
+                "available_at": "2026-09-30T15:00:00+08:00",
+            }
+        ]
+    )
+    container.state.backtests["b"] = {
+        "id": "b",
+        "owner_id": "u",
+        "strategy_version_id": "v",
+        "config": {"start_day": "2026-09-29", "end_day": "2026-09-30", "initial_cash": "100000"},
+    }
+    observed = []
+
+    class Runner:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def run_phase(self, day, *, phase, **inputs):
+            if phase == "before_market":
+                observed.append((day.isoformat(), inputs["today_symbols"]))
+            return StrategyRun("r", "v", StrategyRunStatus.SUCCEEDED, {}, [])
+
+    monkeypatch.setattr(backtest_runtime, "StreamingStrategyRunner", Runner)
+    if status == "active":
+        with pytest.raises(StateConflictError, match="覆盖不足"):
+            backtest_runtime.execute_backtest(container, "b")
+        assert not observed
+    else:
+        backtest_runtime.execute_backtest(container, "b")
+        assert observed == [("2026-09-29", ["000001", "000003"]), ("2026-09-30", ["000001"])]
+        assert container.market_data.list_bars(symbol="000003") == [_bar("000003")]
+        assert container.backtests.get("b")["assumptions"]["coverage_exempt_suspended_symbols"] == [
+            "000003"
+        ]
 
 
 def test_live_excludes_delisted_prices_and_hardcoded_signals(monkeypatch, fixed_now) -> None:

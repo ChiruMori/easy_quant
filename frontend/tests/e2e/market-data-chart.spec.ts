@@ -94,5 +94,70 @@ test("股票详情可切换日周月 K 线", async ({ page }) => {
   await page.getByLabel("名称或代码").fill("000001")
   await page.getByRole("button", { name: "搜索" }).click()
   await expect(page.getByRole("table").getByText("已停牌")).toBeVisible()
+  const row = page.getByRole("row").filter({ hasText: "000001" })
+  await expect(row.getByText("数据落后")).toHaveCount(0)
+  await expect(row.getByText("已过时")).toHaveCount(0)
+  await expect(row.getByText("来源尚未发布新数据")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /更新至/ })).toHaveCount(0)
+})
+
+test("批量刷新停复牌状态后更新覆盖，无需拉取日线", async ({ page }) => {
+  await login(page)
+  let refreshed = false
+  await page.route("**/api/v1/admin/market-data/coverage?**", (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          instrument_count: 1,
+          total: 1,
+          page: 1,
+          page_size: 50,
+          recommended_end_day: "2026-10-14",
+          items: [
+            {
+              symbol: "600293",
+              name: "三峡新材",
+              exchange: "上海证券交易所",
+              status: refreshed ? "suspended" : "active",
+              first_trading_day: "2000-09-19",
+              last_trading_day: "2026-09-28",
+              record_count: 6000,
+              sync_status: refreshed ? "已停牌" : "数据落后",
+              stale: !refreshed,
+              recommended_end_day: "2026-10-14",
+            },
+          ],
+        },
+      },
+    }),
+  )
+  await page.route("**/api/v1/admin/market-data/acquisitions", async (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({
+      dataset_key: "trading-status",
+      end_day: "2026-10-14",
+    })
+    await route.fulfill({
+      json: { data: { id: "suspension", dataset_key: "trading-status", status: "queued" } },
+    })
+  })
+  await page.route("**/api/v1/admin/market-data/acquisitions/suspension", async (route) => {
+    refreshed = true
+    await route.fulfill({
+      json: {
+        data: {
+          id: "suspension",
+          dataset_key: "trading-status",
+          status: "succeeded",
+          record_count: 1,
+          message: "已确认 1 只股票整日停牌",
+        },
+      },
+    })
+  })
+  await page.goto("/admin/data")
+  await expect(page.getByRole("button", { name: "更新至 2026-10-14" })).toBeVisible()
+  await page.getByRole("button", { name: "刷新停复牌状态" }).click()
+  await expect(page.getByText(/已确认 1 只股票整日停牌/)).toBeVisible()
+  await expect(page.getByRole("table").getByText("已停牌")).toBeVisible()
   await expect(page.getByRole("button", { name: /更新至/ })).toHaveCount(0)
 })

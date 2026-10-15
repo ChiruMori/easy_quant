@@ -52,17 +52,34 @@ def register_market_data_handlers(
             "trading-calendar", force=True, source_keys=enabled_sources("trading-calendar")
         )
         calendar = TradingCalendar(container.market_data.list_trading_days() or None)
+        day = (
+            date.fromisoformat(str(job.payload["end_day"]))
+            if job.payload.get("end_day")
+            else calendar.freshness(first_day=None, last_day=None, now=now).recommended_end_day
+        )
         if not calendar.is_trading_day(day):
             return {"status": "skipped", "reason": "非交易日"}
         container.data_sync.sync(
             "securities", force=True, source_keys=enabled_sources("securities")
         )
+        trading_status = container.data_sync.sync(
+            "trading-status",
+            end_day=day,
+            force=True,
+            source_keys=enabled_sources("trading-status"),
+            confirmation_source_keys=enabled_sources("daily-bars"),
+        )
+        suspended = {
+            str(item["symbol"])
+            for item in container.market_data.list_instruments()
+            if item.get("status") == "suspended"
+        }
         symbols = sorted(
             str(item["symbol"])
             for item in container.market_data.list_instruments()
             if item.get("status", "active") != "delisted"
         )
-        coverage = container.market_data.bar_coverage()
+        coverage = container.market_data.bar_bounds()
         jobs = []
         for dataset in (
             "daily-bars",
@@ -71,8 +88,16 @@ def register_market_data_handlers(
             "financial-indicators",
             "sw-industry-memberships",
         ):
+            dataset_symbols = (
+                [symbol for symbol in symbols if symbol not in suspended]
+                if dataset == "daily-bars"
+                else symbols
+            )
             batches = (
-                [symbols[index : index + 20] for index in range(0, len(symbols), 20)]
+                [
+                    dataset_symbols[index : index + 20]
+                    for index in range(0, len(dataset_symbols), 20)
+                ]
                 if dataset in {"daily-bars", "financial-indicators"}
                 else [[]]
             )
@@ -106,7 +131,12 @@ def register_market_data_handlers(
                         "job_id": queued.id,
                     }
                 jobs.append(queued.id)
-        return {"status": "queued", "trading_day": day.isoformat(), "child_jobs": jobs}
+        return {
+            "status": "queued",
+            "trading_day": day.isoformat(),
+            "child_jobs": jobs,
+            "trading_status": trading_status,
+        }
 
     registry.register("market-data-nightly", nightly)
 
@@ -128,7 +158,7 @@ def register_market_data_handlers(
                 ),
                 None,
             )
-            enabled_sources = (
+            selected_sources = (
                 {str(item["key"]) for item in dataset["sources"] if item.get("enabled", True)}
                 if dataset
                 else None
@@ -143,7 +173,12 @@ def register_market_data_handlers(
                 if payload.get("end_day")
                 else None,
                 force=bool(payload.get("force", False)),
-                source_keys=enabled_sources,
+                source_keys=selected_sources,
+                **(
+                    {"confirmation_source_keys": enabled_sources("daily-bars")}
+                    if payload.get("dataset_key") == "trading-status"
+                    else {}
+                ),
             )
         except Exception as error:
             if container.database_session is not None:

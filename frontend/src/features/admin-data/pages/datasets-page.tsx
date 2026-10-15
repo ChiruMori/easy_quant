@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -95,6 +96,24 @@ export function DatasetsPage() {
     }
   }
 
+  async function refreshSuspensions() {
+    if (!coverage.data?.recommended_end_day) return
+    setSyncingSymbol("停复牌状态")
+    setSyncError("")
+    setSyncTask(null)
+    try {
+      setSyncTask(
+        await startAcquisition("trading-status", true, {
+          end_day: coverage.data.recommended_end_day,
+        }),
+      )
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : "无法创建停复牌状态任务")
+    } finally {
+      setSyncingSymbol("")
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-4">
@@ -103,6 +122,17 @@ export function DatasetsPage() {
           <p className="text-muted-foreground">查看平台数据覆盖并创建同步任务。</p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            disabled={
+              !coverage.data?.recommended_end_day ||
+              Boolean(syncingSymbol) ||
+              ["queued", "running"].includes(currentSyncTask?.status ?? "")
+            }
+            onClick={() => void refreshSuspensions()}
+          >
+            刷新停复牌状态
+          </Button>
           <Button variant="outline" asChild>
             <Link to="/admin/data/import">上传 CSV</Link>
           </Button>
@@ -111,6 +141,17 @@ export function DatasetsPage() {
           </Button>
         </div>
       </div>
+      <Alert role="status">
+        <AlertTitle>定期同步全部数据</AlertTitle>
+        <AlertDescription>
+          <p>
+            多只股票数据落后时，建议前往定时任务页，立即执行“盘后全量数据同步”，并检查定时计划是否启用。
+          </p>
+          <Button asChild>
+            <Link to="/admin/schedules">整体同步（推荐）</Link>
+          </Button>
+        </AlertDescription>
+      </Alert>
       <div className="grid gap-4 xl:grid-cols-2">
         {query.data?.map((dataset) => (
           <Card key={dataset.key}>
@@ -144,6 +185,11 @@ export function DatasetsPage() {
           <CardDescription>
             当前已维护 {coverage.data?.instrument_count ?? 0}
             只沪深京股票；列表按服务端分页加载。补齐日线时自动沿用已有复权口径。
+            {coverage.data?.recommended_end_day &&
+              ` 当前应更新至 ${coverage.data.recommended_end_day}（Asia/Shanghai，按日线发布时刻计算）。`}
+            {coverage.data?.calendar_estimated &&
+              " 本地交易日历未覆盖目标日期，当前按工作日估算，请通过整体同步刷新日历后核实。"}
+            完全同步还要求历史跨度达到十年，不代表期间没有缺失。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -152,10 +198,13 @@ export function DatasetsPage() {
           {currentSyncTask && (
             <div className="mb-4 space-y-2 text-sm" aria-live="polite">
               <p role={currentSyncTask.status === "failed" ? "alert" : undefined}>
-                股票 {currentSyncTask.symbols?.join("、") ?? ""} 同步任务：
+                {currentSyncTask.dataset_key === "trading-status"
+                  ? "停复牌状态"
+                  : `股票 ${currentSyncTask.symbols?.join("、") ?? ""}`}{" "}
+                同步任务：
                 {localizedLabel(currentSyncTask.status)}
                 {currentSyncTask.status === "succeeded" &&
-                  `，取得 ${currentSyncTask.record_count ?? 0} 条 K 线${currentSyncTask.new_record_count === undefined ? "" : `，新增 ${currentSyncTask.new_record_count} 条`}`}
+                  `，取得 ${currentSyncTask.record_count ?? 0} 条${currentSyncTask.dataset_key === "trading-status" ? "状态记录" : " K 线"}${currentSyncTask.new_record_count === undefined ? "" : `，新增 ${currentSyncTask.new_record_count} 条`}`}
                 {currentSyncTask.message && `；${currentSyncTask.message}`}
               </p>
               {currentSyncTask.status === "failed" && currentSyncTask.attempts?.length ? (
@@ -212,6 +261,7 @@ export function DatasetsPage() {
                   <SelectGroup>
                     <SelectItem value="all">全部状态</SelectItem>
                     <SelectItem value="完全同步">完全同步</SelectItem>
+                    <SelectItem value="数据落后">数据落后</SelectItem>
                     <SelectItem value="部分同步">部分同步</SelectItem>
                     <SelectItem value="数据不足">数据不足</SelectItem>
                     <SelectItem value="未同步">未同步</SelectItem>
@@ -260,9 +310,21 @@ export function DatasetsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
-                        <Badge variant="secondary">{item.sync_status}</Badge>
+                        <Badge
+                          variant={
+                            item.status === "active" && item.sync_status === "数据落后"
+                              ? "destructive"
+                              : "secondary"
+                          }
+                        >
+                          {item.status === "suspended"
+                            ? "已停牌"
+                            : item.status === "delisted"
+                              ? "已退市"
+                              : item.sync_status}
+                        </Badge>
                         {item.status === "active" && item.updated && <Badge>已更新</Badge>}
-                        {item.publication_pending && (
+                        {item.status === "active" && item.publication_pending && (
                           <Badge variant="outline">来源尚未发布新数据</Badge>
                         )}
                         {item.status === "active" && item.stale && (
@@ -272,7 +334,10 @@ export function DatasetsPage() {
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={syncingSymbol === item.symbol}
+                            disabled={
+                              Boolean(syncingSymbol) ||
+                              ["queued", "running"].includes(currentSyncTask?.status ?? "")
+                            }
                             onClick={() =>
                               void enqueueSync(
                                 item.symbol,
