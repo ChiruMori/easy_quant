@@ -1,5 +1,6 @@
 import { useRef, useState } from "react"
 
+import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -33,11 +34,11 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
     }
   }
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold">实盘实例 {current.id}</h1>
-        <p className="text-muted-foreground">状态：{localizedLabel(current.status)}</p>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title={`实盘实例 ${current.id}`}
+        description={`状态：${localizedLabel(current.status)}`}
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>操作未完成</AlertTitle>

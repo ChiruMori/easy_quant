@@ -1,6 +1,18 @@
+import { useId } from "react"
 import { useNavigate } from "react-router-dom"
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts"
 
+import { EmptyState } from "@/components/app-shell"
+import { MetricCard } from "@/components/metric-card"
+import { PageHeader } from "@/components/page-header"
 import { executionStageLabel, RunTimingPanel } from "@/components/run-timing"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -21,25 +33,24 @@ import { backtestStatusLabel, formatMetric, metricLabel } from "../format"
 
 export function BacktestDetailPage({ run }: { run: Backtest }) {
   const navigate = useNavigate()
+  const gradientId = useId()
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">回测详情</h1>
-          <p className="text-muted-foreground">
-            状态：{backtestStatusLabel(run.status)}（{run.progress}%）
-          </p>
-        </div>
-        <Button
-          disabled={run.status !== "succeeded"}
-          onClick={async () => {
-            const live = await startLive(run.id, run.strategy_version_id)
-            navigate(`/live/${live.id}`)
-          }}
-        >
-          开启实盘跟踪
-        </Button>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="回测详情"
+        description={`状态：${backtestStatusLabel(run.status)}（${run.progress}%）`}
+        actions={
+          <Button
+            disabled={run.status !== "succeeded"}
+            onClick={async () => {
+              const live = await startLive(run.id, run.strategy_version_id)
+              navigate(`/live/${live.id}`)
+            }}
+          >
+            开启实盘跟踪
+          </Button>
+        }
+      />
       {run.assumptions.intraday_quote && (
         <p className="text-sm text-muted-foreground">
           盘中模拟报价为当日开收盘均值，包含收盘信息，只代表日线近似模拟。
@@ -104,44 +115,116 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
           </AlertDescription>
         </Alert>
       )}
-      <RunTimingPanel timing={run.timing} />
-      <Card>
-        <CardHeader>
-          <CardTitle>回测指标</CardTitle>
-          <CardDescription>策略历史模拟结果不代表未来收益。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section aria-label="回测指标" className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-base font-semibold">回测指标</h2>
+          <p className="mt-1 text-sm text-muted-foreground">策略历史模拟结果不代表未来收益。</p>
+        </div>
+        {Object.keys(run.metrics).length ? (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {Object.entries(run.metrics).map(([key, value]) => (
-              <div key={key}>
-                <dt className="text-sm text-muted-foreground">{metricLabel(key)}</dt>
-                <dd
-                  className="max-w-full truncate font-medium tabular-nums"
-                  title={formatMetric(key, value)}
-                >
-                  {formatMetric(key, value)}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </CardContent>
-      </Card>
-      {run.periods.length > 0 && (
-        <div className="h-72">
-          <ResponsiveContainer>
-            <LineChart data={run.periods}>
-              <XAxis dataKey="trading_day" />
-              <YAxis />
-              <Tooltip
-                formatter={(value) =>
-                  Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 })
+              <MetricCard
+                key={key}
+                label={metricLabel(key)}
+                value={formatMetric(key, value)}
+                tone={
+                  ["cumulative_return", "annualized_return", "benchmark_return"].includes(key) &&
+                  value !== null
+                    ? Number(value) > 0
+                      ? "up"
+                      : Number(value) < 0
+                        ? "down"
+                        : "neutral"
+                    : "neutral"
                 }
               />
-              <Line dataKey="equity" name="组合权益" dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+            ))}
+          </div>
+        ) : (
+          <Card>
+            <CardContent>
+              <EmptyState title="尚无回测指标" message="该记录尚未生成可展示的指标。" />
+            </CardContent>
+          </Card>
+        )}
+      </section>
+      {run.periods.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>组合权益</CardTitle>
+            <CardDescription>按交易日展示模拟组合权益，单位：元。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div
+              role="img"
+              aria-label={`组合权益曲线，共 ${run.periods.length} 个交易日，单位为元`}
+              className="h-72 w-full min-w-0"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={run.periods.map((period) => ({ ...period, equity: Number(period.equity) }))}
+                  margin={{ top: 10, right: 12, bottom: 0, left: 0 }}
+                >
+                  <defs>
+                    <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.16} />
+                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.01} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid
+                    vertical={false}
+                    stroke="var(--chart-grid)"
+                    strokeDasharray="3 3"
+                  />
+                  <XAxis
+                    dataKey="trading_day"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+                    tickMargin={12}
+                    minTickGap={45}
+                  />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    width={65}
+                    tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+                    tickFormatter={(value: number) =>
+                      Math.abs(value) >= 10000
+                        ? `${(value / 10000).toLocaleString("zh-CN", { maximumFractionDigits: 1 })}万`
+                        : value.toLocaleString("zh-CN")
+                    }
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--popover)",
+                      color: "var(--popover-foreground)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                    formatter={(value) => [
+                      `${Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 元`,
+                      "组合权益",
+                    ]}
+                  />
+                  <Area
+                    dataKey="equity"
+                    name="组合权益"
+                    type="linear"
+                    stroke="var(--chart-1)"
+                    strokeWidth={2}
+                    fill={`url(#${gradientId})`}
+                    dot={run.periods.length === 1}
+                    isAnimationActive={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
       )}
+      <RunTimingPanel timing={run.timing} />
       <Card>
         <CardHeader>
           <CardTitle>交易与假设披露</CardTitle>

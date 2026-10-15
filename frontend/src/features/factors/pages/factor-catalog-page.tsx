@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -27,13 +28,11 @@ export function FactorCatalogPage({ factors }: { factors?: FactorDefinition[] } 
   if (query.isLoading) return <LoadingState label="正在加载因子目录" />
   if (query.error) return <ErrorState title="无法加载因子目录" message={query.error.message} />
   return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <h1 className="text-2xl font-semibold">因子目录</h1>
-        <p className="text-muted-foreground">
-          因子由平台随版本提供，只读并可在策略中通过 context.factor 调用。
-        </p>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="因子目录"
+        description="因子由平台随版本提供，只读并可在策略中通过 context.factor 调用。"
+      />
       <Input
         aria-label="搜索因子"
         placeholder="搜索名称、Key 或描述"
@@ -44,7 +43,7 @@ export function FactorCatalogPage({ factors }: { factors?: FactorDefinition[] } 
         {visible.map((factor) => (
           <Card key={factor.key}>
             <CardHeader>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <CardTitle>{factor.name}</CardTitle>
                 <Badge variant="secondary">{factor.key}</Badge>
               </div>
