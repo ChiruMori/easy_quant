@@ -24,7 +24,13 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { localizedLabel } from "@/lib/labels"
 
-import { addSubscription, listDeliveries, listSubscriptions, updateSubscription } from "../api"
+import {
+  addSubscription,
+  listDeliveries,
+  listSubscriptions,
+  testSubscription,
+  updateSubscription,
+} from "../api"
 
 export function NotificationSettingsPage() {
   const client = useQueryClient()
@@ -36,6 +42,8 @@ export function NotificationSettingsPage() {
     queryKey: ["notifications", "deliveries"],
     queryFn: listDeliveries,
   })
+  const [message, setMessage] = useState("")
+  const [busy, setBusy] = useState(false)
   const [channel, setChannel] = useState("ntfy")
   if (subscriptions.isLoading || deliveries.isLoading)
     return <LoadingState label="正在加载通知设置" />
@@ -64,13 +72,29 @@ export function NotificationSettingsPage() {
             event.preventDefault()
             const form = event.currentTarget
             const data = new FormData(form)
-            await addSubscription(channel, String(data.get("destination")))
-            form.reset()
-            await client.invalidateQueries({ queryKey: ["notifications"] })
+            setBusy(true)
+            setMessage("")
+            try {
+              await addSubscription(
+                channel,
+                String(data.get("destination")),
+                String(data.get("name")),
+              )
+              form.reset()
+              await client.invalidateQueries({ queryKey: ["notifications"] })
+            } catch (error) {
+              setMessage(error instanceof Error ? error.message : "添加失败")
+            } finally {
+              setBusy(false)
+            }
           }}
         >
           <CardContent>
             <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="channel-name">渠道名称</FieldLabel>
+                <Input id="channel-name" name="name" required maxLength={160} />
+              </Field>
               <Field>
                 <FieldLabel>渠道</FieldLabel>
                 <Select value={channel} onValueChange={setChannel}>
@@ -92,23 +116,79 @@ export function NotificationSettingsPage() {
             </FieldGroup>
           </CardContent>
           <CardFooter>
-            <Button type="submit">添加渠道</Button>
+            <Button type="submit" disabled={busy}>
+              添加渠道
+            </Button>
           </CardFooter>
         </form>
       </Card>
+      {message && <p role="status">{message}</p>}
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold">已配置渠道</h2>
         {subscriptions.data?.map((item) => (
           <Field orientation="horizontal" className="max-w-2xl rounded-md border p-4" key={item.id}>
             <div className="flex-1">
-              <p className="font-medium">{localizedLabel(item.channel)}</p>
+              <p className="font-medium">
+                {item.name ?? localizedLabel(item.channel)} · {localizedLabel(item.channel)}
+              </p>
+              <form
+                className="flex gap-2"
+                onSubmit={async (event) => {
+                  event.preventDefault()
+                  const data = new FormData(event.currentTarget)
+                  setBusy(true)
+                  try {
+                    await updateSubscription(item.id, item.enabled, String(data.get("name")))
+                    await client.invalidateQueries({ queryKey: ["notifications"] })
+                    setMessage("名称已保存")
+                  } catch (error) {
+                    setMessage(error instanceof Error ? error.message : "保存失败")
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                <Input
+                  aria-label={`渠道名称 ${item.name ?? item.channel}`}
+                  name="name"
+                  defaultValue={item.name ?? item.channel}
+                  required
+                  maxLength={160}
+                />
+                <Button type="submit" variant="outline" disabled={busy}>
+                  保存名称
+                </Button>
+              </form>
               <p className="text-sm text-muted-foreground">{item.destination}</p>
             </div>
+            <Button
+              variant="outline"
+              disabled={busy || !item.enabled}
+              onClick={async () => {
+                setBusy(true)
+                setMessage("")
+                try {
+                  setMessage((await testSubscription(item.id)).message)
+                  await client.invalidateQueries({ queryKey: ["notifications", "deliveries"] })
+                } catch (error) {
+                  setMessage(error instanceof Error ? error.message : "测试失败")
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              测试连通性
+            </Button>
             <Switch
+              aria-label={`启用 ${item.name ?? item.channel}`}
               checked={item.enabled}
               onCheckedChange={async (enabled) => {
-                await updateSubscription(item.id, enabled)
-                await client.invalidateQueries({ queryKey: ["notifications", "subscriptions"] })
+                try {
+                  await updateSubscription(item.id, enabled)
+                  await client.invalidateQueries({ queryKey: ["notifications", "subscriptions"] })
+                } catch (error) {
+                  setMessage(error instanceof Error ? error.message : "更新失败")
+                }
               }}
             />
           </Field>

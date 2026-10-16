@@ -1,8 +1,10 @@
 import { useRef, useState } from "react"
+import { Link } from "react-router-dom"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { StrategyPreview } from "@/features/strategies/components/strategy-preview"
 import { localizedLabel } from "@/lib/labels"
 
 import type { LiveInstance } from "../api"
@@ -35,9 +37,33 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-2xl font-semibold">实盘实例 {current.id}</h1>
+        <h1 className="text-2xl font-semibold">实盘实例 {current.name ?? current.id}</h1>
         <p className="text-muted-foreground">状态：{localizedLabel(current.status)}</p>
       </div>
+      <StrategyPreview strategy={current.strategy} versionId={current.strategy_version_id} />
+      <Card>
+        <CardHeader>
+          <CardTitle>启动配置</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <p>初始资金：{current.initial_cash ?? "—"}</p>
+          <p>
+            通知渠道：
+            {current.notification_channels
+              ?.map((item) => `${item.name}${item.enabled ? "" : "（已停用）"}`)
+              .join("、") || "历史配置"}
+          </p>
+          <Link className="underline" to={`/backtests/${current.backtest_id}`}>
+            查看来源回测
+          </Link>
+          <pre className="overflow-auto">
+            策略参数：{JSON.stringify(current.parameters ?? {}, null, 2)}
+          </pre>
+          <pre className="overflow-auto">
+            初始持仓：{JSON.stringify(current.initial_positions ?? {}, null, 2)}
+          </pre>
+        </CardContent>
+      </Card>
       {error && (
         <Alert variant="destructive">
           <AlertTitle>操作未完成</AlertTitle>

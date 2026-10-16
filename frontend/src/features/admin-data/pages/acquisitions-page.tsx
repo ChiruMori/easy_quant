@@ -130,8 +130,8 @@ export function AcquisitionsPage() {
                 </Select>
               </Field>
               <Field>
-                <FieldLabel htmlFor="symbols">股票代码</FieldLabel>
-                <Input id="symbols" name="symbols" placeholder="000001,600000" required />
+                <FieldLabel htmlFor="symbols">证券代码（指数加 sh/sz 前缀）</FieldLabel>
+                <Input id="symbols" name="symbols" placeholder="000001,600000,sh000300" required />
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>

@@ -19,6 +19,7 @@ from easy_quant.api.schemas.market_data import (
 )
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.domain.market_data.calendar import TradingCalendar
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
@@ -27,6 +28,10 @@ blueprint = Blueprint("admin_market_data", __name__, url_prefix="/api/v1/admin/m
 
 
 def _exchange(symbol: str) -> str:
+    if symbol.startswith("sh"):
+        return "上海证券交易所"
+    if symbol.startswith("sz"):
+        return "深圳证券交易所"
     if symbol.startswith(("4", "8", "92")):
         return "北京证券交易所"
     if symbol.startswith(("5", "6", "9")):
@@ -185,7 +190,7 @@ def market_data_coverage():
 @blueprint.get("/instruments/<symbol>")
 @require_admin
 def get_instrument(symbol: str):
-    normalized = symbol.strip().zfill(6)
+    normalized = symbol.strip().lower().zfill(6)
     instrument = get_container().market_data.get_instrument(normalized)
     if instrument is None:
         return success(None, status=404)
@@ -195,12 +200,14 @@ def get_instrument(symbol: str):
 @blueprint.put("/instruments/<symbol>/status")
 @require_admin
 def update_instrument_status(symbol: str):
-    normalized = symbol.strip().zfill(6)
+    normalized = symbol.strip().lower().zfill(6)
     payload = InstrumentStatusRequest.model_validate(request.get_json() or {})
     store = get_container().market_data
     existing = store.get_instrument(normalized)
     if existing is None:
         return success(None, status=404)
+    if is_index(normalized):
+        raise ValidationError("指数不支持股票交易状态操作")
     if existing.get("status") == "delisted":
         raise ValidationError("已退市股票不能标记为停牌或恢复交易")
     previous_status = existing.get("status")
@@ -221,7 +228,7 @@ def update_instrument_status(symbol: str):
 @blueprint.get("/instruments/<symbol>/daily-bars")
 @require_admin
 def get_instrument_daily_bars(symbol: str):
-    normalized = symbol.strip().zfill(6)
+    normalized = symbol.strip().lower().zfill(6)
     start_day = request.args.get("start_day", type=date.fromisoformat)
     end_day = request.args.get("end_day", type=date.fromisoformat)
     rows = get_container().market_data.list_bars(start_day, end_day, normalized)

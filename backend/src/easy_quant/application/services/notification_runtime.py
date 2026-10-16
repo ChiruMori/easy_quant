@@ -14,13 +14,20 @@ from easy_quant.infrastructure.core import UuidGenerator
 
 
 def notify_owner(
-    container: Any, owner_id: str, event_id: str, title: str, body: str
+    container: Any,
+    owner_id: str,
+    event_id: str,
+    title: str,
+    body: str,
+    subscription_ids: list[str] | None = None,
 ) -> list[dict[str, object]]:
     """投递业务事件；业务键保证重复分析不会重复发送。"""
 
     created: list[dict[str, object]] = []
     for row in container.state.subscriptions:
         if row["owner_id"] != owner_id or not row.get("enabled", True):
+            continue
+        if subscription_ids is not None and row["id"] not in subscription_ids:
             continue
         key = hashlib.sha256(f"{event_id}|{row['id']}".encode()).hexdigest()
         existing = next(
@@ -55,8 +62,8 @@ def notify_owner(
                 )
                 channel.send(subscription, title, body, key)
                 delivery["status"] = "delivered"
-            except TemporaryDeliveryError as error:
-                delivery.update(status="retry", error=str(error))
+            except TemporaryDeliveryError:
+                delivery.update(status="retry", error="通知投递失败")
                 if container.jobs is not None:
                     now = container.authentication.clock.now()
                     container.jobs.enqueue(
@@ -68,10 +75,10 @@ def notify_owner(
                             now + timedelta(minutes=5),
                         )
                     )
-            except PermanentDeliveryError as error:
-                delivery.update(status="failed", error=str(error))
-            except Exception as error:
-                delivery.update(status="failed", error=str(error))
+            except PermanentDeliveryError:
+                delivery.update(status="failed", error="通知投递失败")
+            except Exception:
+                delivery.update(status="failed", error="通知投递失败")
         container.state.deliveries.append(delivery)
         created.append(delivery)
     return created

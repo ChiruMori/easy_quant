@@ -5,6 +5,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from easy_quant.domain.backtesting.entities import Portfolio, SimulatedTrade
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.domain.strategies.entities import Signal
 
 CENT = Decimal("0.01")
@@ -29,6 +30,8 @@ def execute_signal(
     slippage_rate: Decimal,
     reference_price: Decimal | None = None,
 ) -> SimulatedTrade | None:
+    if is_index(signal.symbol):
+        return None
     if not bar.tradable or signal.action not in {"buy", "sell"} or signal.quantity <= 0:
         return None
     direction = Decimal(1) if signal.action == "buy" else Decimal(-1)

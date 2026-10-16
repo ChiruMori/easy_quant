@@ -189,7 +189,9 @@ class InMemoryMarketDataStore:
 
     def mark_missing_instruments_delisted(self, active_symbols: set[str]) -> None:
         for symbol, instrument in self.instruments.items():
-            if symbol not in active_symbols:
+            if symbol not in active_symbols and not (
+                symbol.startswith(("sh", "sz")) and len(symbol) == 8
+            ):
                 instrument["status"] = "delisted"
 
     def list_bars(
@@ -457,6 +459,8 @@ class SqlAlchemyMarketDataStore:
         self.session.query(InstrumentModel).filter(
             InstrumentModel.symbol.not_in(active_symbols),
             InstrumentModel.status != "delisted",
+            ~InstrumentModel.symbol.like("sh%"),
+            ~InstrumentModel.symbol.like("sz%"),
         ).update({InstrumentModel.status: "delisted"}, synchronize_session=False)
         self.session.commit()
 

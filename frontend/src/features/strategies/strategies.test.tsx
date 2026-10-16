@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
+import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
 vi.mock("../strategies/components/strategy-editor", () => ({
@@ -27,7 +28,9 @@ describe("策略页面", () => {
   it("提供示例、编辑和运行输出入口但不提供调试控件", async () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <StrategiesPage />
+        <MemoryRouter>
+          <StrategiesPage />
+        </MemoryRouter>
       </QueryClientProvider>,
     )
     expect(await screen.findByText("使用正预期示例")).toBeInTheDocument()

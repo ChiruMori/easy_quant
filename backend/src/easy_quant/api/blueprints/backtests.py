@@ -6,6 +6,7 @@ from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_user
 from easy_quant.api.responses import success
 from easy_quant.api.schemas.backtests import BacktestCompareRequest, BacktestCreateRequest
+from easy_quant.api.strategy_context import strategy_context
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.infrastructure.core import UuidGenerator
@@ -127,7 +128,14 @@ def get_backtest(run_id: str):
     run = get_container().backtests.get(run_id)
     if run is None or run["owner_id"] != g.current_user.id:
         return success(None, status=404)
-    return success(_with_job_failure(run))
+    return success(
+        {
+            **_with_job_failure(run),
+            "strategy": strategy_context(
+                get_container(), g.current_user.id, str(run.get("strategy_version_id", ""))
+            ),
+        }
+    )
 
 
 @blueprint.post("/compare")

@@ -15,6 +15,12 @@ def create_e2e_app():
 
     settings = make_test_settings()
     container = make_test_container(settings, initialize_admin=True)
+
+    class OfflineNotificationChannel:
+        def send(self, *_args):
+            return None
+
+    container.notification_channels["ntfy"] = OfflineNotificationChannel()
     registry = JobHandlerRegistry()
     register_backtest_handlers(registry, container)
     register_strategy_handlers(registry, container)

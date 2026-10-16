@@ -21,6 +21,7 @@ const CandlestickChart = lazy(() =>
 
 export function InstrumentDetailPage() {
   const { symbol = "" } = useParams()
+  const isIndex = /^(sh|sz)\d{6}$/i.test(symbol)
   const [range, setRange] = useState({ start: "", end: "" })
   const [appliedRange, setAppliedRange] = useState(range)
   const [period, setPeriod] = useState<CandlePeriod>("day")
@@ -46,6 +47,7 @@ export function InstrumentDetailPage() {
         <div>
           <h1 className="text-2xl font-semibold">
             {instrument.data?.symbol} {instrument.data?.name}
+            {isIndex && <Badge variant="secondary">指数 · 不可交易</Badge>}
             {instrument.data?.status === "delisted" && (
               <Badge className="ml-2 align-middle" variant="secondary">
                 已退市
@@ -65,7 +67,7 @@ export function InstrumentDetailPage() {
           <Link to="/admin/data">返回数据列表</Link>
         </Button>
       </div>
-      {instrument.data?.status !== "delisted" && (
+      {!isIndex && instrument.data?.status !== "delisted" && (
         <Card>
           <CardHeader>
             <CardTitle>交易状态</CardTitle>

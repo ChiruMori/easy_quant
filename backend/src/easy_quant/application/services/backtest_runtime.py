@@ -22,6 +22,7 @@ from easy_quant.domain.backtesting.engine import PhasedBacktestSession
 from easy_quant.domain.backtesting.entities import BacktestConfig
 from easy_quant.domain.backtesting.execution import MarketBar
 from easy_quant.domain.market_data.calendar import TradingCalendar
+from easy_quant.domain.market_data.indices import INDEX_CATALOG, benchmark_symbol, is_index
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.domain.strategies.entities import Signal
 from easy_quant.infrastructure.persistence.snapshot_spool import SnapshotSpool
@@ -132,9 +133,38 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
     # 只读覆盖索引摘要，先报告缺失，避免跑完整策略后才阻止结果。
     coverage = container.market_data.bar_bounds()
     instruments = {str(item["symbol"]): item for item in container.market_data.list_instruments()}
+    benchmark = benchmark_symbol(str(payload["benchmark"])) if payload.get("benchmark") else None
+    benchmark_prices: dict[str, Decimal] = {}
+    if benchmark:
+        for row in container.market_data.list_bars(expected_start, expected_end, benchmark):
+            day = date.fromisoformat(str(row["trading_day"]))
+            cutoff = datetime.combine(day, time(23, 59, 59), ZoneInfo("Asia/Shanghai"))
+            if datetime.fromisoformat(str(row["available_at"])) <= cutoff:
+                price = Decimal(str(row["close"]))
+                if price.is_finite() and price > 0:
+                    benchmark_prices[day.isoformat()] = price
+        if any(day.isoformat() not in benchmark_prices for day in expected_days):
+            raise StateConflictError(
+                "基准行情缺失或覆盖不足，请先同步指数日线",
+                {
+                    "action_url": "/admin/data/acquisitions",
+                    "benchmark": benchmark,
+                    "missing_data": [
+                        {
+                            "symbol": benchmark,
+                            "start_day": expected_start.isoformat(),
+                            "end_day": expected_end.isoformat(),
+                        }
+                    ],
+                },
+            )
     missing = []
     for symbol, item in coverage.items():
-        if symbol in excluded or instruments.get(symbol, {}).get("status") == "suspended":
+        if (
+            symbol in excluded
+            or is_index(symbol)
+            or instruments.get(symbol, {}).get("status") == "suspended"
+        ):
             continue
         available_start, available_end = item["first_day"], item["last_day"]
         # 原运行股票池来自区间内行情，完全不相交的历史/新上市证券不属于本次股票池。
@@ -172,7 +202,7 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
         Decimal(str(payload["initial_cash"])),
         Decimal(str(payload.get("fee_rate", "0.0003"))),
         Decimal(str(payload.get("slippage_rate", "0.0001"))),
-        payload.get("benchmark"),
+        benchmark,
         int(payload.get("random_seed", 0)),
     )
     generic_records = {
@@ -367,7 +397,11 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
                             "text": result.stdout,
                         }
                     )
-                return [signal for signal in result.signals if signal.symbol not in excluded]
+                return [
+                    signal
+                    for signal in result.signals
+                    if signal.symbol not in excluded and not is_index(signal.symbol)
+                ]
 
             backtest_session.advance(trading_day, day_bars, strategy)
             report(
@@ -387,6 +421,12 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
             },
         )
     periods, trades, metrics = backtest_session.finish()
+    benchmark_base = benchmark_prices.get(expected_start.isoformat())
+    if benchmark_base is not None:
+        metrics["benchmark_return"] = (
+            benchmark_prices[expected_end.isoformat()] / benchmark_base - 1
+        )
+
     logger.info(
         "回测策略阶段完成 run_id=%s days=%d rows=%d elapsed_seconds=%.3f",
         run_id,
@@ -406,6 +446,9 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
         completed = {
             **run,
             "snapshot_id": snapshot_id,
+            "benchmark": {"symbol": benchmark, "name": INDEX_CATALOG.get(benchmark, benchmark)}
+            if benchmark
+            else None,
             "status": "succeeded",
             "progress": 100,
             "metrics": {
@@ -416,6 +459,13 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
                     "trading_day": item.trading_day.isoformat(),
                     "equity": str(item.equity),
                     "cash": str(item.cash),
+                    "benchmark_equity": str(
+                        config.initial_cash
+                        * benchmark_prices[item.trading_day.isoformat()]
+                        / benchmark_base
+                    )
+                    if benchmark_base
+                    else None,
                 }
                 for item in periods
             ],

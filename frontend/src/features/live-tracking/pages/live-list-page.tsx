@@ -30,10 +30,14 @@ export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {})
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <CardTitle>{item.id}</CardTitle>
+                    <CardTitle>{item.name ?? item.id}</CardTitle>
                     <Badge variant="secondary">{localizedLabel(item.status)}</Badge>
                   </div>
-                  <CardDescription>策略版本 {item.strategy_version_id}</CardDescription>
+                  <CardDescription>
+                    {item.strategy?.name ?? "策略"} ·{" "}
+                    {item.strategy ? `v${item.strategy.number}` : item.strategy_version_id} ·
+                    初始资金 {item.initial_cash ?? "—"}
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   下次决策：{new Date(item.next_decision_at).toLocaleString()}

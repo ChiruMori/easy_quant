@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom"
+import { useState } from "react"
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
 import { executionStageLabel, RunTimingPanel } from "@/components/run-timing"
@@ -13,14 +13,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { startLive } from "@/features/live-tracking/api"
+import { StartLivePage } from "@/features/live-tracking/pages/start-live-page"
+import { StrategyPreview } from "@/features/strategies/components/strategy-preview"
 import { localizedLabel } from "@/lib/labels"
 
 import type { Backtest } from "../api"
 import { backtestStatusLabel, formatMetric, metricLabel } from "../format"
 
 export function BacktestDetailPage({ run }: { run: Backtest }) {
-  const navigate = useNavigate()
+  const [configureLive, setConfigureLive] = useState(false)
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-4">
@@ -32,14 +33,24 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
         </div>
         <Button
           disabled={run.status !== "succeeded"}
-          onClick={async () => {
-            const live = await startLive(run.id, run.strategy_version_id)
-            navigate(`/live/${live.id}`)
-          }}
+          onClick={() => setConfigureLive((value) => !value)}
         >
           开启实盘跟踪
         </Button>
       </div>
+      <StrategyPreview strategy={run.strategy} versionId={run.strategy_version_id} />
+      {configureLive && (
+        <StartLivePage
+          backtestId={run.id}
+          strategyVersionId={run.strategy_version_id}
+          parameters={run.config?.parameters}
+        />
+      )}
+      {run.benchmark && (
+        <p>
+          基准：{run.benchmark.name}（{run.benchmark.symbol}），以区间首个交易日收盘为基点。
+        </p>
+      )}
       {run.assumptions.intraday_quote && (
         <p className="text-sm text-muted-foreground">
           盘中模拟报价为当日开收盘均值，包含收盘信息，只代表日线近似模拟。
@@ -138,6 +149,14 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
                 }
               />
               <Line dataKey="equity" name="组合权益" dot={false} />
+              {run.benchmark && (
+                <Line
+                  dataKey="benchmark_equity"
+                  name={run.benchmark.name}
+                  dot={false}
+                  stroke="var(--color-chart-2)"
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>

@@ -10,6 +10,7 @@ from easy_quant.application.services.acquisition import AcquisitionService, Expo
 from easy_quant.application.services.authentication import AuthenticationService
 from easy_quant.application.services.market_data_sync import MarketDataSyncService
 from easy_quant.config import BACKEND_ROOT, Settings, get_settings
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.infrastructure.core import SystemClock, SystemSleeper, UuidGenerator
 from easy_quant.infrastructure.data_sources.akshare.adapters import AkShareSource
 from easy_quant.infrastructure.data_sources.eastmoney.adapters import EastMoneySource
@@ -330,19 +331,30 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
     securities_ak = AkShareSource({"securities": akshare_securities})
     daily_ak = AkShareSource(
         {
-            "daily-bars": lambda **parameters: ak.stock_zh_a_hist(
-                symbol=str(parameters["symbol"]),
-                period="daily",
-                start_date=str(parameters["start_date"]).replace("-", ""),
-                end_date=str(parameters["end_date"]).replace("-", ""),
-                adjust="" if parameters.get("adjustment", "qfq") == "none" else "qfq",
+            "daily-bars": lambda **parameters: (
+                ak.index_zh_a_hist(
+                    symbol=str(parameters["symbol"])[2:],
+                    period="daily",
+                    start_date=str(parameters["start_date"]).replace("-", ""),
+                    end_date=str(parameters["end_date"]).replace("-", ""),
+                )
+                if is_index(str(parameters["symbol"]))
+                else ak.stock_zh_a_hist(
+                    symbol=str(parameters["symbol"]),
+                    period="daily",
+                    start_date=str(parameters["start_date"]).replace("-", ""),
+                    end_date=str(parameters["end_date"]).replace("-", ""),
+                    adjust="" if parameters.get("adjustment", "qfq") == "none" else "qfq",
+                )
             )
         }
     )
     daily_tencent = AkShareSource(
         {
             "daily-bars": lambda **parameters: ak.stock_zh_a_hist_tx(
-                symbol=(
+                symbol=str(parameters["symbol"])
+                if is_index(str(parameters["symbol"]))
+                else (
                     "bj"
                     if str(parameters["symbol"]).startswith(("4", "8", "92"))
                     else "sh"

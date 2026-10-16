@@ -17,6 +17,7 @@ from easy_quant.application.services.strategy_validation import (
     extract_history_trading_days,
 )
 from easy_quant.domain.market_data.calendar import TradingCalendar
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.infrastructure.core import UuidGenerator
 from easy_quant.infrastructure.persistence.market_data_pages import DailyBarPageCache
@@ -172,7 +173,9 @@ def analyze_live_instance(
                 {
                     signal.symbol
                     for signal in result.signals
-                    if signal.symbol not in excluded and signal.quantity > 0
+                    if signal.symbol not in excluded
+                    and not is_index(signal.symbol)
+                    and signal.quantity > 0
                 }
             )
         )
@@ -194,7 +197,7 @@ def analyze_live_instance(
         recommendations = list(state.recommendations.get(instance_id, []))
         if phase != "after_market":
             for signal in result.signals:
-                if signal.symbol in excluded or signal.quantity <= 0:
+                if signal.symbol in excluded or is_index(signal.symbol) or signal.quantity <= 0:
                     continue
                 if phase == "on_market" and not _intraday_triggered(
                     signal.action,
@@ -306,7 +309,14 @@ def _drain_live_notifications(container: Any, instance_id: str) -> None:
         outbox = dict(instance.get("notification_outbox", {}))
         owner_id = str(instance.get("owner_id", ""))
     for event_id, message in outbox.items():
-        notify_owner(container, owner_id, event_id, str(message["title"]), str(message["body"]))
+        notify_owner(
+            container,
+            owner_id,
+            event_id,
+            f"{instance.get('name', '实盘')} · {message['title']}",
+            str(message["body"]),
+            instance.get("subscription_ids"),
+        )
         with container.live_tracking.transaction() as state:
             current = state.instances.get(instance_id)
             if current is not None:

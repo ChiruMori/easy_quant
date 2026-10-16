@@ -16,6 +16,15 @@ def register_notification_handlers(registry: JobHandlerRegistry, container=None)
                 for item in container.state.subscriptions
                 if item["id"] == delivery["subscription_id"]
             )
+            if delivery.get("status") == "delivered":
+                return {"delivery_id": delivery_id, "status": "delivered"}
+            if (
+                not subscription.get("enabled", True)
+                or subscription["owner_id"] != delivery["owner_id"]
+            ):
+                delivery.update(status="failed", error="通知渠道已停用")
+                deliveries[index] = delivery
+                return {"delivery_id": delivery_id, "status": "failed"}
             channel = container.notification_channels[str(subscription["channel"])]
             from easy_quant.domain.notifications.entities import (
                 ChannelType,

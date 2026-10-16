@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from email.header import Header
+
 import httpx
 
 from easy_quant.application.ports.notifications import (
@@ -18,9 +20,14 @@ class NtfyChannel:
     ) -> None:
         try:
             response = self.client.post(
-                f"{self.base_url}/{subscription.destination}",
+                subscription.destination
+                if subscription.destination.startswith(("https://", "http://"))
+                else f"{self.base_url}/{subscription.destination}",
                 content=body.encode(),
-                headers={"Title": title, "Idempotency-Key": idempotency_key},
+                headers={
+                    "Title": Header(title, "utf-8", maxlinelen=998).encode(),
+                    "Idempotency-Key": idempotency_key,
+                },
             )
         except httpx.TransportError as error:
             raise TemporaryDeliveryError("ntfy 暂时不可用") from error

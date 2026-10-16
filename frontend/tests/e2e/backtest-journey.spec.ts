@@ -15,6 +15,7 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
     const iso = day.toISOString().slice(0, 10)
     const close = 10 + rows.length / 100
     rows.push(`000001,${iso},${close - 0.1},${close + 0.2},${close - 0.2},${close},100000`)
+    rows.push(`sh000300,${iso},100,110,90,100,100000`)
     day = new Date(day.getTime() + 86_400_000)
   }
   await page.goto("/admin/data/import")
@@ -60,11 +61,32 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await page.getByRole("option").last().click()
   await page.getByLabel("开始日期").fill("2026-01-01")
   await page.getByLabel("结束日期").fill("2026-01-31")
+  await page.getByLabel("基准", { exact: true }).fill("000300")
   await page.getByRole("button", { name: "开始回测" }).click()
   await expect(page.getByRole("heading", { name: "回测详情" })).toBeVisible()
   await expect(page.getByText(/状态：已完成/)).toBeVisible({ timeout: 30000 })
   await expect(page.getByText("平均耗时（秒）", { exact: true })).toBeVisible()
+  await expect(page.getByText(/基准：沪深300/)).toBeVisible()
+  await page.getByText("预览策略代码", { exact: true }).click()
+  await expect(page.getByText("def before_market", { exact: false }).first()).toBeVisible()
+  const backtestUrl = page.url()
+  await page.getByRole("link", { name: "查看或编辑此策略版本" }).click()
+  await expect(page).toHaveURL(/strategies\?strategy=.*&version=/)
+  await expect(page.getByText(/正在编辑 v/)).toBeVisible()
+  await page.goto(backtestUrl)
+  const subscriptionResponse = await page.request.post("/api/v1/notifications/subscriptions", {
+    headers,
+    data: { name: "均线推送", channel: "ntfy", destination: "offline-demo" },
+  })
+  expect(subscriptionResponse.ok()).toBeTruthy()
+  const subscription = (await subscriptionResponse.json()).data
+  await expect(page.getByText("预览策略代码")).toBeVisible()
   await page.getByRole("button", { name: "开启实盘跟踪" }).click()
+  await expect(page).toHaveURL(/backtests/)
+  await page.getByLabel("实盘名称", { exact: true }).fill("均线实盘")
+  await page.getByLabel("实盘初始资金").fill("200000")
+  await page.getByLabel("均线推送", { exact: true }).check()
+  await page.getByRole("button", { name: "确认启动实盘", exact: true }).click()
   await expect(page.getByRole("heading", { name: /实盘实例/ })).toBeVisible()
   const liveId = page.url().split("/").at(-1)
   const analysis = await page.request.post(
@@ -105,7 +127,12 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   const live = (await (await page.request.get(`/api/v1/live-instances/${liveId}`)).json()).data
   const limitedResponse = await page.request.post("/api/v1/live-instances", {
     headers,
-    data: { backtest_id: live.backtest_id, initial_cash: "1" },
+    data: {
+      backtest_id: live.backtest_id,
+      initial_cash: "1",
+      name: "小资金",
+      subscription_ids: [subscription.id],
+    },
   })
   expect(limitedResponse.ok()).toBeTruthy()
   const limited = (await limitedResponse.json()).data

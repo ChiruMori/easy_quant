@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.entities import SemanticRequest
+from easy_quant.domain.market_data.indices import INDEX_CATALOG, index_instruments, is_index
 from easy_quant.domain.shared.errors import DomainError, StateConflictError
 
 
@@ -64,6 +65,8 @@ class MarketDataSyncService:
         source_keys: set[str] | None = None,
         confirmation_source_keys: set[str] | None = None,
     ) -> dict[str, object]:
+        if symbols is not None:
+            symbols = [str(symbol).strip().lower().zfill(6) for symbol in symbols]
         if dataset_key in {"securities", "security-status"}:
             return self._sync_securities(force, source_keys, symbols)
         if dataset_key == "trading-status":
@@ -188,6 +191,11 @@ class MarketDataSyncService:
                     else "active",
                 }
             )
+        if not symbols and not any(item["status"] != "delisted" for item in instruments):
+            raise ValueError("证券清单缺少在市股票，已取消退市状态更新")
+        instruments.extend(
+            item for item in index_instruments() if not wanted or item["symbol"] in wanted
+        )
         active_symbols = {
             str(item["symbol"]) for item in instruments if item["status"] != "delisted"
         }
@@ -399,7 +407,7 @@ class MarketDataSyncService:
             symbol = str(input_symbol).zfill(6)
             if symbol in suspended:
                 continue
-            adjustment = self.store.bar_adjustment(symbol) or "qfq"
+            adjustment = "none" if is_index(symbol) else self.store.bar_adjustment(symbol) or "qfq"
             if adjustment not in {"none", "qfq"}:
                 raise StateConflictError(
                     "历史日线复权口径不明确，无法自动补齐",
@@ -435,7 +443,15 @@ class MarketDataSyncService:
         existing = {str(item["symbol"]) for item in self.store.list_instruments()}
         self.store.upsert_instruments(
             [
-                {"symbol": symbol.zfill(6), "name": "", "exchange": _exchange(symbol.zfill(6))}
+                {
+                    "symbol": symbol.zfill(6),
+                    "name": INDEX_CATALOG.get(symbol, ""),
+                    "exchange": "上海证券交易所"
+                    if symbol.startswith("sh")
+                    else "深圳证券交易所"
+                    if symbol.startswith("sz")
+                    else _exchange(symbol.zfill(6)),
+                }
                 for symbol in symbols
                 if symbol.zfill(6) not in existing
             ]
