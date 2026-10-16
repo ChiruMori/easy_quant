@@ -16,7 +16,10 @@ from easy_quant.config import BACKEND_ROOT, Settings, get_settings
 from easy_quant.domain.market_data.indices import is_index
 from easy_quant.infrastructure.core import SystemClock, SystemSleeper, UuidGenerator
 from easy_quant.infrastructure.data_sources.akshare.adapters import AkShareSource
-from easy_quant.infrastructure.data_sources.akshare.daily import AkShareDailySource
+from easy_quant.infrastructure.data_sources.akshare.daily import (
+    AkShareDailySource,
+    decode_sina_index,
+)
 from easy_quant.infrastructure.data_sources.eastmoney.adapters import EastMoneySource
 from easy_quant.infrastructure.data_sources.eastmoney.client import EastMoneyClient
 from easy_quant.infrastructure.data_sources.tencent.adapters import TencentDailySource
@@ -345,14 +348,6 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
             )
         }
     )
-
-    def decode_sina_index(encoded: str):
-        import py_mini_racer
-        from akshare.stock.cons import hk_js_decode
-
-        with py_mini_racer.MiniRacer() as context:
-            context.eval(hk_js_decode, timeout=5000)
-            return context.call("d", encoded, timeout=5000)
 
     daily_ak = AkShareDailySource(httpx.Client(timeout=20.0), ak_stocks, decode_sina_index)
     tencent_stocks = AkShareSource(
