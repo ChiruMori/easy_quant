@@ -143,10 +143,13 @@ class InMemoryMarketDataStore:
             self.trading_days.add(str(row["trading_day"]))
         return overwritten
 
-    def bar_coverage(self) -> dict[str, dict[str, Any]]:
+    def bar_coverage(self, symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
+        wanted = set(symbols) if symbols is not None else None
         for row in self.daily_bars.values():
             symbol = str(row["symbol"])
+            if wanted is not None and symbol not in wanted:
+                continue
             day = date.fromisoformat(str(row["trading_day"]))
             item = result.setdefault(symbol, {"first_day": day, "last_day": day, "count": 0})
             item["first_day"] = min(item["first_day"], day)
@@ -389,8 +392,10 @@ class SqlAlchemyMarketDataStore:
         self.session.commit()
         return overwritten
 
-    def bar_coverage(self) -> dict[str, dict[str, Any]]:
+    def bar_coverage(self, symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
         statement = bar_coverage_statement(Bar=self.storage.physical)
+        if symbols is not None:
+            statement = statement.where(self.storage.physical.symbol.in_(symbols))
         rows = cast(Iterable[tuple[str, date, date, int]], self.session.execute(statement))
         return {
             symbol: {"first_day": first, "last_day": last, "count": count}

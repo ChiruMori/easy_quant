@@ -1,0 +1,44 @@
+import { expect, test } from "@playwright/test"
+
+test("指数入口、后台同步、覆盖与360px K线旅程", async ({ page }, testInfo) => {
+  await page.goto("/login")
+  await page.getByLabel("用户名").fill("admin")
+  await page.getByLabel("密码").fill("change-this-admin-password")
+  await page.getByRole("button", { name: "登录", exact: true }).click()
+  await expect(page).toHaveURL(/\/$/)
+  await page.goto("/admin/data")
+  await page.getByRole("main").getByRole("link", { name: "指数数据", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "指数数据", exact: true })).toBeVisible()
+  await expect(page.locator('a[aria-current="page"]')).toHaveCount(1)
+  const indexRow = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("checkbox", { name: "选择中证500", exact: true }) })
+  await expect(indexRow).toContainText("sh000905")
+  await expect(indexRow).toContainText("未同步")
+  await expect(page.getByRole("checkbox", { name: "选择沪深300", exact: true })).toBeChecked()
+  await page.getByRole("button", { name: "清空选择" }).click()
+  await page.getByRole("button", { name: "同步所选指数", exact: true }).click()
+  await expect(page.getByText("请至少选择一个指数", { exact: true })).toBeVisible()
+  await page.getByRole("checkbox", { name: "选择中证500", exact: true }).check()
+  await page.getByLabel("指数开始日期").fill("2026-09-28")
+  await page.getByLabel("指数结束日期").fill("2026-09-29")
+  const request = page.waitForResponse("**/api/v1/admin/market-data/indices/acquisitions")
+  await page.getByRole("button", { name: "同步所选指数", exact: true }).click()
+  expect((await request).status()).toBe(202)
+  await expect(page.getByText("指数同步任务：已成功", { exact: true })).toBeVisible({
+    timeout: 15000,
+  })
+  await expect(indexRow).toContainText("2026-09-28 至 2026-09-29")
+  await expect(indexRow.getByRole("cell", { name: "2", exact: true })).toBeVisible()
+  await page.setViewportSize({ width: 360, height: 900 })
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBeTruthy()
+  await page.screenshot({ path: testInfo.outputPath("indices-mobile.png"), fullPage: true })
+  await indexRow.getByRole("link", { name: "查看中证500 K 线" }).click()
+  await expect(page.getByText("指数 · 不可交易", { exact: true })).toBeVisible()
+  await expect(page.getByRole("img", { name: "可缩放和拖动的 K 线图" })).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBeTruthy()
+})

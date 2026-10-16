@@ -1,12 +1,14 @@
 from threading import Thread
 
 from easy_quant.api.app import create_app
+from easy_quant.application.services.market_data_sync import MarketDataSyncService
 from easy_quant.infrastructure.core import SystemSleeper
 from easy_quant.worker.handlers.backtests import register_backtest_handlers
 from easy_quant.worker.handlers.market_data import register_market_data_handlers
 from easy_quant.worker.handlers.strategies import register_strategy_handlers
 from easy_quant.worker.registry import JobHandlerRegistry
 from easy_quant.worker.runner import Worker
+from tests.fakes.index_data import FixtureIndexAcquisition
 from tests.fakes.platform import make_test_container, make_test_settings
 
 
@@ -21,6 +23,10 @@ def create_e2e_app():
             return None
 
     container.notification_channels["ntfy"] = OfflineNotificationChannel()
+    container.data_sync = MarketDataSyncService(
+        {"daily-bars": FixtureIndexAcquisition(container.authentication.clock)},
+        container.market_data,
+    )
     registry = JobHandlerRegistry()
     register_backtest_handlers(registry, container)
     register_strategy_handlers(registry, container)

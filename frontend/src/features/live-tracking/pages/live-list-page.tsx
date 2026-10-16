@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/app-shell"
+import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { localizedLabel } from "@/lib/labels"
@@ -18,22 +19,21 @@ export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {})
   if (query.isLoading) return <LoadingState label="正在加载实盘实例" />
   if (query.error) return <ErrorState title="无法加载实盘实例" message={query.error.message} />
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold">实盘建议跟踪</h1>
-        <p className="text-muted-foreground">系统只生成建议，不会自动下单。</p>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader title="实盘建议跟踪" description="系统只生成建议，不会自动下单。" />
       {query.data?.length ? (
         <div className="grid gap-4 lg:grid-cols-2">
           {query.data.map((item) => (
             <Link key={item.id} to={`/live/${item.id}`}>
-              <Card>
+              <Card variant="interactive" className="h-full">
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>{item.name ?? item.id}</CardTitle>
-                    <Badge variant="secondary">{localizedLabel(item.status)}</Badge>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle className="min-w-0 break-all">{item.name ?? item.id}</CardTitle>
+                    <Badge variant={item.status === "active" ? "success" : "secondary"}>
+                      {localizedLabel(item.status)}
+                    </Badge>
                   </div>
-                  <CardDescription>
+                  <CardDescription className="break-all">
                     {item.strategy?.name ?? "策略"} ·{" "}
                     {item.strategy ? `v${item.strategy.number}` : item.strategy_version_id} ·
                     初始资金 {item.initial_cash ?? "—"}

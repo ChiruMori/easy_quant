@@ -1,6 +1,7 @@
 import { CalendarClock, Database, FileClock, KeyRound, Users } from "lucide-react"
 import { Link } from "react-router-dom"
 
+import { PageHeader } from "@/components/page-header"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 const entries = [
@@ -13,17 +14,16 @@ const entries = [
 
 export function AdminDashboardPage() {
   return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <h1 className="text-2xl font-semibold">系统管理</h1>
-        <p className="text-muted-foreground">集中管理平台数据、用户与运行任务。</p>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader title="系统管理" description="集中管理平台数据、用户与运行任务。" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {entries.map(([to, title, description, Icon]) => (
           <Link key={to} to={to}>
-            <Card className="h-full transition-colors hover:bg-accent">
+            <Card variant="interactive" className="h-full">
               <CardHeader>
-                <Icon />
+                <span className="mb-3 flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+                  <Icon className="size-5" aria-hidden="true" />
+                </span>
                 <CardTitle>{title}</CardTitle>
                 <CardDescription>{description}</CardDescription>
               </CardHeader>

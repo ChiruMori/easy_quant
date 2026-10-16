@@ -231,3 +231,16 @@ def test_worker_binds_scoped_session_cleanup_for_poll_and_task_boundaries(monkey
     assert worker.session_cleanup == container.database_session.remove
     assert worker.run_once() is False
     assert calls and set(calls) == {"remove"}
+
+
+def test_offline_settings_do_not_read_local_or_process_configuration(monkeypatch):
+    from tests.fakes.platform import make_test_settings
+
+    monkeypatch.setenv("EASY_QUANT_INTRADAY_RUN_TIME", "14:30")
+    monkeypatch.setenv("EASY_QUANT_SESSION_COOKIE_SECURE", "true")
+    monkeypatch.setenv("EASY_QUANT_SMTP_HOST", "unused.example.test")
+    settings = make_test_settings()
+    assert settings.model_config.get("env_file") is None
+    assert settings.intraday_run_time == "14:50"
+    assert settings.session_cookie_secure is False
+    assert settings.smtp_host is None

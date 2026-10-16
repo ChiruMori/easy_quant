@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -56,12 +57,10 @@ export function NotificationSettingsPage() {
     )
   return (
     <div className="flex flex-col gap-5">
-      <div>
-        <h1 className="text-2xl font-semibold">通知设置</h1>
-        <p className="text-muted-foreground">
-          实盘产生建议时可通过一个或多个渠道通知；平台不会自动下单。
-        </p>
-      </div>
+      <PageHeader
+        title="通知设置"
+        description="实盘产生建议时可通过一个或多个渠道通知；平台不会自动下单。"
+      />
       <Card className="max-w-2xl">
         <CardHeader>
           <CardTitle>添加通知渠道</CardTitle>
@@ -126,9 +125,13 @@ export function NotificationSettingsPage() {
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold">已配置渠道</h2>
         {subscriptions.data?.map((item) => (
-          <Field orientation="horizontal" className="max-w-2xl rounded-md border p-4" key={item.id}>
-            <div className="flex-1">
-              <p className="font-medium">
+          <Field
+            orientation="horizontal"
+            className="max-w-2xl flex-wrap rounded-md border p-4"
+            key={item.id}
+          >
+            <div className="min-w-0 flex-1 basis-full sm:basis-64">
+              <p className="font-medium break-words">
                 {item.name ?? localizedLabel(item.channel)} · {localizedLabel(item.channel)}
               </p>
               <form

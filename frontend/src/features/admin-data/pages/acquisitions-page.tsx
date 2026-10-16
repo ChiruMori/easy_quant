@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
+import { Link } from "react-router-dom"
 
+import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -8,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -46,7 +49,29 @@ export function AcquisitionsPage() {
   }
 
   return (
-    <div className="flex max-w-2xl flex-col gap-5">
+    <div className="flex max-w-2xl flex-col gap-6">
+      <PageHeader
+        title="数据拉取"
+        description="按数据类型与区间同步真实数据。"
+        actions={
+          <Button asChild variant="outline">
+            <Link to="/admin/data/indices">指数数据</Link>
+          </Button>
+        }
+      />
+      <Card>
+        <CardHeader>
+          <CardTitle>指数日线与基准数据</CardTitle>
+          <CardDescription>
+            选择沪深300、上证指数等主要指数，同步历史日线并查看数据覆盖。指数仅用于研究和基准，不可交易。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild>
+            <Link to="/admin/data/indices">同步指数数据</Link>
+          </Button>
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>刷新基础数据</CardTitle>
@@ -122,10 +147,12 @@ export function AcquisitionsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="daily-bars">日线 K 线</SelectItem>
-                    <SelectItem value="market-values">估值与市值</SelectItem>
-                    <SelectItem value="pledge-ratios">股票质押率</SelectItem>
-                    <SelectItem value="financial-indicators">财务指标</SelectItem>
+                    <SelectGroup>
+                      <SelectItem value="daily-bars">日线 K 线</SelectItem>
+                      <SelectItem value="market-values">估值与市值</SelectItem>
+                      <SelectItem value="pledge-ratios">股票质押率</SelectItem>
+                      <SelectItem value="financial-indicators">财务指标</SelectItem>
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>

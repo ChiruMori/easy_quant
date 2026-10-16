@@ -42,7 +42,11 @@ def register_error_handlers(app: Flask) -> None:
         return error_response(
             "invalid_request",
             "请求参数无效",
-            details={"issues": error.errors(include_url=False)},
+            details={
+                "issues": error.errors(
+                    include_url=False, include_context=False, include_input=False
+                )
+            },
             request_id=getattr(g, "request_id", None),
             status=422,
         )

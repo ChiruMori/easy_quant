@@ -5,6 +5,7 @@ import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom
 import { AcquisitionsPage } from "@/features/admin-data/pages/acquisitions-page"
 import { DatasetsPage } from "@/features/admin-data/pages/datasets-page"
 import { ImportPage } from "@/features/admin-data/pages/import-page"
+import { IndicesPage } from "@/features/admin-data/pages/indices-page"
 import { InstrumentDetailPage } from "@/features/admin-data/pages/instrument-detail-page"
 import { AdminDashboardPage } from "@/features/admin-scheduling/pages/admin-dashboard-page"
 import { AuditPage } from "@/features/admin-scheduling/pages/audit-page"
@@ -18,6 +19,7 @@ import { getBacktest } from "@/features/backtests/api"
 import { BacktestCreatePage } from "@/features/backtests/pages/backtest-create-page"
 import { BacktestDetailPage } from "@/features/backtests/pages/backtest-detail-page"
 import { BacktestListPage } from "@/features/backtests/pages/backtest-list-page"
+import { DashboardPage } from "@/features/dashboard/dashboard-page"
 import { FactorCatalogPage } from "@/features/factors/pages/factor-catalog-page"
 import { getLive, type LiveInstance } from "@/features/live-tracking/api"
 import { LiveDetailPage } from "@/features/live-tracking/pages/live-detail-page"
@@ -28,15 +30,6 @@ import { StrategyLibraryPage } from "@/features/strategies/pages/strategy-librar
 
 import { AppLayout } from "./layout"
 import { AdminGuard, AuthenticatedGuard } from "./route-guards"
-
-function Dashboard() {
-  return (
-    <div className="flex flex-col gap-3">
-      <h1 className="text-2xl font-semibold">Easy Quant 易量化平台</h1>
-      <p className="text-muted-foreground">行情、因子、策略、回测与实盘的一体化工作台。</p>
-    </div>
-  )
-}
 
 function LiveDetailRoute() {
   const { instanceId = "" } = useParams()
@@ -70,7 +63,7 @@ const router = createBrowserRouter([
       </AuthenticatedGuard>
     ),
     children: [
-      { index: true, element: <Dashboard /> },
+      { index: true, element: <DashboardPage /> },
       { path: "strategies", element: <StrategiesPage /> },
       { path: "factors", element: <FactorCatalogPage /> },
       { path: "strategy-library", element: <StrategyLibraryPage /> },
@@ -85,6 +78,14 @@ const router = createBrowserRouter([
         element: (
           <AdminGuard>
             <DatasetsPage />
+          </AdminGuard>
+        ),
+      },
+      {
+        path: "admin/data/indices",
+        element: (
+          <AdminGuard>
+            <IndicesPage />
           </AdminGuard>
         ),
       },

@@ -21,6 +21,7 @@ const percentageMetrics = new Set([
 export const backtestStatusLabel = (status: string) =>
   ({
     pending: "等待中",
+    queued: "排队中",
     snapshotting: "正在生成数据快照",
     running: "运行中",
     succeeded: "已完成",

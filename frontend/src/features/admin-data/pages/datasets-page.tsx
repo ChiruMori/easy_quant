@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -116,31 +117,34 @@ export function DatasetsPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">数据集与来源</h1>
-          <p className="text-muted-foreground">查看平台数据覆盖并创建同步任务。</p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={
-              !coverage.data?.recommended_end_day ||
-              Boolean(syncingSymbol) ||
-              ["queued", "running"].includes(currentSyncTask?.status ?? "")
-            }
-            onClick={() => void refreshSuspensions()}
-          >
-            刷新停复牌状态
-          </Button>
-          <Button variant="outline" asChild>
-            <Link to="/admin/data/import">上传 CSV</Link>
-          </Button>
-          <Button asChild>
-            <Link to="/admin/data/acquisitions">运行拉取</Link>
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="数据集与来源"
+        description="查看平台数据覆盖并创建同步任务。"
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" asChild>
+              <Link to="/admin/data/indices">指数数据</Link>
+            </Button>
+            <Button
+              variant="outline"
+              disabled={
+                !coverage.data?.recommended_end_day ||
+                Boolean(syncingSymbol) ||
+                ["queued", "running"].includes(currentSyncTask?.status ?? "")
+              }
+              onClick={() => void refreshSuspensions()}
+            >
+              刷新停复牌状态
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/admin/data/import">上传 CSV</Link>
+            </Button>
+            <Button asChild>
+              <Link to="/admin/data/acquisitions">运行拉取</Link>
+            </Button>
+          </div>
+        }
+      />
       <Alert role="status">
         <AlertTitle>定期同步全部数据</AlertTitle>
         <AlertDescription>
@@ -154,7 +158,7 @@ export function DatasetsPage() {
       </Alert>
       <div className="grid gap-4 xl:grid-cols-2">
         {query.data?.map((dataset) => (
-          <Card key={dataset.key}>
+          <Card key={dataset.key} id={`dataset-${dataset.key}`}>
             <CardHeader>
               <CardTitle>{dataset.name}</CardTitle>
               <CardDescription>{dataset.description}</CardDescription>

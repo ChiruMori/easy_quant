@@ -100,3 +100,24 @@ export function commitImport(previewId: string) {
     },
   )
 }
+
+export interface IndexCoverage {
+  symbol: string
+  name: string
+  exchange: string
+  tradable: false
+  adjustment: "none"
+  first_trading_day: string | null
+  last_trading_day: string | null
+  record_count: number
+  sync_status: string
+}
+export const listIndices = () =>
+  apiRequest<{ items: IndexCoverage[]; recommended_end_day: string; calendar_estimated: boolean }>(
+    "/admin/market-data/indices",
+  )
+export const syncIndices = (payload: { symbols: string[]; start_day: string; end_day: string }) =>
+  apiRequest<Acquisition>("/admin/market-data/indices/acquisitions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  })

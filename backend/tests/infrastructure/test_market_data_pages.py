@@ -173,3 +173,19 @@ def test_backtest_runtime_iterator_reads_one_month_at_a_time(monkeypatch) -> Non
         (date(2026, 9, 1), date(2026, 9, 30)),
         (date(2026, 10, 1), date(2026, 10, 2)),
     ]
+
+
+def test_index_coverage_query_is_limited_to_requested_symbols():
+    statements = []
+
+    class FakeSession:
+        def execute(self, statement):
+            statements.append(statement)
+            return [("sh000300", date(2026, 9, 28), date(2026, 9, 29), 2)]
+
+    store = SqlAlchemyMarketDataStore(cast(Session, FakeSession()))
+    assert store.bar_coverage(["sh000300"])["sh000300"]["count"] == 2
+    compiled = statements[0].compile(dialect=mysql.dialect())
+    assert "symbol IN" in str(compiled)
+    assert compiled.params["symbol_1"] == ["sh000300"]
+    assert "FORCE INDEX (ix_daily_bars_coverage)" in str(compiled)

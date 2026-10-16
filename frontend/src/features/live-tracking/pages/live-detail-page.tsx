@@ -1,6 +1,7 @@
 import { useRef, useState } from "react"
 import { Link } from "react-router-dom"
 
+import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -35,17 +36,17 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
     }
   }
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold">实盘实例 {current.name ?? current.id}</h1>
-        <p className="text-muted-foreground">状态：{localizedLabel(current.status)}</p>
-      </div>
+    <div className="flex min-w-0 flex-col gap-6">
+      <PageHeader
+        title={`实盘实例 ${current.name ?? current.id}`}
+        description={`状态：${localizedLabel(current.status)}`}
+      />
       <StrategyPreview strategy={current.strategy} versionId={current.strategy_version_id} />
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle>启动配置</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2">
+        <CardContent className="flex min-w-0 flex-col gap-2 break-words">
           <p>初始资金：{current.initial_cash ?? "—"}</p>
           <p>
             通知渠道：

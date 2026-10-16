@@ -19,14 +19,14 @@ export function StrategyPreview({
   versionId: string
 }) {
   return (
-    <Card>
+    <Card className="min-w-0">
       <CardHeader>
-        <CardTitle>{strategy?.name ?? "策略版本"}</CardTitle>
-        <CardDescription>
+        <CardTitle className="break-words">{strategy?.name ?? "策略版本"}</CardTitle>
+        <CardDescription className="break-words">
           {strategy?.description} · {strategy ? `v${strategy.number}` : versionId}
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+      <CardContent className="flex min-w-0 flex-col gap-3">
         {strategy ? (
           <>
             <Link
@@ -35,7 +35,7 @@ export function StrategyPreview({
             >
               查看或编辑此策略版本
             </Link>
-            <details>
+            <details className="min-w-0">
               <summary className="cursor-pointer">预览策略代码</summary>
               <pre className="max-h-96 overflow-auto rounded-md bg-muted p-3 text-xs">
                 {strategy.source_code}

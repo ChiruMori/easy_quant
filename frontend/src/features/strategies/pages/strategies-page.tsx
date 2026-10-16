@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { PageHeader } from "@/components/page-header"
 import { RunTimingPanel } from "@/components/run-timing"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -161,13 +162,11 @@ export function StrategiesPage() {
     }
   }
   return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <h1 className="text-2xl font-semibold">策略工作台</h1>
-        <p className="text-muted-foreground">
-          使用平台因子选股并返回交易信号；每次保存都会创建不可变版本。
-        </p>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="策略工作台"
+        description="使用平台因子选股并返回交易信号；每次保存都会创建不可变版本。"
+      />
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="editor">编辑策略</TabsTrigger>
@@ -180,7 +179,7 @@ export function StrategiesPage() {
               <CardDescription>草稿自动保存在当前浏览器，已保存版本由平台管理。</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
-              <FieldGroup>
+              <FieldGroup className="md:grid md:grid-cols-2">
                 <Field>
                   <FieldLabel>已有策略</FieldLabel>
                   <Select value={selected} onValueChange={choose}>
@@ -209,7 +208,7 @@ export function StrategiesPage() {
                     required
                   />
                 </Field>
-                <Field>
+                <Field className="md:col-span-2">
                   <FieldLabel htmlFor="strategy-description">说明</FieldLabel>
                   <Input
                     id="strategy-description"

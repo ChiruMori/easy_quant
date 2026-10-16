@@ -10,7 +10,7 @@ async function loginAsAdmin(page: Page) {
 
 test("管理员登录、数据管理、任务管理与邀请注册主旅程", async ({ page }, testInfo) => {
   await loginAsAdmin(page)
-  await expect(page.getByRole("heading", { name: "Easy Quant 易量化平台" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "研究概览" })).toBeVisible()
   const sidebar = page.locator('[data-slot="sidebar-container"]')
   await expect(sidebar).toBeVisible()
   await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeGreaterThan(200)
@@ -21,6 +21,11 @@ test("管理员登录、数据管理、任务管理与邀请注册主旅程", as
 
   await page.goto("/admin/data")
   await expect(page.getByText("日线 K 线")).toBeVisible()
+  await expect(page.locator('a[aria-current="page"]')).toHaveCount(1)
+  await expect(sidebar.getByRole("link", { name: "数据管理", exact: true })).toHaveAttribute(
+    "aria-current",
+    "page",
+  )
   await expect(page.getByText("AKShare").first()).toBeVisible()
   await page.getByRole("link", { name: "整体同步（推荐）" }).click()
   await expect(page).toHaveURL(/\/admin\/schedules$/)
@@ -94,6 +99,6 @@ test("管理员登录、数据管理、任务管理与邀请注册主旅程", as
   await page.getByLabel("用户名").fill(username)
   await page.getByLabel("密码").fill("invited-user-password")
   await page.getByRole("button", { name: "登录", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "Easy Quant 易量化平台" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "研究概览" })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath("styled-dashboard.png"), fullPage: true })
 })
