@@ -10,6 +10,21 @@ from easy_quant.domain.market_data.entities import SemanticRequest
 from easy_quant.domain.market_data.indices import is_index
 
 
+def decode_sina_index(encoded: str) -> list[dict[str, Any]]:
+    import py_mini_racer
+    from akshare.stock.cons import hk_js_decode
+
+    context = py_mini_racer.MiniRacer()
+    try:
+        context.eval(hk_js_decode, timeout=5000)
+        return context.call("d", encoded, timeout=5000)
+    finally:
+        # Linux 的 py-mini-racer 0.6 仅支持析构释放；新版额外提供 close。
+        close = getattr(context, "close", None)
+        if callable(close):
+            close()
+
+
 class AkShareDailySource:
     key = "akshare"
 
