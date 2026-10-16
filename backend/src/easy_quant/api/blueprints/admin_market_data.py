@@ -14,11 +14,13 @@ from easy_quant.api.middleware.auth import require_admin
 from easy_quant.api.responses import success
 from easy_quant.api.schemas.market_data import (
     AcquisitionRequest,
+    IndexSyncRequest,
     InstrumentStatusRequest,
     SourceOrderRequest,
 )
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.domain.market_data.calendar import TradingCalendar
+from easy_quant.domain.market_data.indices import INDEX_CATALOG, index_instruments, is_index
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
@@ -27,6 +29,10 @@ blueprint = Blueprint("admin_market_data", __name__, url_prefix="/api/v1/admin/m
 
 
 def _exchange(symbol: str) -> str:
+    if symbol.startswith("sh"):
+        return "上海证券交易所"
+    if symbol.startswith("sz"):
+        return "深圳证券交易所"
     if symbol.startswith(("4", "8", "92")):
         return "北京证券交易所"
     if symbol.startswith(("5", "6", "9")):
@@ -108,6 +114,7 @@ def market_data_coverage():
         after_symbol=after_symbol,
         before_symbol=before_symbol,
         target_day=target.recommended_end_day,
+        instrument_type=request.args.get("instrument_type", ""),
     )
     rows = []
     observations = {
@@ -185,7 +192,7 @@ def market_data_coverage():
 @blueprint.get("/instruments/<symbol>")
 @require_admin
 def get_instrument(symbol: str):
-    normalized = symbol.strip().zfill(6)
+    normalized = symbol.strip().lower().zfill(6)
     instrument = get_container().market_data.get_instrument(normalized)
     if instrument is None:
         return success(None, status=404)
@@ -195,12 +202,14 @@ def get_instrument(symbol: str):
 @blueprint.put("/instruments/<symbol>/status")
 @require_admin
 def update_instrument_status(symbol: str):
-    normalized = symbol.strip().zfill(6)
+    normalized = symbol.strip().lower().zfill(6)
     payload = InstrumentStatusRequest.model_validate(request.get_json() or {})
     store = get_container().market_data
     existing = store.get_instrument(normalized)
     if existing is None:
         return success(None, status=404)
+    if is_index(normalized):
+        raise ValidationError("指数不支持股票交易状态操作")
     if existing.get("status") == "delisted":
         raise ValidationError("已退市股票不能标记为停牌或恢复交易")
     previous_status = existing.get("status")
@@ -221,7 +230,7 @@ def update_instrument_status(symbol: str):
 @blueprint.get("/instruments/<symbol>/daily-bars")
 @require_admin
 def get_instrument_daily_bars(symbol: str):
-    normalized = symbol.strip().zfill(6)
+    normalized = symbol.strip().lower().zfill(6)
     start_day = request.args.get("start_day", type=date.fromisoformat)
     end_day = request.args.get("end_day", type=date.fromisoformat)
     rows = get_container().market_data.list_bars(start_day, end_day, normalized)
@@ -236,6 +245,10 @@ def get_instrument_daily_bars(symbol: str):
 @require_admin
 def create_acquisition():
     payload = AcquisitionRequest.model_validate(request.get_json() or {})
+    return _enqueue_acquisition(payload)
+
+
+def _enqueue_acquisition(payload: AcquisitionRequest):
     tasks = get_container().state.acquisitions
     task = {
         "id": f"task-{UuidGenerator().new()}",
@@ -439,4 +452,59 @@ def commit_import():
     )
     return success(
         {"status": "succeeded", "rows": len(rows), "overwritten": overwritten}, status=201
+    )
+
+
+@blueprint.get("/indices")
+@require_admin
+def list_indices():
+    container = get_container()
+    calendar = TradingCalendar(container.market_data.list_trading_days() or None)
+    target = calendar.freshness(
+        first_day=None,
+        last_day=None,
+        now=container.authentication.clock.now(),
+        close_time=time.fromisoformat(container.settings.daily_data_publish_time),
+    ).recommended_end_day
+    coverage = container.market_data.bar_coverage(list(INDEX_CATALOG))
+    items = []
+    for instrument in index_instruments():
+        summary = coverage.get(str(instrument["symbol"]), {})
+        first, last = summary.get("first_day"), summary.get("last_day")
+        items.append(
+            {
+                **instrument,
+                "tradable": False,
+                "adjustment": "none",
+                "first_trading_day": first.isoformat() if first else None,
+                "last_trading_day": last.isoformat() if last else None,
+                "record_count": summary.get("count", 0),
+                "sync_status": "未同步"
+                if last is None
+                else "数据落后"
+                if last < target
+                else "已更新",
+            }
+        )
+    return success(
+        {
+            "items": items,
+            "recommended_end_day": target.isoformat(),
+            "calendar_estimated": calendar.is_estimated(target),
+        }
+    )
+
+
+@blueprint.post("/indices/acquisitions")
+@require_admin
+def sync_indices():
+    payload = IndexSyncRequest.model_validate(request.get_json() or {})
+    return _enqueue_acquisition(
+        AcquisitionRequest(
+            dataset_key="daily-bars",
+            force=True,
+            symbols=payload.symbols,
+            start_day=payload.start_day.isoformat(),
+            end_day=payload.end_day.isoformat(),
+        )
     )

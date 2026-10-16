@@ -28,13 +28,15 @@ export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {})
               <Card variant="interactive" className="h-full">
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <CardTitle className="min-w-0 break-all">{item.id}</CardTitle>
+                    <CardTitle className="min-w-0 break-all">{item.name ?? item.id}</CardTitle>
                     <Badge variant={item.status === "active" ? "success" : "secondary"}>
                       {localizedLabel(item.status)}
                     </Badge>
                   </div>
                   <CardDescription className="break-all">
-                    策略版本 {item.strategy_version_id}
+                    {item.strategy?.name ?? "策略"} ·{" "}
+                    {item.strategy ? `v${item.strategy.number}` : item.strategy_version_id} ·
+                    初始资金 {item.initial_cash ?? "—"}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { PageHeader } from "@/components/page-header"
@@ -64,6 +65,8 @@ const loadDraft = () => {
 }
 
 export function StrategiesPage() {
+  const [searchParams] = useSearchParams()
+  const loadedReference = useRef("")
   const queryClient = useQueryClient()
   const strategies = useQuery({ queryKey: ["strategies"], queryFn: listStrategies })
   const templates = useQuery({ queryKey: ["strategy-templates"], queryFn: listStrategyTemplates })
@@ -77,6 +80,28 @@ export function StrategiesPage() {
   const [tab, setTab] = useState("editor")
   const [tradingDay, setTradingDay] = useState("")
   const [message, setMessage] = useState("")
+  useEffect(() => {
+    const id = searchParams.get("strategy")
+    const versionId = searchParams.get("version")
+    const item = strategies.data?.find((row) => row.id === id)
+    if (!item) return
+    const reference = `${id}:${versionId}`
+    if (loadedReference.current === reference) return
+    const version = versionId
+      ? item.versions.find((row) => row.id === versionId)
+      : item.versions.at(-1)
+    if (!version) {
+      setMessage("指定策略版本不存在")
+      return
+    }
+    loadedReference.current = reference
+    setSelected(item.id)
+    setName(item.name)
+    setDescription(item.description)
+    setSource(version.source_code)
+    setMessage(`正在编辑 v${version.number}，保存将生成新版本`)
+  }, [searchParams, strategies.data])
+
   useEffect(() => {
     localStorage.setItem("strategy-draft", JSON.stringify({ name, description, source }))
   }, [name, description, source])

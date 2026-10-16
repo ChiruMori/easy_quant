@@ -143,10 +143,13 @@ class InMemoryMarketDataStore:
             self.trading_days.add(str(row["trading_day"]))
         return overwritten
 
-    def bar_coverage(self) -> dict[str, dict[str, Any]]:
+    def bar_coverage(self, symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
+        wanted = set(symbols) if symbols is not None else None
         for row in self.daily_bars.values():
             symbol = str(row["symbol"])
+            if wanted is not None and symbol not in wanted:
+                continue
             day = date.fromisoformat(str(row["trading_day"]))
             item = result.setdefault(symbol, {"first_day": day, "last_day": day, "count": 0})
             item["first_day"] = min(item["first_day"], day)
@@ -189,7 +192,9 @@ class InMemoryMarketDataStore:
 
     def mark_missing_instruments_delisted(self, active_symbols: set[str]) -> None:
         for symbol, instrument in self.instruments.items():
-            if symbol not in active_symbols:
+            if symbol not in active_symbols and not (
+                symbol.startswith(("sh", "sz")) and len(symbol) == 8
+            ):
                 instrument["status"] = "delisted"
 
     def list_bars(
@@ -240,9 +245,13 @@ class InMemoryMarketDataStore:
         after_symbol: str = "",
         before_symbol: str = "",
         target_day: date | None = None,
+        instrument_type: str = "",
     ):
         coverage = self.bar_coverage()
         symbols = sorted(set(self.instruments) | set(coverage))
+        if instrument_type == "stock":
+            symbols = [symbol for symbol in symbols if not symbol.startswith(("sh", "sz"))]
+        instrument_count = len(symbols)
         if search:
             needle = search.casefold()
             symbols = [
@@ -282,7 +291,7 @@ class InMemoryMarketDataStore:
         else:
             selected = symbols[(page - 1) * page_size : page * page_size]
         return (
-            len(set(self.instruments) | set(coverage)),
+            instrument_count,
             total,
             page,
             [
@@ -387,8 +396,10 @@ class SqlAlchemyMarketDataStore:
         self.session.commit()
         return overwritten
 
-    def bar_coverage(self) -> dict[str, dict[str, Any]]:
+    def bar_coverage(self, symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
         statement = bar_coverage_statement(Bar=self.storage.physical)
+        if symbols is not None:
+            statement = statement.where(self.storage.physical.symbol.in_(symbols))
         rows = cast(Iterable[tuple[str, date, date, int]], self.session.execute(statement))
         return {
             symbol: {"first_day": first, "last_day": last, "count": count}
@@ -457,6 +468,8 @@ class SqlAlchemyMarketDataStore:
         self.session.query(InstrumentModel).filter(
             InstrumentModel.symbol.not_in(active_symbols),
             InstrumentModel.status != "delisted",
+            ~InstrumentModel.symbol.like("sh%"),
+            ~InstrumentModel.symbol.like("sz%"),
         ).update({InstrumentModel.status: "delisted"}, synchronize_session=False)
         self.session.commit()
 
@@ -597,10 +610,14 @@ class SqlAlchemyMarketDataStore:
         after_symbol: str = "",
         before_symbol: str = "",
         target_day: date | None = None,
+        instrument_type: str = "",
     ):
         Bar = self.storage.physical
         # 页码跳转仅跳过主键；详情和日线聚合只读取选中的一页。
         symbols = select(InstrumentModel.symbol)
+        stock_filter = ~InstrumentModel.symbol.like("sh%") & ~InstrumentModel.symbol.like("sz%")
+        if instrument_type == "stock":
+            symbols = symbols.where(stock_filter)
         if status == "已退市":
             symbols = symbols.where(InstrumentModel.status == "delisted")
         elif status == "已停牌":
@@ -632,9 +649,10 @@ class SqlAlchemyMarketDataStore:
             symbols = symbols.where(
                 or_(InstrumentModel.symbol.like(pattern), InstrumentModel.name.like(pattern))
             )
-        instrument_count = (
-            self.session.scalar(select(func.count()).select_from(InstrumentModel)) or 0
-        )
+        count_query = select(func.count()).select_from(InstrumentModel)
+        if instrument_type == "stock":
+            count_query = count_query.where(stock_filter)
+        instrument_count = self.session.scalar(count_query) or 0
         if status:
             # 状态由日线首末日期决定；单次查询取至多约 6,000 个代码，避免重复聚合。
             matching = list(self.session.scalars(symbols.order_by(InstrumentModel.symbol)))

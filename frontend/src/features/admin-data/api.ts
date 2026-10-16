@@ -24,8 +24,10 @@ export function useMarketDataCoverage(params: {
   status?: string
   after?: string
   before?: string
+  instrument_type?: "stock"
 }) {
   const query = new URLSearchParams({ page: String(params.page), page_size: "50" })
+  if (params.instrument_type) query.set("instrument_type", params.instrument_type)
   if (params.search) query.set("search", params.search)
   if (params.status) query.set("status", params.status)
   if (params.after) query.set("after", params.after)
@@ -100,3 +102,24 @@ export function commitImport(previewId: string) {
     },
   )
 }
+
+export interface IndexCoverage {
+  symbol: string
+  name: string
+  exchange: string
+  tradable: false
+  adjustment: "none"
+  first_trading_day: string | null
+  last_trading_day: string | null
+  record_count: number
+  sync_status: string
+}
+export const listIndices = () =>
+  apiRequest<{ items: IndexCoverage[]; recommended_end_day: string; calendar_estimated: boolean }>(
+    "/admin/market-data/indices",
+  )
+export const syncIndices = (payload: { symbols: string[]; start_day: string; end_day: string }) =>
+  apiRequest<Acquisition>("/admin/market-data/indices/acquisitions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  })

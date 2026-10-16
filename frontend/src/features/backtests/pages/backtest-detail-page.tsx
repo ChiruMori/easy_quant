@@ -1,9 +1,10 @@
-import { useId } from "react"
-import { useNavigate } from "react-router-dom"
+import { useId, useState } from "react"
 import {
   Area,
-  AreaChart,
   CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -25,14 +26,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { startLive } from "@/features/live-tracking/api"
+import { StartLivePage } from "@/features/live-tracking/pages/start-live-page"
+import { StrategyPreview } from "@/features/strategies/components/strategy-preview"
 import { localizedLabel } from "@/lib/labels"
 
 import type { Backtest } from "../api"
 import { backtestStatusLabel, formatMetric, metricLabel } from "../format"
 
 export function BacktestDetailPage({ run }: { run: Backtest }) {
-  const navigate = useNavigate()
+  const [configureLive, setConfigureLive] = useState(false)
   const gradientId = useId()
   return (
     <div className="flex flex-col gap-6">
@@ -42,15 +44,25 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
         actions={
           <Button
             disabled={run.status !== "succeeded"}
-            onClick={async () => {
-              const live = await startLive(run.id, run.strategy_version_id)
-              navigate(`/live/${live.id}`)
-            }}
+            onClick={() => setConfigureLive((value) => !value)}
           >
             开启实盘跟踪
           </Button>
         }
       />
+      <StrategyPreview strategy={run.strategy} versionId={run.strategy_version_id} />
+      {configureLive && (
+        <StartLivePage
+          backtestId={run.id}
+          strategyVersionId={run.strategy_version_id}
+          parameters={run.config?.parameters}
+        />
+      )}
+      {run.benchmark && (
+        <p className="text-sm text-muted-foreground">
+          基准：{run.benchmark.name}（{run.benchmark.symbol}），以区间首个交易日收盘为基点。
+        </p>
+      )}
       {run.assumptions.intraday_quote && (
         <p className="text-sm text-muted-foreground">
           盘中模拟报价为当日开收盘均值，包含收盘信息，只代表日线近似模拟。
@@ -161,8 +173,15 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
               className="h-72 w-full min-w-0"
             >
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={run.periods.map((period) => ({ ...period, equity: Number(period.equity) }))}
+                <ComposedChart
+                  data={run.periods.map((period) => ({
+                    ...period,
+                    equity: Number(period.equity),
+                    benchmark_equity:
+                      period.benchmark_equity === null || period.benchmark_equity === undefined
+                        ? null
+                        : Number(period.benchmark_equity),
+                  }))}
                   margin={{ top: 10, right: 12, bottom: 0, left: 0 }}
                 >
                   <defs>
@@ -203,11 +222,12 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
                       borderRadius: 8,
                       fontSize: 12,
                     }}
-                    formatter={(value) => [
+                    formatter={(value, name) => [
                       `${Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 元`,
-                      "组合权益",
+                      name,
                     ]}
                   />
+                  {run.benchmark && <Legend />}
                   <Area
                     dataKey="equity"
                     name="组合权益"
@@ -218,7 +238,18 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
                     dot={run.periods.length === 1}
                     isAnimationActive={false}
                   />
-                </AreaChart>
+                  {run.benchmark && (
+                    <Line
+                      dataKey="benchmark_equity"
+                      name={run.benchmark.name}
+                      stroke="var(--chart-2)"
+                      strokeWidth={2}
+                      dot={run.periods.length === 1}
+                      isAnimationActive={false}
+                      connectNulls={false}
+                    />
+                  )}
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </CardContent>

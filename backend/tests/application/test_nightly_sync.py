@@ -107,7 +107,12 @@ def test_nightly_automatically_resumes_and_enqueues_catchup_bars():
         for task in container.state.acquisitions.values()
         if task["dataset_key"] == "daily-bars"
     ]
-    assert [task["symbols"] for task in bars] == [["600293"]]
+    assert len(bars) == 1
+    assert "600293" in bars[0]["symbols"]
+    assert "sh000300" in bars[0]["symbols"]
+    assert all(
+        symbol == "600293" or symbol.startswith(("sh", "sz")) for symbol in bars[0]["symbols"]
+    )
     assert result is not None
     trading_status = result["trading_status"]
     assert isinstance(trading_status, dict)

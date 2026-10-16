@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, time, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from flask import Blueprint, g, request
@@ -6,10 +7,13 @@ from flask import Blueprint, g, request
 from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_user
 from easy_quant.api.responses import success
+from easy_quant.api.schemas.live_tracking import StartLiveRequest
+from easy_quant.api.strategy_context import strategy_context
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.live_runtime import analyze_live_instance
 from easy_quant.application.services.recommendation_actions import audit_row
-from easy_quant.domain.shared.errors import NotFoundError
+from easy_quant.domain.market_data.indices import is_index
+from easy_quant.domain.shared.errors import NotFoundError, ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("live_tracking", __name__, url_prefix="/api/v1/live-instances")
@@ -18,7 +22,7 @@ blueprint = Blueprint("live_tracking", __name__, url_prefix="/api/v1/live-instan
 @blueprint.post("")
 @require_user
 def start_live():
-    payload = request.get_json() or {}
+    payload = StartLiveRequest.model_validate(request.get_json() or {}).model_dump(mode="json")
     instances = get_container().state.live_instances
     backtest = get_container().backtests.get(str(payload.get("backtest_id", "")))
     if (
@@ -30,18 +34,40 @@ def start_live():
     strategy_version_id = str(payload.get("strategy_version_id") or backtest["strategy_version_id"])
     if strategy_version_id != backtest["strategy_version_id"]:
         return success(None, status=409)
+    if (
+        backtest.get("allow_mock")
+        or backtest.get("mock_usage")
+        or backtest.get("config", {}).get("allow_mock")
+    ):
+        raise ValidationError("含 Mock 的结果不能启动实盘")
+    selected = set(payload["subscription_ids"])
+    owned = {
+        str(row["id"])
+        for row in get_container().state.subscriptions
+        if row["owner_id"] == g.current_user.id and row.get("enabled", True)
+    }
+    if not selected <= owned:
+        raise ValidationError("请选择本人启用的通知渠道")
+    if any(
+        not Decimal(value).is_finite() or Decimal(value) < 0 or is_index(symbol)
+        for symbol, value in payload["positions"].items()
+    ):
+        raise ValidationError("初始持仓必须为非负有限数量，且不能持有指数")
     identifier = f"live-{UuidGenerator().new()}"
     now = get_container().authentication.clock.now()
     item = {
         "id": identifier,
+        "name": payload["name"].strip(),
+        "subscription_ids": sorted(selected),
         "owner_id": g.current_user.id,
         "backtest_id": payload.get("backtest_id"),
         "strategy_version_id": strategy_version_id,
         "status": "active",
         "next_decision_at": (now + timedelta(days=1)).isoformat(),
-        "parameters": payload.get("parameters", backtest["config"].get("parameters", {})),
-        "initial_cash": str(payload.get("initial_cash", backtest["config"]["initial_cash"])),
-        "positions": payload.get("positions", {}),
+        "parameters": payload["parameters"],
+        "initial_cash": payload["initial_cash"],
+        "positions": dict(payload["positions"]),
+        "initial_positions": dict(payload["positions"]),
         "after_market_enabled": bool(payload.get("after_market_enabled", False)),
     }
     instances[identifier] = item
@@ -94,7 +120,7 @@ def start_live():
 def list_live():
     return success(
         [
-            item
+            _present(item)
             for item in get_container().state.live_instances.values()
             if item["owner_id"] == g.current_user.id
         ]
@@ -108,7 +134,10 @@ def live_detail(instance_id: str):
     if item is None or item["owner_id"] != g.current_user.id:
         return success(None, status=404)
     return success(
-        {**item, "recommendations": get_container().state.recommendations.get(instance_id, [])}
+        {
+            **_present(item),
+            "recommendations": get_container().state.recommendations.get(instance_id, []),
+        }
     )
 
 
@@ -174,3 +203,22 @@ def analyze_live(instance_id: str, phase: str):
             {str(key): value for key, value in payload.get("current_prices", {}).items()},
         )
     )
+
+
+def _present(item):
+    return {
+        **item,
+        "strategy": strategy_context(
+            get_container(), str(item["owner_id"]), str(item["strategy_version_id"])
+        ),
+        "notification_channels": [
+            {
+                "id": row["id"],
+                "name": row.get("name") or row["channel"],
+                "enabled": row.get("enabled", True),
+            }
+            for row in get_container().state.subscriptions
+            if row["owner_id"] == item["owner_id"]
+            and ("subscription_ids" not in item or row["id"] in item["subscription_ids"])
+        ],
+    }

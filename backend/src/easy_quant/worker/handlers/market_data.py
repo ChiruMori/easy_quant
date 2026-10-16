@@ -6,6 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from easy_quant.domain.market_data.calendar import TradingCalendar
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.infrastructure.core import UuidGenerator
 from easy_quant.worker.registry import JobHandlerRegistry
@@ -91,7 +92,7 @@ def register_market_data_handlers(
             dataset_symbols = (
                 [symbol for symbol in symbols if symbol not in suspended]
                 if dataset == "daily-bars"
-                else symbols
+                else [symbol for symbol in symbols if not is_index(symbol)]
             )
             batches = (
                 [
@@ -188,6 +189,9 @@ def register_market_data_handlers(
                 details = getattr(error, "details", None)
                 if isinstance(details, dict):
                     task["attempts"] = details.get("attempts", [])
+                    for key in ("record_count", "new_record_count", "failed_symbols"):
+                        if key in details:
+                            task[key] = details[key]
                 container.state.acquisitions[task_id] = task
             raise
         if task is not None:

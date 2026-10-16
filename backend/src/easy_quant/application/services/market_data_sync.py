@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.entities import SemanticRequest
+from easy_quant.domain.market_data.indices import INDEX_CATALOG, index_instruments, is_index
 from easy_quant.domain.shared.errors import DomainError, StateConflictError
 
 
@@ -64,6 +65,8 @@ class MarketDataSyncService:
         source_keys: set[str] | None = None,
         confirmation_source_keys: set[str] | None = None,
     ) -> dict[str, object]:
+        if symbols is not None:
+            symbols = [str(symbol).strip().lower().zfill(6) for symbol in symbols]
         if dataset_key in {"securities", "security-status"}:
             return self._sync_securities(force, source_keys, symbols)
         if dataset_key == "trading-status":
@@ -188,6 +191,11 @@ class MarketDataSyncService:
                     else "active",
                 }
             )
+        if not symbols and not any(item["status"] != "delisted" for item in instruments):
+            raise ValueError("证券清单缺少在市股票，已取消退市状态更新")
+        instruments.extend(
+            item for item in index_instruments() if not wanted or item["symbol"] in wanted
+        )
         active_symbols = {
             str(item["symbol"]) for item in instruments if item["status"] != "delisted"
         }
@@ -395,11 +403,12 @@ class MarketDataSyncService:
             for item in self.store.list_instruments()
             if item.get("status") == "suspended"
         }
+        failures = []
         for input_symbol in symbols:
             symbol = str(input_symbol).zfill(6)
             if symbol in suspended:
                 continue
-            adjustment = self.store.bar_adjustment(symbol) or "qfq"
+            adjustment = "none" if is_index(symbol) else self.store.bar_adjustment(symbol) or "qfq"
             if adjustment not in {"none", "qfq"}:
                 raise StateConflictError(
                     "历史日线复权口径不明确，无法自动补齐",
@@ -411,9 +420,32 @@ class MarketDataSyncService:
                 "end_date": end_day.isoformat(),
                 "adjustment": adjustment,
             }
-            value, attempts, source, fetched_at = self._acquire(
-                "daily-bars", parameters, force, source_keys
-            )
+            if is_index(symbol):
+                calendar = TradingCalendar(self.store.list_trading_days() or None)
+                required_end = (
+                    end_day
+                    if calendar.is_trading_day(end_day)
+                    else calendar.previous_trading_day(end_day)
+                )
+                parameters["required_end_date"] = required_end.isoformat()
+            try:
+                value, attempts, source, fetched_at = self._acquire(
+                    "daily-bars", parameters, force, source_keys
+                )
+                if is_index(symbol):
+                    validate_daily_response(
+                        SemanticRequest("daily-bars", parameters, "validation"),
+                        json.dumps(value).encode(),
+                    )
+            except Exception as error:
+                if not is_index(symbol):
+                    raise
+                details = getattr(error, "details", {})
+                all_attempts.extend(
+                    {**item, "symbol": symbol} for item in details.get("attempts", [])
+                )
+                failures.append({"symbol": symbol, "message": str(error)})
+                continue
             all_attempts.extend({**item, "symbol": symbol} for item in attempts)
             sources.add(source)
             bars = self._normalize_bars(symbol, value)
@@ -435,11 +467,32 @@ class MarketDataSyncService:
         existing = {str(item["symbol"]) for item in self.store.list_instruments()}
         self.store.upsert_instruments(
             [
-                {"symbol": symbol.zfill(6), "name": "", "exchange": _exchange(symbol.zfill(6))}
+                {
+                    "symbol": symbol.zfill(6),
+                    "name": INDEX_CATALOG.get(symbol, ""),
+                    "exchange": "上海证券交易所"
+                    if symbol.startswith("sh")
+                    else "深圳证券交易所"
+                    if symbol.startswith("sz")
+                    else _exchange(symbol.zfill(6)),
+                }
                 for symbol in symbols
                 if symbol.zfill(6) not in existing
+                and symbol not in {item["symbol"] for item in failures}
             ]
         )
+        if failures:
+            from easy_quant.application.services.acquisition import AcquisitionFailed
+
+            raise AcquisitionFailed(
+                "部分指数同步失败，请检查来源并重试失败标的",
+                {
+                    "record_count": len(normalized),
+                    "new_record_count": len(normalized) - overwritten,
+                    "failed_symbols": failures,
+                    "attempts": all_attempts,
+                },
+            )
         return {
             "record_count": len(normalized),
             "overwritten": overwritten,
@@ -619,3 +672,29 @@ class MarketDataSyncService:
                 }
             )
         return result
+
+
+def validate_daily_response(request: SemanticRequest, payload: bytes) -> None:
+    """空/坏响应不得阻止切源或污染缓存。"""
+    symbol = str(request.parameters["symbol"])
+    start = date.fromisoformat(str(request.parameters["start_date"]))
+    end = date.fromisoformat(str(request.parameters["end_date"]))
+    rows = MarketDataSyncService._normalize_bars(symbol, json.loads(payload))
+    if not rows:
+        raise ValueError("来源没有返回请求区间内的真实日线")
+    for row in rows:
+        day = date.fromisoformat(str(row["trading_day"]))
+        values = [Decimal(str(row[key])) for key in ("open", "high", "low", "close", "volume")]
+        if not start <= day <= end or any(not value.is_finite() for value in values):
+            raise ValueError("来源日线日期或数值无效")
+        opening, high, low, close, volume = values
+        if (
+            min(opening, high, low, close) <= 0
+            or volume < 0
+            or low > min(opening, close)
+            or high < max(opening, close)
+        ):
+            raise ValueError("来源日线价格或成交量无效")
+    required = request.parameters.get("required_end_date")
+    if required and max(str(row["trading_day"]) for row in rows) < str(required):
+        raise ValueError(f"来源指数行情未更新至 {required}")

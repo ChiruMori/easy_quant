@@ -10,6 +10,9 @@
     "securitySchemes": {"cookieSession": {"type": "apiKey", "in": "cookie", "name": "session"}, "csrf": {"type": "apiKey", "in": "header", "name": "X-CSRF-Token"}}
   },
   "paths": {
+    "/admin/market-data/indices": {"get": {"operationId": "listIndices", "responses": {"200": {"description": "主要指数目录及覆盖状态"}}}},
+    "/admin/market-data/indices/acquisitions": {"post": {"operationId": "syncIndices", "responses": {"202": {"description": "指数日线同步任务已入队"}, "422": {"description": "无效代码或日期"}}}},
+    "/notifications/subscriptions/{subscription_id}/test": {"post": {"operationId": "testNotificationChannel", "responses": {"200": {"description": "脱敏投递状态"}, "404": {"description": "不存在或无权限"}}}},
     "/health": {"get": {"operationId": "health", "responses": {"200": {"description": "healthy"}}}},
     "/auth/initialize": {"post": {"operationId": "initialize", "responses": {"201": {"description": "initialized"}}}},
     "/auth/login": {"post": {"operationId": "login", "responses": {"200": {"description": "logged in"}}}},

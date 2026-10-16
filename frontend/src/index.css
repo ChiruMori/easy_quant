@@ -33,6 +33,7 @@
   --warning: #a16207;
   --warning-muted: #fefce8;
   --chart-1: #2563eb;
+  --chart-2: #64748b;
   --chart-grid: #e2e8f0;
   --sidebar: #ffffff;
   --sidebar-foreground: #475569;
@@ -85,6 +86,7 @@ select {
   --warning: #fde047;
   --warning-muted: #302b17;
   --chart-1: #60a5fa;
+  --chart-2: #c4b5fd;
   --chart-grid: #29364a;
   --sidebar: #111827;
   --sidebar-foreground: #aab8cb;
@@ -126,6 +128,7 @@ select {
   --color-warning: var(--warning);
   --color-warning-muted: var(--warning-muted);
   --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
   --color-chart-grid: var(--chart-grid);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);

@@ -77,7 +77,12 @@ def ledger_entries(state: LiveTrackingState, instance_id: str) -> list[Portfolio
 def actual_portfolio(state: LiveTrackingState, instance_id: str):
     instance = state.instances[instance_id]
     return rebuild_portfolio(
-        Decimal(str(instance.get("initial_cash", "100000"))), ledger_entries(state, instance_id)
+        Decimal(str(instance.get("initial_cash", "100000"))),
+        ledger_entries(state, instance_id),
+        {
+            symbol: Decimal(str(value))
+            for symbol, value in instance.get("initial_positions", {}).items()
+        },
     )
 
 
@@ -196,7 +201,12 @@ class RecommendationActionService:
                 )
                 entries.append(entry)
             portfolio = rebuild_portfolio(
-                Decimal(str(instance.get("initial_cash", "100000"))), entries
+                Decimal(str(instance.get("initial_cash", "100000"))),
+                entries,
+                {
+                    symbol: Decimal(str(value))
+                    for symbol, value in instance.get("initial_positions", {}).items()
+                },
             )
             status = {
                 OperationKind.CONFIRM: RecommendationStatus.CONFIRMED,

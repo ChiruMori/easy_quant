@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 
+import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -8,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -46,7 +48,11 @@ export function AcquisitionsPage() {
   }
 
   return (
-    <div className="flex max-w-2xl flex-col gap-5">
+    <div className="flex max-w-2xl flex-col gap-6">
+      <PageHeader
+        title="范围拉取"
+        description="按数据类型与日期区间同步真实数据。指数在数据管理的指数 Tab 中维护。"
+      />
       <Card>
         <CardHeader>
           <CardTitle>刷新基础数据</CardTitle>
@@ -122,16 +128,18 @@ export function AcquisitionsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="daily-bars">日线 K 线</SelectItem>
-                    <SelectItem value="market-values">估值与市值</SelectItem>
-                    <SelectItem value="pledge-ratios">股票质押率</SelectItem>
-                    <SelectItem value="financial-indicators">财务指标</SelectItem>
+                    <SelectGroup>
+                      <SelectItem value="daily-bars">日线 K 线</SelectItem>
+                      <SelectItem value="market-values">估值与市值</SelectItem>
+                      <SelectItem value="pledge-ratios">股票质押率</SelectItem>
+                      <SelectItem value="financial-indicators">财务指标</SelectItem>
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
               <Field>
-                <FieldLabel htmlFor="symbols">股票代码</FieldLabel>
-                <Input id="symbols" name="symbols" placeholder="000001,600000" required />
+                <FieldLabel htmlFor="symbols">证券代码（指数加 sh/sz 前缀）</FieldLabel>
+                <Input id="symbols" name="symbols" placeholder="000001,600000,sh000300" required />
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>

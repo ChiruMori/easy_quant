@@ -7,6 +7,7 @@ from datetime import datetime
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.factors.context import FactorContext
 from easy_quant.factors.registry import build_default_registry
 
@@ -122,7 +123,7 @@ class RuntimeContext:
             if listed_on and str(listed_on) > str(self.data.get("trading_day", "9999-12-31")):
                 continue
             symbols.add(symbol)
-        return sorted(symbols)
+        return sorted(symbol for symbol in symbols if not is_index(symbol))
 
     def securities(self, industry: str | None = None) -> list[str]:
         if industry is None:

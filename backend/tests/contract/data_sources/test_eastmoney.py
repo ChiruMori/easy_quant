@@ -126,3 +126,23 @@ def test_invalid_suspension_feed_is_not_treated_as_empty_success(response):
         EastMoneySource(EastMoneyClient(client)).fetch(
             SemanticRequest("trading-status", {"end_day": "2026-09-30"}, "status")
         )
+
+
+def test_index_daily_bars_use_explicit_market_and_no_adjustment():
+    seen = []
+
+    def respond(request):
+        seen.append((request.url.params["secid"], request.url.params["fqt"]))
+        return httpx.Response(200, json={"data": {"klines": []}})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        source = EastMoneySource(EastMoneyClient(client))
+        for symbol in ("sh000300", "sz399006", "000001"):
+            source.fetch(
+                SemanticRequest(
+                    "daily-bars",
+                    {"symbol": symbol, "start_date": "2026-09-28", "end_date": "2026-09-29"},
+                    symbol,
+                )
+            )
+    assert seen == [("1.000300", "0"), ("0.399006", "0"), ("0.000001", "1")]

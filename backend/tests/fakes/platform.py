@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from pydantic import SecretStr
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from easy_quant.application.services.authentication import AuthenticationService
 from easy_quant.bootstrap import Container
@@ -14,10 +15,27 @@ from easy_quant.infrastructure.persistence.repositories.jobs import InMemoryJobR
 from tests.fakes.core import FixedClock, SequentialIdGenerator
 
 
+class OfflineSettings(Settings):
+    model_config = SettingsConfigDict(env_file=None)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
+
+
 def make_test_settings() -> Settings:
     """测试只注入边界替身；该 URL 不会建立连接。"""
 
-    return Settings(
+    return OfflineSettings(
+        intraday_run_time="14:50",
+        daily_data_publish_time="22:00",
         database_url=SecretStr("mysql+pymysql://test-only.invalid/easy_quant"),
         secret_key=SecretStr("test-only-secret"),
         initial_admin_password=SecretStr("change-this-admin-password"),

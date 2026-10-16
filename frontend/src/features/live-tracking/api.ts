@@ -1,6 +1,15 @@
+import type { StrategyContext } from "@/features/strategies/components/strategy-preview"
 import { apiRequest } from "@/lib/api/client"
 
 export interface LiveInstance {
+  name?: string
+  initial_cash?: string
+  parameters?: Record<string, unknown>
+  initial_positions?: Record<string, string>
+  positions?: Record<string, string>
+  subscription_ids?: string[]
+  notification_channels?: Array<{ id: string; name: string; enabled: boolean }>
+  strategy?: StrategyContext | null
   id: string
   backtest_id: string
   strategy_version_id: string
@@ -26,10 +35,26 @@ export interface RecommendationActionResult {
   recommendation_status: string
   version: number
 }
-export const startLive = (backtestId: string, strategyVersionId: string) =>
+export interface LiveConfiguration {
+  name: string
+  initial_cash: string
+  parameters: Record<string, unknown>
+  positions: Record<string, string>
+  subscription_ids: string[]
+  after_market_enabled: boolean
+}
+export const startLive = (
+  backtestId: string,
+  strategyVersionId: string,
+  configuration: LiveConfiguration,
+) =>
   apiRequest<LiveInstance>("/live-instances", {
     method: "POST",
-    body: JSON.stringify({ backtest_id: backtestId, strategy_version_id: strategyVersionId }),
+    body: JSON.stringify({
+      backtest_id: backtestId,
+      strategy_version_id: strategyVersionId,
+      ...configuration,
+    }),
   })
 export const listLive = () => apiRequest<LiveInstance[]>("/live-instances")
 export const getLive = (id: string) => apiRequest<LiveInstance>(`/live-instances/${id}`)

@@ -6,6 +6,7 @@ from typing import cast
 from zoneinfo import ZoneInfo
 
 from easy_quant.domain.market_data.entities import SemanticRequest
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.infrastructure.data_sources.eastmoney.client import EastMoneyClient
 
 
@@ -34,12 +35,21 @@ class EastMoneySource:
             }
         elif request.dataset_key == "daily-bars":
             symbol = str(parameters["symbol"])
-            market = "1" if symbol.startswith(("5", "6", "9")) else "0"
+            market = (
+                ("1" if symbol.startswith("sh") else "0")
+                if is_index(symbol)
+                else "1"
+                if symbol.startswith(("5", "6", "9"))
+                else "0"
+            )
             path = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
             parameters = {
-                "secid": f"{market}.{symbol}",
+                "secid": f"{market}.{symbol[2:] if is_index(symbol) else symbol}",
                 "klt": 101,
-                "fqt": 0 if parameters.get("adjustment", "qfq") == "none" else 1,
+                "lmt": 10000,
+                "fqt": 0
+                if is_index(symbol) or parameters.get("adjustment", "qfq") == "none"
+                else 1,
                 "beg": str(parameters["start_date"]).replace("-", ""),
                 "end": str(parameters["end_date"]).replace("-", ""),
                 "fields1": "f1,f2,f3,f4,f5,f6",
@@ -150,5 +160,7 @@ def diagnose_page(total: int, rows: list[object], page: int, page_size: int) -> 
 
 
 def _quote_secid(symbol: str) -> str:
+    if is_index(symbol):
+        return f"{1 if symbol.startswith('sh') else 0}.{symbol[2:]}"
     market = "1" if symbol.startswith(("5", "6", "9")) and not symbol.startswith("92") else "0"
     return f"{market}.{symbol}"

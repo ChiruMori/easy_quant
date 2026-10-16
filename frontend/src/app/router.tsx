@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
-import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom"
+import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom"
 
 import { AcquisitionsPage } from "@/features/admin-data/pages/acquisitions-page"
 import { DatasetsPage } from "@/features/admin-data/pages/datasets-page"
@@ -77,6 +77,14 @@ const router = createBrowserRouter([
         element: (
           <AdminGuard>
             <DatasetsPage />
+          </AdminGuard>
+        ),
+      },
+      {
+        path: "admin/data/indices",
+        element: (
+          <AdminGuard>
+            <Navigate to="/admin/data?tab=indices" replace />
           </AdminGuard>
         ),
       },

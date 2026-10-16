@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.domain.shared.errors import StateConflictError
 
 
@@ -56,6 +57,7 @@ def entry_for_operation(
         return None
     if (
         not operation.symbol
+        or is_index(operation.symbol)
         or operation.action not in {"buy", "sell"}
         or any(
             not value.is_finite() for value in (operation.quantity, operation.price, operation.fee)
@@ -84,11 +86,18 @@ def entry_for_operation(
 
 
 def rebuild_portfolio(
-    initial_cash: Decimal, entries: list[PortfolioLedgerEntry]
+    initial_cash: Decimal,
+    entries: list[PortfolioLedgerEntry],
+    initial_positions: dict[str, Decimal] | None = None,
 ) -> ActualPortfolio:
     if not initial_cash.is_finite() or initial_cash < 0:
         raise StateConflictError("初始现金必须为有限非负数")
     portfolio = ActualPortfolio(initial_cash)
+    for symbol, quantity in (initial_positions or {}).items():
+        if is_index(symbol) or not quantity.is_finite() or quantity < 0:
+            raise StateConflictError("初始持仓无效，指数不能交易")
+        portfolio.positions[symbol] = quantity
+        portfolio.costs[symbol] = Decimal(0)
     for entry in sorted(
         entries, key=lambda item: (item.sequence > 0, item.sequence, item.occurred_at, item.id)
     ):

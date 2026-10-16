@@ -6,6 +6,15 @@ import type { Backtest } from "../../src/features/backtests/api"
 const run: Backtest = {
   id: "backtest-ui-v1",
   strategy_version_id: "双均线策略-v3",
+  strategy: {
+    id: "strategy-ui",
+    name: "双均线策略",
+    description: "离线界面示例",
+    version_id: "version-ui",
+    number: 3,
+    source_code: `# ${"historical-source-".repeat(40)}`,
+  },
+  benchmark: { symbol: "sh000300", name: "沪深300" },
   status: "succeeded",
   progress: 100,
   snapshot_id: "snapshot-ui-v1",
@@ -17,12 +26,12 @@ const run: Backtest = {
     trade_count: 42,
   },
   periods: [
-    { trading_day: "2026-01-05", equity: "100000" },
-    { trading_day: "2026-02-02", equity: "104200" },
-    { trading_day: "2026-03-02", equity: "102900" },
-    { trading_day: "2026-04-01", equity: "110600" },
-    { trading_day: "2026-05-06", equity: "108100" },
-    { trading_day: "2026-06-01", equity: "118420" },
+    { trading_day: "2026-01-05", equity: "100000", benchmark_equity: "100000" },
+    { trading_day: "2026-02-02", equity: "104200", benchmark_equity: "102000" },
+    { trading_day: "2026-03-02", equity: "102900", benchmark_equity: "101000" },
+    { trading_day: "2026-04-01", equity: "110600", benchmark_equity: "106000" },
+    { trading_day: "2026-05-06", equity: "108100", benchmark_equity: "105000" },
+    { trading_day: "2026-06-01", equity: "118420", benchmark_equity: "110000" },
   ],
   trades: [
     {
@@ -89,6 +98,8 @@ test("桌面概览与回测详情显示真实 fixture，导航定位与图表清
   await expect(page.getByRole("region", { name: "累计收益率" })).toContainText("18.42%")
   await expect(page.getByRole("img", { name: /组合权益曲线/ })).toBeVisible()
   await expect(page.locator(".recharts-area-curve")).toHaveAttribute("d", /M.+/)
+  await expect(page.locator(".recharts-line-curve")).toHaveAttribute("stroke", "var(--chart-2)")
+  await expect(page.locator(".recharts-line-curve")).toHaveAttribute("d", /M.+L.+/)
   await expectNoPageOverflow(page)
   await page.screenshot({ path: testInfo.outputPath("tremor-backtest.png"), fullPage: true })
   await page.getByRole("button", { name: "切换导航" }).click()
@@ -109,12 +120,15 @@ test("360px 普通用户可打开导航、切换页面且无管理入口或页�
   await expect(menu).toBeVisible()
   await expect(menu.getByRole("link", { name: "数据管理" })).toHaveCount(0)
   await expect(menu.getByRole("link", { name: "系统管理" })).toHaveCount(0)
+  await expect(menu.getByRole("link", { name: "指数数据" })).toHaveCount(0)
   await menu.getByRole("link", { name: "回测", exact: true }).click()
   await expect(menu).not.toBeVisible()
   await expect(page.getByRole("heading", { name: "回测研究" })).toBeVisible()
   await expectNoPageOverflow(page)
   await page.getByRole("link", { name: run.id, exact: true }).click()
   await expect(page.getByRole("heading", { name: "回测详情" })).toBeVisible()
+  await expectNoPageOverflow(page)
+  await page.getByText("预览策略代码", { exact: true }).click()
   await expectNoPageOverflow(page)
   await page.screenshot({ path: testInfo.outputPath("tremor-mobile.png"), fullPage: true })
 })

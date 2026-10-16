@@ -8,12 +8,18 @@ from sqlalchemy.orm import Session
 
 from easy_quant.application.services.acquisition import AcquisitionService, ExponentialRetry
 from easy_quant.application.services.authentication import AuthenticationService
-from easy_quant.application.services.market_data_sync import MarketDataSyncService
+from easy_quant.application.services.market_data_sync import (
+    MarketDataSyncService,
+    validate_daily_response,
+)
 from easy_quant.config import BACKEND_ROOT, Settings, get_settings
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.infrastructure.core import SystemClock, SystemSleeper, UuidGenerator
 from easy_quant.infrastructure.data_sources.akshare.adapters import AkShareSource
+from easy_quant.infrastructure.data_sources.akshare.daily import AkShareDailySource
 from easy_quant.infrastructure.data_sources.eastmoney.adapters import EastMoneySource
 from easy_quant.infrastructure.data_sources.eastmoney.client import EastMoneyClient
+from easy_quant.infrastructure.data_sources.tencent.adapters import TencentDailySource
 from easy_quant.infrastructure.persistence.repositories.identity import SqlAlchemyIdentityRepository
 from easy_quant.infrastructure.persistence.repositories.jobs import SqlAlchemyJobRepository
 from easy_quant.infrastructure.persistence.repositories.live_actions import (
@@ -44,17 +50,17 @@ from easy_quant.infrastructure.persistence.session import (
 )
 from easy_quant.infrastructure.security import SecretBox
 
-_DAILY_BARS_DESCRIPTION = "日线行情；公开接口提供前复权，通达信全量导入为不复权"
+_DAILY_BARS_DESCRIPTION = "股票沿用已有复权口径；指数固定不复权"
 _TENCENT_DAILY_SOURCE = {"key": "tencent", "name": "腾讯行情", "enabled": True}
 _TRADING_STATUS_DESCRIPTION = "盘后自动确认停牌及真实成交复牌；不以行情缺失或预计复牌日推断状态"
 
 
 def _refresh_dataset_description(datasets: Any) -> None:
     for index, dataset in enumerate(datasets):
-        if (
-            dataset.get("key") == "daily-bars"
-            and dataset.get("description") == "前复权日线开高低收与成交量"
-        ):
+        if dataset.get("key") == "daily-bars" and dataset.get("description") in {
+            "前复权日线开高低收与成交量",
+            "日线行情；公开接口提供前复权，通达信全量导入为不复权",
+        }:
             dataset["description"] = _DAILY_BARS_DESCRIPTION
             datasets[index] = dataset
         if dataset.get("key") == "trading-status" and (
@@ -328,7 +334,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         )
 
     securities_ak = AkShareSource({"securities": akshare_securities})
-    daily_ak = AkShareSource(
+    ak_stocks = AkShareSource(
         {
             "daily-bars": lambda **parameters: ak.stock_zh_a_hist(
                 symbol=str(parameters["symbol"]),
@@ -339,10 +345,22 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
             )
         }
     )
-    daily_tencent = AkShareSource(
+
+    def decode_sina_index(encoded: str):
+        import py_mini_racer
+        from akshare.stock.cons import hk_js_decode
+
+        with py_mini_racer.MiniRacer() as context:
+            context.eval(hk_js_decode, timeout=5000)
+            return context.call("d", encoded, timeout=5000)
+
+    daily_ak = AkShareDailySource(httpx.Client(timeout=20.0), ak_stocks, decode_sina_index)
+    tencent_stocks = AkShareSource(
         {
             "daily-bars": lambda **parameters: ak.stock_zh_a_hist_tx(
-                symbol=(
+                symbol=str(parameters["symbol"])
+                if is_index(str(parameters["symbol"]))
+                else (
                     "bj"
                     if str(parameters["symbol"]).startswith(("4", "8", "92"))
                     else "sh"
@@ -358,6 +376,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         },
         key="tencent",
     )
+    daily_tencent = TencentDailySource(httpx.Client(timeout=20.0), tencent_stocks)
     calendar_ak = AkShareSource({"trading-calendar": lambda **_: ak.tool_trade_date_hist_sina()})
     pledge_ak = AkShareSource(
         {
@@ -396,13 +415,14 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
 
     industry_ak = AkShareSource({"sw-industry-memberships": industry_memberships})
 
-    def acquisition(sources: list[Any]) -> AcquisitionService:
+    def acquisition(sources: list[Any], *, daily: bool = False) -> AcquisitionService:
         return AcquisitionService(
             sources,
             raw_cache,
             clock,
             sleeper,
             retry=ExponentialRetry(max_attempts=2, base_seconds=0.5),
+            validate=validate_daily_response if daily else None,
         )
 
     quotes_acquisition = AcquisitionService(
@@ -418,7 +438,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         {
             "securities": acquisition([securities_ak, eastmoney]),
             "trading-status": acquisition([eastmoney]),
-            "daily-bars": acquisition([daily_ak, eastmoney, daily_tencent]),
+            "daily-bars": acquisition([daily_ak, eastmoney, daily_tencent], daily=True),
             "trading-calendar": acquisition([calendar_ak]),
             "live-quotes": quotes_acquisition,
             "market-values": acquisition([eastmoney]),

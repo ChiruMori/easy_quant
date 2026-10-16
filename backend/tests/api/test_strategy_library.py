@@ -94,7 +94,20 @@ def test_live_uses_one_system_intraday_schedule_without_default_after_market():
         },
         b"",
     )
-    response = client.post("/api/v1/live-instances", json={"backtest_id": "b"}, headers=headers)
+    container.state.subscriptions.append(
+        {"id": "n", "owner_id": owner.id, "enabled": True, "channel": "ntfy"}
+    )
+    response = client.post(
+        "/api/v1/live-instances",
+        json={
+            "backtest_id": "b",
+            "name": "日线实盘",
+            "initial_cash": "20000",
+            "parameters": {"ratio": "0.2"},
+            "subscription_ids": ["n"],
+        },
+        headers=headers,
+    )
     assert response.status_code == 201
     schedules = list(container.state.schedules.values())
     assert len(schedules) == 2
