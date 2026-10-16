@@ -147,7 +147,7 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
             raise StateConflictError(
                 "基准行情缺失或覆盖不足，请先同步指数日线",
                 {
-                    "action_url": "/admin/data/indices"
+                    "action_url": "/admin/data?tab=indices"
                     if is_index(benchmark)
                     else "/admin/data/acquisitions",
                     "benchmark": benchmark,

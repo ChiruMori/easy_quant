@@ -3,8 +3,6 @@ import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
-import { MetricCard } from "@/components/metric-card"
-import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,7 +22,7 @@ import { localizedLabel } from "@/lib/labels"
 import { getAcquisition, listIndices, syncIndices } from "../api"
 import type { Acquisition } from "../types"
 
-export function IndicesPage() {
+export function IndicesPanel() {
   const client = useQueryClient()
   const catalog = useQuery({ queryKey: ["admin", "indices"], queryFn: listIndices })
   const [selected, setSelected] = useState<string[]>(["sh000300"])
@@ -59,20 +57,10 @@ export function IndicesPage() {
     )
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader
-        title="指数数据"
-        description="同步指数日线，供基准对比、市场情绪与策略研究使用。指数不可交易。"
-        actions={
-          <Button asChild variant="outline">
-            <Link to="/admin/data#dataset-daily-bars">日线来源配置</Link>
-          </Button>
-        }
-      />
-      <div className="grid gap-4 sm:grid-cols-3">
-        <MetricCard label="主要指数" value={items.length} />
-        <MetricCard label="已有日线" value={items.filter((item) => item.record_count > 0).length} />
-        <MetricCard label="建议同步至" value={endDay || "—"} />
-      </div>
+      <p className="text-sm text-muted-foreground">
+        主要指数 {items.length} 个 · 已有日线 {items.filter((item) => item.record_count > 0).length}{" "}
+        个 · 建议同步至 {endDay || "—"}。仅用于研究和基准，不可交易。
+      </p>
       <Card className="min-w-0">
         <CardHeader>
           <CardTitle>同步指数历史日线</CardTitle>
@@ -238,6 +226,11 @@ export function IndicesPage() {
             <p>
               {task.record_count ?? 0} 条{task.message ? ` · ${task.message}` : ""}
             </p>
+            {task.failed_symbols?.map((item) => (
+              <p key={item.symbol}>
+                {item.symbol}：{item.message}
+              </p>
+            ))}
             {task.status === "failed" && (
               <p>请检查日线来源配置和失败明细，修正后可重新同步相同区间。</p>
             )}
@@ -259,6 +252,7 @@ export function IndicesPage() {
           <CardContent className="flex flex-col gap-2 text-sm">
             {task.attempts.map((attempt, index) => (
               <p className="break-words" key={index}>
+                {attempt.symbol && `${attempt.symbol} · `}
                 {attempt.source_key} · {localizedLabel(attempt.status)}
                 {attempt.message ? ` · ${attempt.message}` : ""}
               </p>

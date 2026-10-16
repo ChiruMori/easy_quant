@@ -6,6 +6,7 @@ export interface Dataset {
 }
 
 export interface Acquisition {
+  failed_symbols?: Array<{ symbol: string; message: string }>
   id: string
   dataset_key: string
   force: boolean
@@ -15,7 +16,13 @@ export interface Acquisition {
   record_count?: number
   new_record_count?: number
   message?: string
-  attempts?: Array<{ source_key: string; attempt: number; status: string; message?: string }>
+  attempts?: Array<{
+    symbol?: string
+    source_key: string
+    attempt: number
+    status: string
+    message?: string
+  }>
 }
 
 export interface ImportPreview {

@@ -37,7 +37,6 @@ const researchEntries = [
 ] as const
 const adminEntries = [
   ["/admin/data", "数据管理", Database],
-  ["/admin/data/indices", "指数数据", ChartNoAxesCombined],
   ["/admin", "系统管理", Settings],
 ] as const
 

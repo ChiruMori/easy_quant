@@ -51,6 +51,7 @@ class AcquisitionService:
         retry: RetryPolicy | None = None,
         freshness: timedelta = timedelta(hours=6),
         shuffle: Callable[[list[DataSource]], None] = random.shuffle,
+        validate: Callable[[SemanticRequest, bytes], None] | None = None,
     ) -> None:
         self.sources = sources
         self.cache = cache
@@ -59,6 +60,7 @@ class AcquisitionService:
         self.retry = retry or ExponentialRetry()
         self.freshness = freshness
         self.shuffle = shuffle
+        self.validate = validate
 
     def acquire(self, request: SemanticRequest, *, force: bool = False) -> RawEnvelope:
         envelope, _ = self.acquire_with_attempts(request, force=force)
@@ -80,13 +82,25 @@ class AcquisitionService:
             cache_identity = hashlib.sha256(f"{source.key}:{request.identity}".encode()).hexdigest()
             cached = self.cache.get(cache_identity)
             if not force and cached and cached.is_valid() and cached.is_fresh(self.clock.now()):
-                attempts.append(
-                    SourceAttempt(source.key, 0, AttemptStatus.SUCCEEDED, "命中原始缓存")
-                )
-                return cached, attempts
+                try:
+                    if self.validate:
+                        self.validate(request, cached.payload)
+                except Exception as error:
+                    attempts.append(
+                        SourceAttempt(
+                            source.key, 0, AttemptStatus.FAILED, _safe_source_error(error)
+                        )
+                    )
+                else:
+                    attempts.append(
+                        SourceAttempt(source.key, 0, AttemptStatus.SUCCEEDED, "命中原始缓存")
+                    )
+                    return cached, attempts
             for attempt in range(1, self.retry.max_attempts + 1):
                 try:
                     payload, content_type = source.fetch(request)
+                    if self.validate:
+                        self.validate(request, payload)
                     now = self.clock.now()
                     envelope = RawEnvelope(
                         cache_identity,

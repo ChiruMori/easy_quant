@@ -146,7 +146,8 @@ describe("数据管理主旅程", () => {
         </MemoryRouter>
       </QueryClientProvider>,
     )
-    fireEvent.click(screen.getByRole("button", { name: "刷新停复牌状态" }))
+    fireEvent.keyDown(screen.getByRole("button", { name: "数据维护" }), { key: "ArrowDown" })
+    fireEvent.click(await screen.findByRole("menuitem", { name: "刷新停复牌状态" }))
     expect(controls.startAcquisition).toHaveBeenCalledWith("trading-status", true, {
       end_day: "2026-10-14",
     })
@@ -161,14 +162,17 @@ describe("数据管理主旅程", () => {
       </QueryClientProvider>,
     )
     expect(screen.getByText("日线 K 线")).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "整体同步（推荐）" })).toHaveAttribute(
-      "href",
-      "/admin/schedules",
-    )
+    expect(screen.getByRole("button", { name: "数据维护" })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "股票" })).toHaveAttribute("aria-selected", "true")
+    expect(screen.getByRole("tab", { name: "指数" })).toBeInTheDocument()
     expect(screen.getByText(/当前应更新至 2026-10-14/)).toBeInTheDocument()
     expect(screen.getByText(/当前按工作日估算/)).toBeInTheDocument()
     expect(controls.startAcquisition).not.toHaveBeenCalled()
-    expect(screen.getByText(/已配置 2 个可用来源/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "AKShare 已启用" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+    expect(screen.queryByRole("button", { name: "保存来源配置" })).not.toBeInTheDocument()
     expect(screen.getByText(/000001 平安银行/)).toBeInTheDocument()
     expect(screen.getAllByText("完全同步").length).toBeGreaterThan(0)
     expect(screen.getByText("已更新")).toBeInTheDocument()

@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
-import { Link } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -51,27 +50,9 @@ export function AcquisitionsPage() {
   return (
     <div className="flex max-w-2xl flex-col gap-6">
       <PageHeader
-        title="数据拉取"
-        description="按数据类型与区间同步真实数据。"
-        actions={
-          <Button asChild variant="outline">
-            <Link to="/admin/data/indices">指数数据</Link>
-          </Button>
-        }
+        title="范围拉取"
+        description="按数据类型与日期区间同步真实数据。指数在数据管理的指数 Tab 中维护。"
       />
-      <Card>
-        <CardHeader>
-          <CardTitle>指数日线与基准数据</CardTitle>
-          <CardDescription>
-            选择沪深300、上证指数等主要指数，同步历史日线并查看数据覆盖。指数仅用于研究和基准，不可交易。
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button asChild>
-            <Link to="/admin/data/indices">同步指数数据</Link>
-          </Button>
-        </CardContent>
-      </Card>
       <Card>
         <CardHeader>
           <CardTitle>刷新基础数据</CardTitle>

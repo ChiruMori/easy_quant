@@ -30,6 +30,20 @@ def test_index_catalog_works_before_stock_refresh_without_writing():
     assert not container.state.acquisitions
 
 
+def test_stock_tab_coverage_excludes_index_symbols_and_counts():
+    container, client, _ = setup()
+    container.market_data.upsert_instruments(
+        [
+            {"symbol": "000001", "name": "平安银行"},
+            {"symbol": "sh000001", "name": "上证指数"},
+            {"symbol": "sz399001", "name": "深证成指"},
+        ]
+    )
+    data = client.get("/api/v1/admin/market-data/coverage?instrument_type=stock").get_json()["data"]
+    assert data["total"] == data["instrument_count"] == 1
+    assert [item["symbol"] for item in data["items"]] == ["000001"]
+
+
 @pytest.mark.parametrize(
     "change",
     [

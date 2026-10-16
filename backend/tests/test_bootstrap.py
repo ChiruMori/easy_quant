@@ -4,6 +4,7 @@ from pydantic import SecretStr, ValidationError
 
 from easy_quant import __version__, bootstrap
 from easy_quant.config import Settings
+from easy_quant.domain.market_data.entities import SemanticRequest
 
 
 def test_package_imports() -> None:
@@ -176,8 +177,17 @@ def test_akshare_daily_bars_use_requested_adjustment(monkeypatch) -> None:
     service = bootstrap._build_market_data_sync(make_test_container(), object())
     source = cast(Any, service.acquisitions["daily-bars"]).sources[0]
     for adjustment in ("none", "qfq"):
-        source.functions["daily-bars"](
-            symbol="000016", start_date="2026-09-03", end_date="2026-09-30", adjustment=adjustment
+        source.fetch(
+            SemanticRequest(
+                "daily-bars",
+                {
+                    "symbol": "000016",
+                    "start_date": "2026-09-03",
+                    "end_date": "2026-09-30",
+                    "adjustment": adjustment,
+                },
+                "test",
+            )
         )
     assert seen == ["", "qfq"]
 
@@ -202,11 +212,17 @@ def test_tencent_daily_bars_use_market_prefix_and_adjustment(monkeypatch) -> Non
         if source.key == "tencent"
     )
     for symbol, adjustment in (("000016", "none"), ("600000", "qfq"), ("830001", "none")):
-        source.functions["daily-bars"](
-            symbol=symbol,
-            start_date="2026-09-03",
-            end_date="2026-09-30",
-            adjustment=adjustment,
+        source.fetch(
+            SemanticRequest(
+                "daily-bars",
+                {
+                    "symbol": symbol,
+                    "start_date": "2026-09-03",
+                    "end_date": "2026-09-30",
+                    "adjustment": adjustment,
+                },
+                "test",
+            )
         )
     assert [(item["symbol"], item["adjust"]) for item in seen] == [
         ("sz000016", ""),

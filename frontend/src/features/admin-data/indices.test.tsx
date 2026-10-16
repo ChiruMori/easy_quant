@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { getAcquisition, listIndices, syncIndices } from "./api"
-import { IndicesPage } from "./pages/indices-page"
+import { IndicesPanel } from "./pages/indices-page"
 
 vi.mock("./api", () => ({ listIndices: vi.fn(), syncIndices: vi.fn(), getAcquisition: vi.fn() }))
 const data = {
@@ -30,7 +30,7 @@ const renderPage = () =>
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
       <MemoryRouter>
-        <IndicesPage />
+        <IndicesPanel />
       </MemoryRouter>
     </QueryClientProvider>,
   )

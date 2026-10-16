@@ -114,6 +114,7 @@ def market_data_coverage():
         after_symbol=after_symbol,
         before_symbol=before_symbol,
         target_day=target.recommended_end_day,
+        instrument_type=request.args.get("instrument_type", ""),
     )
     rows = []
     observations = {

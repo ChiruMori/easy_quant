@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
-import { createBrowserRouter, RouterProvider, useParams } from "react-router-dom"
+import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom"
 
 import { AcquisitionsPage } from "@/features/admin-data/pages/acquisitions-page"
 import { DatasetsPage } from "@/features/admin-data/pages/datasets-page"
 import { ImportPage } from "@/features/admin-data/pages/import-page"
-import { IndicesPage } from "@/features/admin-data/pages/indices-page"
 import { InstrumentDetailPage } from "@/features/admin-data/pages/instrument-detail-page"
 import { AdminDashboardPage } from "@/features/admin-scheduling/pages/admin-dashboard-page"
 import { AuditPage } from "@/features/admin-scheduling/pages/audit-page"
@@ -85,7 +84,7 @@ const router = createBrowserRouter([
         path: "admin/data/indices",
         element: (
           <AdminGuard>
-            <IndicesPage />
+            <Navigate to="/admin/data?tab=indices" replace />
           </AdminGuard>
         ),
       },

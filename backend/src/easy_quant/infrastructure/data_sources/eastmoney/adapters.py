@@ -46,6 +46,7 @@ class EastMoneySource:
             parameters = {
                 "secid": f"{market}.{symbol[2:] if is_index(symbol) else symbol}",
                 "klt": 101,
+                "lmt": 10000,
                 "fqt": 0
                 if is_index(symbol) or parameters.get("adjustment", "qfq") == "none"
                 else 1,

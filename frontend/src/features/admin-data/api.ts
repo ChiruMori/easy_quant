@@ -24,8 +24,10 @@ export function useMarketDataCoverage(params: {
   status?: string
   after?: string
   before?: string
+  instrument_type?: "stock"
 }) {
   const query = new URLSearchParams({ page: String(params.page), page_size: "50" })
+  if (params.instrument_type) query.set("instrument_type", params.instrument_type)
   if (params.search) query.set("search", params.search)
   if (params.status) query.set("status", params.status)
   if (params.after) query.set("after", params.after)

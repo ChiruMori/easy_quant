@@ -64,7 +64,7 @@ export function InstrumentDetailPage() {
           </p>
         </div>
         <Button variant="outline" asChild>
-          <Link to="/admin/data">返回数据列表</Link>
+          <Link to={isIndex ? "/admin/data?tab=indices" : "/admin/data"}>返回数据列表</Link>
         </Button>
       </div>
       {!isIndex && instrument.data?.status !== "delisted" && (

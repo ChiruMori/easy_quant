@@ -189,6 +189,9 @@ def register_market_data_handlers(
                 details = getattr(error, "details", None)
                 if isinstance(details, dict):
                     task["attempts"] = details.get("attempts", [])
+                    for key in ("record_count", "new_record_count", "failed_symbols"):
+                        if key in details:
+                            task[key] = details[key]
                 container.state.acquisitions[task_id] = task
             raise
         if task is not None:

@@ -27,12 +27,57 @@ test("管理员登录、数据管理、任务管理与邀请注册主旅程", as
     "page",
   )
   await expect(page.getByText("AKShare").first()).toBeVisible()
-  await page.getByRole("link", { name: "整体同步（推荐）" }).click()
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  const instruments = page.getByRole("region", { name: "标的数据", exact: true })
+  const sources = page.getByRole("complementary", { name: "数据来源", exact: true })
+  await expect
+    .poll(async () => {
+      const left = await instruments.boundingBox()
+      const right = await sources.boundingBox()
+      return Boolean(left && right && left.x + left.width <= right.x)
+    })
+    .toBeTruthy()
+  await page.screenshot({
+    path: testInfo.outputPath("data-management-desktop.png"),
+    fullPage: true,
+  })
+  const save = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/daily-bars/sources") && response.request().method() === "PUT",
+  )
+  await sources
+    .locator("#dataset-daily-bars")
+    .getByRole("button", { name: "AKShare 已启用", exact: true })
+    .click()
+  expect((await save).ok()).toBeTruthy()
+  await page.reload()
+  const disabledSource = sources
+    .locator("#dataset-daily-bars")
+    .getByRole("button", { name: "AKShare 已停用", exact: true })
+  await expect(disabledSource).toHaveAttribute("aria-pressed", "false")
+  const restore = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/daily-bars/sources") && response.request().method() === "PUT",
+  )
+  await disabledSource.click()
+  expect((await restore).ok()).toBeTruthy()
+  await page.setViewportSize({ width: 360, height: 900 })
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBeTruthy()
+  const top = await instruments.boundingBox()
+  const bottom = await sources.boundingBox()
+  expect(top && bottom && top.y + top.height <= bottom.y).toBeTruthy()
+  await page.screenshot({ path: testInfo.outputPath("data-management-mobile.png"), fullPage: true })
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.getByRole("button", { name: "数据维护" }).click()
+  await page.getByRole("menuitem", { name: "定时与整体维护" }).click()
   await expect(page).toHaveURL(/\/admin\/schedules$/)
   await expect(page.getByRole("heading", { name: "定时任务", exact: true })).toBeVisible()
   await expect(page.getByRole("combobox", { name: "任务类型" })).toHaveText("盘后全量数据同步")
   await page.goto("/admin/data")
-  await page.getByRole("link", { name: "上传 CSV" }).click()
+  await page.getByRole("button", { name: "数据维护" }).click()
+  await page.getByRole("menuitem", { name: "上传数据" }).click()
   await page.getByLabel("选择 CSV 文件").setInputFiles({
     name: "daily-bars.csv",
     mimeType: "text/csv",

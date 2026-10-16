@@ -7,8 +7,9 @@ test("指数入口、后台同步、覆盖与360px K线旅程", async ({ page },
   await page.getByRole("button", { name: "登录", exact: true }).click()
   await expect(page).toHaveURL(/\/$/)
   await page.goto("/admin/data")
-  await page.getByRole("main").getByRole("link", { name: "指数数据", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "指数数据", exact: true })).toBeVisible()
+  await page.getByRole("tab", { name: "指数", exact: true }).click()
+  await expect(page).toHaveURL(/tab=indices/)
+  await expect(page.getByRole("heading", { name: "数据管理", exact: true })).toBeVisible()
   await expect(page.locator('a[aria-current="page"]')).toHaveCount(1)
   const indexRow = page
     .getByRole("row")

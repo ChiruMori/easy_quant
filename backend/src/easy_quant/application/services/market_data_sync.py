@@ -403,6 +403,7 @@ class MarketDataSyncService:
             for item in self.store.list_instruments()
             if item.get("status") == "suspended"
         }
+        failures = []
         for input_symbol in symbols:
             symbol = str(input_symbol).zfill(6)
             if symbol in suspended:
@@ -419,9 +420,32 @@ class MarketDataSyncService:
                 "end_date": end_day.isoformat(),
                 "adjustment": adjustment,
             }
-            value, attempts, source, fetched_at = self._acquire(
-                "daily-bars", parameters, force, source_keys
-            )
+            if is_index(symbol):
+                calendar = TradingCalendar(self.store.list_trading_days() or None)
+                required_end = (
+                    end_day
+                    if calendar.is_trading_day(end_day)
+                    else calendar.previous_trading_day(end_day)
+                )
+                parameters["required_end_date"] = required_end.isoformat()
+            try:
+                value, attempts, source, fetched_at = self._acquire(
+                    "daily-bars", parameters, force, source_keys
+                )
+                if is_index(symbol):
+                    validate_daily_response(
+                        SemanticRequest("daily-bars", parameters, "validation"),
+                        json.dumps(value).encode(),
+                    )
+            except Exception as error:
+                if not is_index(symbol):
+                    raise
+                details = getattr(error, "details", {})
+                all_attempts.extend(
+                    {**item, "symbol": symbol} for item in details.get("attempts", [])
+                )
+                failures.append({"symbol": symbol, "message": str(error)})
+                continue
             all_attempts.extend({**item, "symbol": symbol} for item in attempts)
             sources.add(source)
             bars = self._normalize_bars(symbol, value)
@@ -454,8 +478,21 @@ class MarketDataSyncService:
                 }
                 for symbol in symbols
                 if symbol.zfill(6) not in existing
+                and symbol not in {item["symbol"] for item in failures}
             ]
         )
+        if failures:
+            from easy_quant.application.services.acquisition import AcquisitionFailed
+
+            raise AcquisitionFailed(
+                "部分指数同步失败，请检查来源并重试失败标的",
+                {
+                    "record_count": len(normalized),
+                    "new_record_count": len(normalized) - overwritten,
+                    "failed_symbols": failures,
+                    "attempts": all_attempts,
+                },
+            )
         return {
             "record_count": len(normalized),
             "overwritten": overwritten,
@@ -635,3 +672,29 @@ class MarketDataSyncService:
                 }
             )
         return result
+
+
+def validate_daily_response(request: SemanticRequest, payload: bytes) -> None:
+    """空/坏响应不得阻止切源或污染缓存。"""
+    symbol = str(request.parameters["symbol"])
+    start = date.fromisoformat(str(request.parameters["start_date"]))
+    end = date.fromisoformat(str(request.parameters["end_date"]))
+    rows = MarketDataSyncService._normalize_bars(symbol, json.loads(payload))
+    if not rows:
+        raise ValueError("来源没有返回请求区间内的真实日线")
+    for row in rows:
+        day = date.fromisoformat(str(row["trading_day"]))
+        values = [Decimal(str(row[key])) for key in ("open", "high", "low", "close", "volume")]
+        if not start <= day <= end or any(not value.is_finite() for value in values):
+            raise ValueError("来源日线日期或数值无效")
+        opening, high, low, close, volume = values
+        if (
+            min(opening, high, low, close) <= 0
+            or volume < 0
+            or low > min(opening, close)
+            or high < max(opening, close)
+        ):
+            raise ValueError("来源日线价格或成交量无效")
+    required = request.parameters.get("required_end_date")
+    if required and max(str(row["trading_day"]) for row in rows) < str(required):
+        raise ValueError(f"来源指数行情未更新至 {required}")

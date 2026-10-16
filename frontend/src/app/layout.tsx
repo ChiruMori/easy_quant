@@ -22,7 +22,6 @@ const titles: Record<string, string> = {
   "/notifications": "通知设置",
   "/admin/data": "数据管理",
   "/admin/data/acquisitions": "数据拉取",
-  "/admin/data/indices": "指数数据",
   "/admin/data/import": "文件导入",
   "/admin/users": "用户管理",
   "/admin/invitations": "邀请管理",
