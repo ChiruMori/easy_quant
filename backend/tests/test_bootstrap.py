@@ -246,7 +246,8 @@ def test_worker_binds_scoped_session_cleanup_for_poll_and_task_boundaries(monkey
     worker = bootstrap.build_worker()
     assert worker.session_cleanup == container.database_session.remove
     assert worker.run_once() is False
-    assert calls and set(calls) == {"remove"}
+    assert calls and set(calls) == {"remove", "rollback"}
+    assert calls.count("rollback") == 1
 
 
 def test_offline_settings_do_not_read_local_or_process_configuration(monkeypatch):

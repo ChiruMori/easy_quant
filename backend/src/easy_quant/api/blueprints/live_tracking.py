@@ -6,6 +6,7 @@ from flask import Blueprint, g, request
 
 from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_user
+from easy_quant.api.resource_lifecycle import delete_resource, inspect_resource, resource_mutation
 from easy_quant.api.responses import success
 from easy_quant.api.schemas.live_tracking import StartLiveRequest
 from easy_quant.api.strategy_context import strategy_context
@@ -19,8 +20,21 @@ from easy_quant.infrastructure.core import UuidGenerator
 blueprint = Blueprint("live_tracking", __name__, url_prefix="/api/v1/live-instances")
 
 
+@blueprint.get("/<instance_id>/deletion-preview")
+@require_user
+def deletion_preview(instance_id: str):
+    return inspect_resource("live", instance_id)
+
+
+@blueprint.delete("/<instance_id>")
+@require_user
+def delete_live(instance_id: str):
+    return delete_resource("live", instance_id)
+
+
 @blueprint.post("")
 @require_user
+@resource_mutation
 def start_live():
     payload = StartLiveRequest.model_validate(request.get_json() or {}).model_dump(mode="json")
     instances = get_container().state.live_instances
@@ -143,6 +157,7 @@ def live_detail(instance_id: str):
 
 @blueprint.post("/<instance_id>/pause")
 @require_user
+@resource_mutation
 def pause_live(instance_id: str):
     return success(_set_status(instance_id, "paused", "pause"))
 
@@ -173,6 +188,7 @@ def _set_status(instance_id: str, status: str, action: str):
 
 @blueprint.post("/<instance_id>/terminate")
 @require_user
+@resource_mutation
 def terminate_live(instance_id: str):
     item = _set_status(instance_id, "terminated", "terminate")
     for schedule_id, schedule in list(get_container().state.schedules.items()):
@@ -184,6 +200,7 @@ def terminate_live(instance_id: str):
 
 @blueprint.post("/<instance_id>/analyze/<phase>")
 @require_user
+@resource_mutation
 def analyze_live(instance_id: str, phase: str):
     instance = get_container().state.live_instances.get(instance_id)
     if instance is None or instance["owner_id"] != g.current_user.id:

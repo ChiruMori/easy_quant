@@ -14,7 +14,7 @@ class ActualOperationModel(Base):
         Index("ix_operations_owner_time", "owner_id", "occurred_at"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    recommendation_id: Mapped[str] = mapped_column(ForeignKey("recommendations.id"), nullable=False)
+    recommendation_id: Mapped[str] = mapped_column(String(36), nullable=False)
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
     kind: Mapped[str] = mapped_column(String(20), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -25,10 +25,8 @@ class ActualOperationModel(Base):
 class PortfolioLedgerEntryModel(Base):
     __tablename__ = "portfolio_ledger_entries"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    live_instance_id: Mapped[str] = mapped_column(ForeignKey("live_instances.id"), nullable=False)
-    operation_id: Mapped[str] = mapped_column(
-        ForeignKey("actual_operations.id"), unique=True, nullable=False
-    )
+    live_instance_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
     cash_delta: Mapped[Decimal] = mapped_column(Numeric(28, 8), nullable=False)
     symbol: Mapped[str | None] = mapped_column(String(20))

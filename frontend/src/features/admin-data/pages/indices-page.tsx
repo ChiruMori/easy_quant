@@ -3,12 +3,12 @@ import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { DatePicker } from "@/components/date-picker"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
 import {
   Table,
   TableBody,
@@ -179,10 +179,10 @@ export function IndicesPanel() {
               <FieldGroup className="sm:grid sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="index-start">指数开始日期</FieldLabel>
-                  <Input
+                  <DatePicker
                     id="index-start"
                     name="start_day"
-                    type="date"
+
                     defaultValue={endDay ? `${Number(endDay.slice(0, 4)) - 10}-01-01` : ""}
                     required
                     disabled={running}
@@ -190,10 +190,10 @@ export function IndicesPanel() {
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="index-end">指数结束日期</FieldLabel>
-                  <Input
+                  <DatePicker
                     id="index-end"
                     name="end_day"
-                    type="date"
+
                     defaultValue={endDay}
                     required
                     disabled={running}

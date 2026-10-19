@@ -53,6 +53,10 @@ jobs:
         run: pnpm test:e2e
       - name: 校验三服务部署配置
         run: docker compose --env-file deploy/.env.example -f deploy/compose.yaml config --quiet
+      - name: 验证非 root 后端缓存目录可写
+        run: |
+          docker build -t easy-quant-backend-permissions:check backend
+          docker run --rm --network none --entrypoint /app/backend/.venv/bin/python easy-quant-backend-permissions:check -c "from pathlib import Path; import os; assert os.getuid() == 65532; root = Path('/app/backend/.local-data/tdx/daily'); root.mkdir(parents=True, exist_ok=True); cache = root / 'permission-check'; cache.write_bytes(b'ok'); cache.unlink()"
 
   publish:
     needs: check

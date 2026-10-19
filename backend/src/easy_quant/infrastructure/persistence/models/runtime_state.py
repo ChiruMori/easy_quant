@@ -9,3 +9,8 @@ class RuntimeDocumentModel(Base):
     namespace: Mapped[str] = mapped_column(String(80), primary_key=True)
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ResourceLifecycleMutexModel(Base):
+    __tablename__ = "resource_lifecycle_mutex"
+    key: Mapped[str] = mapped_column(String(20), primary_key=True)

@@ -2,6 +2,7 @@ from flask import Blueprint, g, request
 
 from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_user
+from easy_quant.api.resource_lifecycle import delete_resource, inspect_resource, resource_mutation
 from easy_quant.api.responses import success
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.notification_runtime import notify_owner
@@ -9,6 +10,18 @@ from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("notifications", __name__, url_prefix="/api/v1/notifications")
+
+
+@blueprint.get("/subscriptions/<subscription_id>/deletion-preview")
+@require_user
+def deletion_preview(subscription_id: str):
+    return inspect_resource("subscription", subscription_id)
+
+
+@blueprint.delete("/subscriptions/<subscription_id>")
+@require_user
+def delete_subscription(subscription_id: str):
+    return delete_resource("subscription", subscription_id)
 
 
 @blueprint.get("/subscriptions")
@@ -28,6 +41,7 @@ def subscriptions():
 
 @blueprint.post("/subscriptions")
 @require_user
+@resource_mutation
 def add_subscription():
     payload = request.get_json() or {}
     if payload.get("channel") not in {"email", "ntfy"}:
@@ -72,6 +86,7 @@ def deliveries():
 
 @blueprint.patch("/subscriptions/<subscription_id>")
 @require_user
+@resource_mutation
 def update_subscription(subscription_id: str):
     item = next(
         (
@@ -112,6 +127,7 @@ def update_subscription(subscription_id: str):
 
 @blueprint.post("/subscriptions/<subscription_id>/test")
 @require_user
+@resource_mutation
 def test_subscription(subscription_id: str):
     item = next(
         (

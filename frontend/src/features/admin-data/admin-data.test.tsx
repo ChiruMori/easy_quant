@@ -148,6 +148,12 @@ describe("数据管理主旅程", () => {
     )
     fireEvent.keyDown(screen.getByRole("button", { name: "数据维护" }), { key: "ArrowDown" })
     fireEvent.click(await screen.findByRole("menuitem", { name: "刷新停复牌状态" }))
+    expect(controls.startAcquisition).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "取消" }))
+    expect(controls.startAcquisition).not.toHaveBeenCalled()
+    fireEvent.keyDown(screen.getByRole("button", { name: "数据维护" }), { key: "ArrowDown" })
+    fireEvent.click(await screen.findByRole("menuitem", { name: "刷新停复牌状态" }))
+    fireEvent.click(screen.getByRole("button", { name: "确认刷新停复牌状态" }))
     expect(controls.startAcquisition).toHaveBeenCalledWith("trading-status", true, {
       end_day: "2026-10-14",
     })

@@ -25,7 +25,7 @@ class RecommendationModel(Base):
         Index("ix_recommendations_owner_decision", "owner_id", "decision_at"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    live_instance_id: Mapped[str] = mapped_column(ForeignKey("live_instances.id"), nullable=False)
+    live_instance_id: Mapped[str] = mapped_column(String(36), nullable=False)
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
     business_key: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)

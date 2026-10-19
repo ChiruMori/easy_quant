@@ -1,8 +1,8 @@
 import { useState } from "react"
 
+import { DatePicker } from "@/components/date-picker"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
 import {
   Table,
   TableBody,
@@ -83,11 +83,11 @@ export function RunTimingPanel({ timing }: { timing?: RunTiming }) {
           <>
             <Field>
               <FieldLabel htmlFor="timing-day">查看交易日 Hook 耗时</FieldLabel>
-              <Input
+              <DatePicker
                 id="timing-day"
-                type="date"
+
                 value={selectedDay ?? ""}
-                onChange={(event) => setDay(event.target.value)}
+                onValueChange={(dateValue) => setDay(dateValue)}
               />
             </Field>
             <Table>

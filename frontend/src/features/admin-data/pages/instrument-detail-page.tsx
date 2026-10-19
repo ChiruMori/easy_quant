@@ -3,6 +3,7 @@ import { lazy, Suspense, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { DatePicker } from "@/components/date-picker"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -155,22 +156,22 @@ export function InstrumentDetailPage() {
             <FieldGroup className="sm:flex-row">
               <Field>
                 <FieldLabel htmlFor="bar-start">开始日期</FieldLabel>
-                <Input
+                <DatePicker
                   id="bar-start"
-                  type="date"
+
                   value={range.start}
-                  onChange={(event) =>
-                    setRange((value) => ({ ...value, start: event.target.value }))
+                  onValueChange={(dateValue) =>
+                    setRange((value) => ({ ...value, start: dateValue }))
                   }
                 />
               </Field>
               <Field>
                 <FieldLabel htmlFor="bar-end">结束日期</FieldLabel>
-                <Input
+                <DatePicker
                   id="bar-end"
-                  type="date"
+
                   value={range.end}
-                  onChange={(event) => setRange((value) => ({ ...value, end: event.target.value }))}
+                  onValueChange={(dateValue) => setRange((value) => ({ ...value, end: dateValue }))}
                 />
               </Field>
               <Button type="submit">查询</Button>

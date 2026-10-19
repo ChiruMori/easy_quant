@@ -4,6 +4,7 @@ from flask import Blueprint, g, request
 
 from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_admin
+from easy_quant.api.resource_lifecycle import resource_mutation
 from easy_quant.api.responses import success
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.scheduled_tasks import next_run
@@ -41,6 +42,7 @@ def schedules():
 
 @blueprint.post("/schedules")
 @require_admin
+@resource_mutation
 def create_schedule():
     payload = request.get_json() or {}
     validate_schedule(payload)
@@ -91,6 +93,7 @@ def create_schedule():
 
 @blueprint.patch("/schedules/<schedule_id>")
 @require_admin
+@resource_mutation
 def update_schedule(schedule_id: str):
     schedules = get_container().state.schedules
     existing = schedules.get(schedule_id)
@@ -142,6 +145,7 @@ def update_schedule(schedule_id: str):
 
 @blueprint.post("/schedules/<schedule_id>/run")
 @require_admin
+@resource_mutation
 def run_schedule(schedule_id: str):
     container = get_container()
     item = container.state.schedules.get(schedule_id)

@@ -11,6 +11,7 @@ COPY resources ./backend/resources
 COPY src ./backend/src
 RUN uv sync --project backend --frozen --no-dev
 ENV UV_CACHE_DIR=/tmp/easy-quant-uv-cache
+RUN mkdir -p /app/backend/.local-data && chown -R 65532:65532 /app/backend/.local-data
 USER 65532:65532
 EXPOSE 5000
 CMD ["uv", "run", "--project", "backend", "--no-sync", "gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "easy_quant.api.app:create_app()"]

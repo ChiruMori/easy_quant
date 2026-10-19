@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 
+import { DatePicker } from "@/components/date-picker"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -144,11 +145,11 @@ export function AcquisitionsPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="start_day">开始日期</FieldLabel>
-                  <Input id="start_day" name="start_day" type="date" required />
+                  <DatePicker id="start_day" name="start_day" required />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="end_day">结束日期</FieldLabel>
-                  <Input id="end_day" name="end_day" type="date" required />
+                  <DatePicker id="end_day" name="end_day" required />
                 </Field>
               </div>
             </FieldGroup>

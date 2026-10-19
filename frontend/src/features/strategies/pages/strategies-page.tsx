@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { DatePicker } from "@/components/date-picker"
+import { DeleteResourceButton } from "@/components/delete-resource-button"
 import { PageHeader } from "@/components/page-header"
 import { RunTimingPanel } from "@/components/run-timing"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -65,7 +67,7 @@ const loadDraft = () => {
 }
 
 export function StrategiesPage() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const loadedReference = useRef("")
   const queryClient = useQueryClient()
   const strategies = useQuery({ queryKey: ["strategies"], queryFn: listStrategies })
@@ -167,6 +169,22 @@ export function StrategiesPage() {
         title="策略工作台"
         description="使用平台因子选股并返回交易信号；每次保存都会创建不可变版本。"
       />
+      {selected !== "new" && (
+        <div>
+          <DeleteResourceButton
+            path={`/strategies/${selected}`}
+            label="删除策略"
+            description="删除策略会清理其全部版本与关联测试数据。"
+            disabled={save.isPending}
+            onDeleted={() => {
+              choose("new")
+              loadedReference.current = ""
+              setSearchParams({})
+              localStorage.removeItem("strategy-draft")
+            }}
+          />
+        </div>
+      )}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="editor">编辑策略</TabsTrigger>
@@ -253,11 +271,11 @@ export function StrategiesPage() {
                 </Button>
                 <Field>
                   <FieldLabel htmlFor="strategy-run-day">快速测试交易日</FieldLabel>
-                  <Input
+                  <DatePicker
                     id="strategy-run-day"
-                    type="date"
+
                     value={tradingDay}
-                    onChange={(event) => setTradingDay(event.target.value)}
+                    onValueChange={(dateValue) => setTradingDay(dateValue)}
                   />
                   <FieldDescription>
                     快测只运行所选交易日，按因子窗口读取所需预热历史，不会模拟此前交易。

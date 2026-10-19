@@ -2,6 +2,7 @@ from flask import Blueprint, g, request
 
 from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_user
+from easy_quant.api.resource_lifecycle import resource_mutation
 from easy_quant.api.responses import success
 from easy_quant.api.schemas.recommendations import RecommendationActionRequest
 from easy_quant.application.services.recommendation_actions import (
@@ -19,6 +20,7 @@ blueprint = Blueprint("recommendations", __name__, url_prefix="/api/v1/recommend
 
 @blueprint.post("/<recommendation_id>/<kind>")
 @require_user
+@resource_mutation
 def act(recommendation_id: str, kind: str):
     try:
         operation_kind = OperationKind(kind)
