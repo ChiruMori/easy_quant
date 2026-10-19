@@ -69,6 +69,7 @@ export function NotificationSettingsPage() {
           <CardDescription>邮件填写收件地址；ntfy 填写主题名称或完整主题地址。</CardDescription>
         </CardHeader>
         <form
+          className="flex min-w-0 flex-col gap-5"
           onSubmit={async (event) => {
             event.preventDefault()
             const form = event.currentTarget
@@ -97,9 +98,9 @@ export function NotificationSettingsPage() {
                 <Input id="channel-name" name="name" required maxLength={160} />
               </Field>
               <Field>
-                <FieldLabel>渠道</FieldLabel>
+                <FieldLabel htmlFor="notification-channel">渠道</FieldLabel>
                 <Select value={channel} onValueChange={setChannel}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger id="notification-channel" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

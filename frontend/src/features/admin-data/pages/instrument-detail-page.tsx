@@ -44,9 +44,9 @@ export function InstrumentDetailPage() {
     return <ErrorState title="无法加载股票详情" message={instrument.error.message} />
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1 basis-64">
+          <h1 className="text-2xl font-semibold [overflow-wrap:anywhere]">
             {instrument.data?.symbol} {instrument.data?.name}
             {isIndex && <Badge variant="secondary">指数 · 不可交易</Badge>}
             {instrument.data?.status === "delisted" && (

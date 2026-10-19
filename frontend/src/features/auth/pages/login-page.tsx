@@ -25,10 +25,13 @@ export function LoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-muted/30 p-6">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>登录Easy Quant 易量化平台</CardTitle>
+          <CardTitle>
+            <h1>登录 Easy Quant 易量化平台</h1>
+          </CardTitle>
           <CardDescription>使用管理员初始化账号或受邀账号登录。</CardDescription>
         </CardHeader>
         <form
+          className="flex min-w-0 flex-col gap-5"
           onSubmit={async (event) => {
             event.preventDefault()
             setPending(true)
@@ -68,7 +71,7 @@ export function LoginPage() {
               )}
             </FieldGroup>
           </CardContent>
-          <CardFooter className="mt-8 flex flex-col items-stretch gap-3">
+          <CardFooter className="flex flex-col items-stretch gap-3">
             <Button type="submit" disabled={pending}>
               {pending ? "登录中…" : "登录"}
             </Button>

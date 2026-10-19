@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
 
-import { ErrorState, LoadingState } from "@/components/app-shell"
+import { EmptyState, ErrorState, LoadingState } from "@/components/app-shell"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -39,6 +39,9 @@ export function FactorCatalogPage({ factors }: { factors?: FactorDefinition[] } 
         value={search}
         onChange={(event) => setSearch(event.target.value)}
       />
+      {visible.length === 0 && (
+        <EmptyState title="没有匹配的因子" message="请尝试其他名称、Key 或描述。" />
+      )}
       <div className="grid gap-4 lg:grid-cols-2">
         {visible.map((factor) => (
           <Card key={factor.key}>
@@ -52,7 +55,7 @@ export function FactorCatalogPage({ factors }: { factors?: FactorDefinition[] } 
             <CardContent className="flex flex-col gap-4">
               <section>
                 <h3 className="text-sm font-medium">参数</h3>
-                <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                <dl className="mt-2 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm [overflow-wrap:anywhere]">
                   {Object.entries(factor.parameters).map(([name, description]) => (
                     <span className="contents" key={name}>
                       <dt>

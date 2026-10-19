@@ -72,7 +72,7 @@ export function AcquisitionsPage() {
           >
             刷新交易日历
           </Button>
-          <div className="flex w-full gap-2 pt-2">
+          <div className="flex w-full flex-col gap-2 pt-2 sm:flex-row">
             <Input
               aria-label="单只股票代码"
               placeholder="输入股票代码，例如 000001"
@@ -123,9 +123,9 @@ export function AcquisitionsPage() {
           >
             <FieldGroup>
               <Field>
-                <FieldLabel>数据集</FieldLabel>
+                <FieldLabel htmlFor="sync-dataset">数据集</FieldLabel>
                 <Select value={syncDataset} onValueChange={setSyncDataset}>
-                  <SelectTrigger>
+                  <SelectTrigger id="sync-dataset">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -159,7 +159,7 @@ export function AcquisitionsPage() {
           </form>
         </CardContent>
       </Card>
-      <p aria-live="polite">
+      <p aria-live="polite" className="[overflow-wrap:anywhere]">
         最近任务：
         {currentTask
           ? `${currentTask.id} · ${localizedLabel(currentTask.status)} · ${currentTask.record_count ?? 0} 条${currentTask.message ? ` · ${currentTask.message}` : ""}`

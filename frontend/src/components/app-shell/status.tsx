@@ -4,8 +4,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 
 export function LoadingState({ label = "正在加载" }: { label?: string }) {
   return (
-    <div aria-label={label} className="flex flex-col gap-3 p-6">
-      <Skeleton className="h-8 w-56" />
+    <div role="status" aria-label={label} className="flex min-w-0 flex-col gap-3 p-6">
+      <Skeleton className="h-8 w-56 max-w-full" />
       <Skeleton className="h-32 w-full" />
     </div>
   )

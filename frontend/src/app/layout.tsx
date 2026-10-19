@@ -49,8 +49,8 @@ export function AppLayout() {
       <AppSidebar />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-3 border-b bg-card px-4 sm:px-7">
-          <SidebarTrigger aria-label="切换导航" />
-          <Separator orientation="vertical" className="h-5" />
+          <SidebarTrigger aria-label="切换导航" className="md:hidden" />
+          <Separator orientation="vertical" className="h-5 md:hidden" />
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
@@ -62,7 +62,7 @@ export function AppLayout() {
             日线研究
           </Badge>
         </header>
-        <section className="mx-auto w-full max-w-[1600px] min-w-0 flex-1 p-4 sm:p-7 lg:p-8">
+        <section className="mx-auto w-full max-w-[1600px] min-w-0 flex-1 p-4 [overflow-wrap:anywhere] sm:p-7 lg:p-8">
           <Outlet />
         </section>
       </SidebarInset>

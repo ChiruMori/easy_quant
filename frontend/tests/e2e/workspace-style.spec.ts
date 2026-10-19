@@ -103,11 +103,65 @@ test("桌面概览与回测详情显示真实 fixture，导航定位与图表清
   await expect(page.locator(".recharts-line-curve")).toHaveAttribute("d", /M.+L.+/)
   await expectNoPageOverflow(page)
   await page.screenshot({ path: testInfo.outputPath("tremor-backtest.png"), fullPage: true })
-  await page.getByRole("button", { name: "切换导航" }).click()
+  await page.getByRole("button", { name: "收起侧栏" }).click()
   await expect(page.locator('[data-slot="sidebar"]').first()).toHaveAttribute(
     "data-state",
     "collapsed",
   )
+})
+
+test("桌面侧栏顶部控制展开收起，悬停与键盘可发现展开入口", async ({ page }, testInfo) => {
+  await mockWorkspace(page)
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto("/")
+  const sidebar = page.locator('[data-slot="sidebar"]').first()
+  const header = page.locator('[data-slot="sidebar-header"]')
+  const collapse = header.getByRole("button", { name: "收起侧栏", exact: true })
+  await expect(collapse).toHaveAttribute("aria-expanded", "true")
+  await expect(page.getByRole("button", { name: "切换导航", exact: true })).toHaveCount(0)
+  const controlBox = await collapse.boundingBox()
+  const sidebarBox = await page.locator('[data-slot="sidebar-container"]').boundingBox()
+  expect(controlBox!.x + controlBox!.width).toBeLessThanOrEqual(sidebarBox!.width)
+  await page.screenshot({
+    path: testInfo.outputPath("sidebar-expanded.png"),
+    clip: { x: 0, y: 0, width: 560, height: 560 },
+  })
+  await collapse.click()
+  await expect(sidebar).toHaveAttribute("data-state", "collapsed")
+  await expect
+    .poll(async () => (await page.locator('[data-slot="sidebar-container"]').boundingBox())!.width)
+    .toBe(48)
+  const expand = header.getByRole("button", { name: "展开侧栏", exact: true })
+  await expect(expand).toHaveAttribute("aria-expanded", "false")
+  await page.mouse.move(600, 300)
+  await expect(expand.locator('[data-slot="sidebar-brand-icon"]')).toHaveCSS("opacity", "1")
+  await expect(expand.locator('[data-slot="sidebar-expand-icon"]')).toHaveCSS("opacity", "0")
+  await expand.hover()
+  await expect(page.getByRole("tooltip", { name: "展开", exact: true })).toBeVisible()
+  await expect(expand.locator('[data-slot="sidebar-expand-icon"]')).toHaveCSS("opacity", "1")
+  await expect(sidebar).toHaveAttribute("data-state", "collapsed")
+  await page.screenshot({
+    path: testInfo.outputPath("sidebar-collapsed-hover.png"),
+    clip: { x: 0, y: 0, width: 560, height: 560 },
+  })
+  await expand.click()
+  await expect(sidebar).toHaveAttribute("data-state", "expanded")
+  await expect(collapse).toBeFocused()
+  await collapse.press("Enter")
+  await page.mouse.move(600, 300)
+  await page.keyboard.press("Tab")
+  await page.keyboard.press("Shift+Tab")
+  await expect(expand).toBeFocused()
+  await expect(expand.locator('[data-slot="sidebar-expand-icon"]')).toHaveCSS("opacity", "1")
+  await expect(page.getByRole("tooltip", { name: "展开", exact: true })).toBeVisible()
+  await expand.press("Space")
+  await expect(sidebar).toHaveAttribute("data-state", "expanded")
+  await page.keyboard.press("Control+b")
+  await expect(sidebar).toHaveAttribute("data-state", "collapsed")
+  await page.getByRole("link", { name: "回测", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "回测研究" })).toBeVisible()
+  await expect(sidebar).toHaveAttribute("data-state", "collapsed")
+  await expectNoPageOverflow(page)
 })
 
 test("360px 普通用户可打开导航、切换页面且无管理入口或页面溢出", async ({ page }, testInfo) => {

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useId, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -18,11 +19,12 @@ export function RecommendationActions({
   onSubmit: (kind: "confirm" | "reject" | "correct", values?: Record<string, string>) => void
   disabled?: boolean
 }) {
+  const formId = useId()
   const [showCorrection, setShowCorrection] = useState(false)
   const [actualAction, setActualAction] = useState("buy")
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button disabled={disabled} onClick={() => onSubmit("confirm")}>
           快速确认
         </Button>
@@ -52,32 +54,55 @@ export function RecommendationActions({
         >
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="symbol">实际标的</FieldLabel>
-              <Input id="symbol" name="symbol" required />
+              <FieldLabel htmlFor={`${formId}-symbol`}>实际标的</FieldLabel>
+              <Input id={`${formId}-symbol`} name="symbol" required />
             </Field>
             <Field>
-              <FieldLabel>实际方向</FieldLabel>
+              <FieldLabel htmlFor={`${formId}-action`}>实际方向</FieldLabel>
               <Select value={actualAction} onValueChange={setActualAction}>
-                <SelectTrigger>
+                <SelectTrigger id={`${formId}-action`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="buy">买入</SelectItem>
-                  <SelectItem value="sell">卖出</SelectItem>
+                  <SelectGroup>
+                    <SelectItem value="buy">买入</SelectItem>
+                    <SelectItem value="sell">卖出</SelectItem>
+                  </SelectGroup>
                 </SelectContent>
               </Select>
             </Field>
             <Field>
-              <FieldLabel htmlFor="quantity">实际数量</FieldLabel>
-              <Input id="quantity" name="quantity" type="number" min="0.0001" step="any" required />
+              <FieldLabel htmlFor={`${formId}-quantity`}>实际数量</FieldLabel>
+              <Input
+                id={`${formId}-quantity`}
+                name="quantity"
+                type="number"
+                min="0.0001"
+                step="any"
+                required
+              />
             </Field>
             <Field>
-              <FieldLabel htmlFor="fee">手续费</FieldLabel>
-              <Input id="fee" name="fee" type="number" min="0" step="any" defaultValue="0" />
+              <FieldLabel htmlFor={`${formId}-fee`}>手续费</FieldLabel>
+              <Input
+                id={`${formId}-fee`}
+                name="fee"
+                type="number"
+                min="0"
+                step="any"
+                defaultValue="0"
+              />
             </Field>
             <Field>
-              <FieldLabel htmlFor="price">实际价格</FieldLabel>
-              <Input id="price" name="price" type="number" min="0.0001" step="any" required />
+              <FieldLabel htmlFor={`${formId}-price`}>实际价格</FieldLabel>
+              <Input
+                id={`${formId}-price`}
+                name="price"
+                type="number"
+                min="0.0001"
+                step="any"
+                required
+              />
             </Field>
           </FieldGroup>
           <Button disabled={disabled} type="submit">

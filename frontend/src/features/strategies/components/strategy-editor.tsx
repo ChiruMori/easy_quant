@@ -21,6 +21,11 @@ export function StrategyEditor({
       doc: initialValue.current,
       extensions: [
         basicSetup,
+        EditorView.contentAttributes.of({ "aria-label": "策略代码" }),
+        EditorView.theme({
+          "&": { maxHeight: "32rem" },
+          ".cm-scroller": { overflow: "auto" },
+        }),
         python(),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
@@ -39,5 +44,11 @@ export function StrategyEditor({
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
     }
   }, [value])
-  return <div aria-label="策略代码编辑器" className="rounded border" ref={host} />
+  return (
+    <div
+      aria-label="策略代码编辑器"
+      className="min-w-0 overflow-hidden rounded-md border"
+      ref={host}
+    />
+  )
 }

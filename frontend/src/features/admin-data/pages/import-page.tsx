@@ -1,11 +1,13 @@
 import { useState } from "react"
 
+import { ErrorState } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -18,6 +20,7 @@ export function ImportPage() {
   const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [message, setMessage] = useState("")
   const [datasetKey, setDatasetKey] = useState("daily-bars")
+  const [error, setError] = useState("")
   return (
     <Card className="max-w-2xl">
       <CardHeader>
@@ -27,17 +30,27 @@ export function ImportPage() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <Select value={datasetKey} onValueChange={setDatasetKey}>
+        <Select
+          value={datasetKey}
+          onValueChange={(value) => {
+            setDatasetKey(value)
+            setPreview(null)
+            setMessage("")
+            setError("")
+          }}
+        >
           <SelectTrigger aria-label="导入数据集">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="daily-bars">日线 K 线</SelectItem>
-            <SelectItem value="market-values">估值与市值</SelectItem>
-            <SelectItem value="pledge-ratios">股票质押率</SelectItem>
-            <SelectItem value="financial-indicators">财务指标</SelectItem>
-            <SelectItem value="industry-memberships">行业归属</SelectItem>
-            <SelectItem value="security-profiles">证券资料</SelectItem>
+            <SelectGroup>
+              <SelectItem value="daily-bars">日线 K 线</SelectItem>
+              <SelectItem value="market-values">估值与市值</SelectItem>
+              <SelectItem value="pledge-ratios">股票质押率</SelectItem>
+              <SelectItem value="financial-indicators">财务指标</SelectItem>
+              <SelectItem value="industry-memberships">行业归属</SelectItem>
+              <SelectItem value="security-profiles">证券资料</SelectItem>
+            </SelectGroup>
           </SelectContent>
         </Select>
         <Input
@@ -46,8 +59,15 @@ export function ImportPage() {
           accept=".csv"
           onChange={async (event) => {
             setMessage("")
+            setError("")
+            setPreview(null)
             const file = event.target.files?.[0]
-            if (file) setPreview(await previewImport(file, datasetKey))
+            if (!file) return
+            try {
+              setPreview(await previewImport(file, datasetKey))
+            } catch (reason) {
+              setError(reason instanceof Error ? reason.message : "无法预检文件，请重试")
+            }
           }}
         />
         {preview && (
@@ -63,17 +83,23 @@ export function ImportPage() {
           </p>
         ))}
         {message && <p className="text-sm text-muted-foreground">{message}</p>}
+        {error && <ErrorState title="文件导入未完成" message={error} />}
         <Button
           disabled={!preview?.valid}
           onClick={async () => {
             if (preview?.preview_id) {
-              const result = await commitImport(preview.preview_id)
-              setMessage(
-                result.status === "succeeded"
-                  ? `已导入 ${result.rows} 行数据，覆盖 ${result.overwritten} 行`
-                  : "导入失败",
-              )
-              setPreview(null)
+              setError("")
+              try {
+                const result = await commitImport(preview.preview_id)
+                setMessage(
+                  result.status === "succeeded"
+                    ? `已导入 ${result.rows} 行数据，覆盖 ${result.overwritten} 行`
+                    : "导入失败",
+                )
+                setPreview(null)
+              } catch (reason) {
+                setError(reason instanceof Error ? reason.message : "无法导入文件，请重试")
+              }
             }
           }}
         >

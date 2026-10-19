@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
 import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom"
 
+import { ErrorState, LoadingState } from "@/components/app-shell"
+import { Button } from "@/components/ui/button"
 import { AcquisitionsPage } from "@/features/admin-data/pages/acquisitions-page"
 import { DatasetsPage } from "@/features/admin-data/pages/datasets-page"
 import { ImportPage } from "@/features/admin-data/pages/import-page"
@@ -20,7 +21,7 @@ import { BacktestDetailPage } from "@/features/backtests/pages/backtest-detail-p
 import { BacktestListPage } from "@/features/backtests/pages/backtest-list-page"
 import { DashboardPage } from "@/features/dashboard/dashboard-page"
 import { FactorCatalogPage } from "@/features/factors/pages/factor-catalog-page"
-import { getLive, type LiveInstance } from "@/features/live-tracking/api"
+import { getLive } from "@/features/live-tracking/api"
 import { LiveDetailPage } from "@/features/live-tracking/pages/live-detail-page"
 import { LiveListPage } from "@/features/live-tracking/pages/live-list-page"
 import { NotificationSettingsPage } from "@/features/notifications/pages/notification-settings-page"
@@ -33,11 +34,26 @@ import { AdminGuard, AuthenticatedGuard } from "./route-guards"
 
 function LiveDetailRoute() {
   const { instanceId = "" } = useParams()
-  const [instance, setInstance] = useState<LiveInstance | null>(null)
-  useEffect(() => {
-    void getLive(instanceId).then(setInstance)
-  }, [instanceId])
-  return instance ? <LiveDetailPage instance={instance} /> : <p>正在加载实盘实例…</p>
+  const query = useQuery({
+    queryKey: ["live-instance", instanceId],
+    queryFn: () => getLive(instanceId),
+    staleTime: 0,
+    gcTime: 0,
+  })
+  if (query.error)
+    return (
+      <div className="flex flex-col items-start gap-4">
+        <ErrorState title="无法加载实盘实例" message={query.error.message} />
+        <Button variant="outline" onClick={() => void query.refetch()}>
+          重新加载
+        </Button>
+      </div>
+    )
+  return query.data ? (
+    <LiveDetailPage key={instanceId} instance={query.data} />
+  ) : (
+    <LoadingState label="正在加载实盘实例" />
+  )
 }
 
 function BacktestDetailRoute() {
@@ -48,8 +64,12 @@ function BacktestDetailRoute() {
     refetchInterval: (result) =>
       ["queued", "running"].includes(result.state.data?.status ?? "") ? 1000 : false,
   })
-  if (query.error) return <p role="alert">无法加载回测：{query.error.message}</p>
-  return query.data ? <BacktestDetailPage run={query.data} /> : <p>正在加载回测结果…</p>
+  if (query.error) return <ErrorState title="无法加载回测" message={query.error.message} />
+  return query.data ? (
+    <BacktestDetailPage run={query.data} />
+  ) : (
+    <LoadingState label="正在加载回测结果" />
+  )
 }
 
 const router = createBrowserRouter([
