@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Plus } from "lucide-react"
 import { useState } from "react"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { IconButton } from "@/components/icon-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -40,15 +41,15 @@ export function InvitationsPage() {
           )}
         </CardContent>
         <CardFooter>
-          <Button
+          <IconButton
+            icon={Plus}
+            label="签发邀请码"
             onClick={async () => {
               const invitation = await createInvitation()
               setToken(invitation.token)
               await client.invalidateQueries({ queryKey: ["admin", "invitations"] })
             }}
-          >
-            签发邀请码
-          </Button>
+          />
         </CardFooter>
       </Card>
       <div>

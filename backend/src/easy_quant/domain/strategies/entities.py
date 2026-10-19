@@ -14,6 +14,17 @@ class StrategyRunStatus(StrEnum):
     TIMED_OUT = "timed_out"
 
 
+class StrategyState(StrEnum):
+    DRAFT = "draft"
+    TESTING = "testing"
+    LIVE = "live"
+
+
+def advanced_strategy_state(current: StrategyState, target: StrategyState) -> StrategyState:
+    order = (StrategyState.DRAFT, StrategyState.TESTING, StrategyState.LIVE)
+    return order[max(order.index(current), order.index(target))]
+
+
 @dataclass(slots=True)
 class StrategyDefinition:
     id: str
@@ -21,6 +32,7 @@ class StrategyDefinition:
     name: str
     description: str = ""
     current_version_id: str | None = None
+    next_version_number: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +44,10 @@ class StrategyVersion:
     content_sha256: str
     created_at: datetime
     parent_version_id: str | None = None
+    state: StrategyState = StrategyState.DRAFT
+    name: str = ""
+    description: str = ""
+    revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)

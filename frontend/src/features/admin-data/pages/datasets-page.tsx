@@ -359,9 +359,11 @@ export function DatasetsPage() {
                                 {item.status === "active" && item.publication_pending && (
                                   <Badge variant="outline">来源尚未发布新数据</Badge>
                                 )}
-                                {item.status === "active" && item.stale && (
-                                  <Badge variant="destructive">已过时</Badge>
-                                )}
+                                {item.status === "active" &&
+                                  item.stale &&
+                                  item.sync_status !== "数据落后" && (
+                                    <Badge variant="destructive">已过时</Badge>
+                                  )}
                                 {item.status === "active" && item.stale && (
                                   <Button
                                     size="sm"

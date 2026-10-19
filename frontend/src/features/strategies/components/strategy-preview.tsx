@@ -31,7 +31,7 @@ export function StrategyPreview({
           <>
             <Link
               className="underline"
-              to={`/strategies?strategy=${encodeURIComponent(strategy.id)}&version=${encodeURIComponent(strategy.version_id)}`}
+              to={`/strategies/${encodeURIComponent(strategy.id)}/versions/${encodeURIComponent(strategy.version_id)}`}
             >
               查看或编辑此策略版本
             </Link>

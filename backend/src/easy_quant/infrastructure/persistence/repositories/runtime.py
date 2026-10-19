@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import StateConflictError
+from easy_quant.domain.strategies.entities import StrategyState
 from easy_quant.infrastructure.persistence.bar_storage import BAR_STORAGE
 from easy_quant.infrastructure.persistence.models.backtesting import (
     BacktestMetricModel,
@@ -33,6 +34,9 @@ from easy_quant.infrastructure.persistence.models.market_data_records import (
     TradingDayModel,
 )
 from easy_quant.infrastructure.persistence.repositories.jobs import SqlAlchemyJobRepository
+from easy_quant.infrastructure.persistence.repositories.strategies import (
+    SqlAlchemyStrategyRepository,
+)
 from easy_quant.infrastructure.persistence.snapshot_spool import SnapshotSpool
 
 
@@ -765,11 +769,15 @@ class InMemoryBacktestStore:
     def save(self, run: dict[str, Any], snapshot_payload: bytes | SnapshotSpool) -> None:
         self.rows[str(run["id"])] = run
 
-    def create_with_job(self, run: dict[str, Any], job: Job, jobs: Any) -> None:
+    def create_with_job(
+        self, run: dict[str, Any], job: Job, jobs: Any, strategies: Any = None
+    ) -> None:
         run_id = str(run["id"])
         self.rows[run_id] = run
         try:
             jobs.enqueue(job)
+            if strategies is not None:
+                strategies.advance_state(run["strategy_version_id"], StrategyState.TESTING)
         except Exception:
             self.rows.pop(run_id, None)
             raise
@@ -790,6 +798,9 @@ class InMemoryBacktestStore:
     def list_for_owner(self, owner_id: str) -> list[dict[str, Any]]:
         return [row for row in self.rows.values() if row["owner_id"] == owner_id]
 
+    def has_for_version(self, version_id: str) -> bool:
+        return any(row["strategy_version_id"] == version_id for row in self.rows.values())
+
 
 class SqlAlchemyBacktestStore:
     def __init__(
@@ -798,12 +809,32 @@ class SqlAlchemyBacktestStore:
         self.session = session
         self.status_sessions = status_sessions
 
-    def create_with_job(self, run: dict[str, Any], job: Job, _jobs: Any) -> None:
+    def create_with_job(
+        self, run: dict[str, Any], job: Job, _jobs: Any, strategies: Any = None
+    ) -> None:
         if self.status_sessions is None:
             raise RuntimeError("回测提交需要独立事务 Session")
         with self.status_sessions() as session, session.begin():
             SqlAlchemyBacktestStore(session).save(run, b"[]", commit=False)
             SqlAlchemyJobRepository(session).enqueue(job, commit=False)
+            if strategies is not None:
+                SqlAlchemyStrategyRepository.advance_state_in_transaction(
+                    session,
+                    run["strategy_version_id"],
+                    StrategyState.TESTING,
+                )
+
+    def has_for_version(self, version_id: str) -> bool:
+        return (
+            self.session.scalar(
+                select(BacktestRunModel.id)
+                .where(
+                    BacktestRunModel.strategy_version_id == version_id,
+                )
+                .limit(1)
+            )
+            is not None
+        )
 
     def save(
         self, run: dict[str, Any], snapshot_payload: bytes | SnapshotSpool, *, commit: bool = True

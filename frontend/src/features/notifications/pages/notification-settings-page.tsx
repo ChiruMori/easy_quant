@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Plus, Save, Send } from "lucide-react"
 import { useState } from "react"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { DeleteResourceButton } from "@/components/delete-resource-button"
+import { IconButton } from "@/components/icon-button"
 import { PageHeader } from "@/components/page-header"
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -116,9 +117,7 @@ export function NotificationSettingsPage() {
             </FieldGroup>
           </CardContent>
           <CardFooter>
-            <Button type="submit" disabled={busy}>
-              添加渠道
-            </Button>
+            <IconButton type="submit" icon={Plus} label="添加渠道" disabled={busy} />
           </CardFooter>
         </form>
       </Card>
@@ -159,13 +158,13 @@ export function NotificationSettingsPage() {
                   required
                   maxLength={160}
                 />
-                <Button type="submit" variant="outline" disabled={busy}>
-                  保存名称
-                </Button>
+                <IconButton type="submit" icon={Save} label="保存名称" disabled={busy} />
               </form>
               <p className="text-sm text-muted-foreground">{item.destination}</p>
             </div>
-            <Button
+            <IconButton
+              icon={Send}
+              label="测试连通性"
               variant="outline"
               disabled={busy || !item.enabled}
               onClick={async () => {
@@ -180,9 +179,7 @@ export function NotificationSettingsPage() {
                   setBusy(false)
                 }
               }}
-            >
-              测试连通性
-            </Button>
+            />
             {!item.enabled && (
               <DeleteResourceButton
                 path={`/notifications/subscriptions/${item.id}`}

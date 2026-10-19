@@ -9,6 +9,7 @@ from sqlalchemy.orm import load_only
 
 from easy_quant.application.ports.resource_lifecycle import ResourceGraph
 from easy_quant.domain.scheduling.entities import Job, JobStatus
+from easy_quant.domain.strategies.entities import StrategyState
 from easy_quant.infrastructure.persistence.models.backtesting import (
     BacktestMetricModel,
     BacktestPeriodModel,
@@ -47,6 +48,12 @@ class InMemoryResourceLifecycleStore:
     def __init__(self, container):
         self.container = container
         self.lock = RLock()
+
+    def add_live_instance(self, instance):
+        self.container.state.strategies.advance_state(
+            instance["strategy_version_id"], StrategyState.LIVE
+        )
+        self.container.state.live_instances[instance["id"]] = instance
 
     @contextmanager
     def guard(self):
@@ -99,6 +106,21 @@ class SqlResourceLifecycleStore:
     def __init__(self, factory):
         self.factory = factory
 
+    def add_live_instance(self, instance):
+        with self.factory() as session, session.begin():
+            session.add(
+                RuntimeDocumentModel(
+                    namespace="live_instances",
+                    key=instance["id"],
+                    payload_json=json.dumps(instance, ensure_ascii=False, default=str),
+                )
+            )
+            SqlAlchemyStrategyRepository.advance_state_in_transaction(
+                session,
+                instance["strategy_version_id"],
+                StrategyState.LIVE,
+            )
+
     @contextmanager
     def guard(self):
         # 与创建、引用变更共享锁；独立连接使既有适配器的短提交不会提前释放锁。
@@ -119,7 +141,14 @@ class SqlResourceLifecycleStore:
             version_rows = list(
                 session.scalars(
                     select(StrategyVersionModel)
-                    .options(load_only(StrategyVersionModel.id, StrategyVersionModel.strategy_id))
+                    .options(
+                        load_only(
+                            StrategyVersionModel.id,
+                            StrategyVersionModel.strategy_id,
+                            StrategyVersionModel.number,
+                            StrategyVersionModel.name,
+                        )
+                    )
                     .with_for_update()
                 )
             )
@@ -242,3 +271,5 @@ class SqlResourceLifecycleStore:
             for row in strategy_rows:
                 if row.id not in graph.strategies:
                     session.delete(row)
+                else:
+                    row.current_version_id = graph.strategies[row.id].current_version_id

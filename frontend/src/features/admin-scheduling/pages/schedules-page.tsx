@@ -1,7 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Pencil, Plus, Save, X } from "lucide-react"
 import { useState } from "react"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { IconButton } from "@/components/icon-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -167,14 +169,13 @@ export function SchedulesPage() {
             </FieldGroup>
           </CardContent>
           <CardFooter>
-            <Button type="submit" disabled={pending}>
-              {pending ? "保存中…" : editing ? "保存计划" : "创建任务"}
-            </Button>
-            {editing && (
-              <Button variant="outline" type="button" onClick={() => setEditing(null)}>
-                取消编辑
-              </Button>
-            )}
+            <IconButton
+              type="submit"
+              disabled={pending}
+              icon={editing ? Save : Plus}
+              label={editing ? "保存计划" : "创建任务"}
+            />
+            {editing && <IconButton icon={X} label="取消编辑" onClick={() => setEditing(null)} />}
           </CardFooter>
         </form>
       </Card>
@@ -224,17 +225,15 @@ export function SchedulesPage() {
               </TableCell>
               <TableCell>
                 <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
+                  <IconButton
+                    icon={Pencil}
+                    label="编辑"
                     disabled={item.enabled || pending}
                     onClick={() => {
                       setEditing(item)
                       setTaskType(item.task_type)
                     }}
-                  >
-                    编辑
-                  </Button>
+                  />
                   <Button
                     variant="outline"
                     size="sm"

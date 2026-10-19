@@ -1,25 +1,21 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
+import { ArrowRight, ChevronLeft, ChevronRight, Eye, Plus, Search } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Link, Navigate, useSearchParams } from "react-router-dom"
 
-import { ErrorState, LoadingState } from "@/components/app-shell"
-import { DatePicker } from "@/components/date-picker"
+import { EmptyState, ErrorState, LoadingState } from "@/components/app-shell"
 import { DeleteResourceButton } from "@/components/delete-resource-button"
+import { IconButton, IconLink } from "@/components/icon-button"
 import { PageHeader } from "@/components/page-header"
-import { RunTimingPanel } from "@/components/run-timing"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+} from "@/components/ui/pagination"
 import {
   Select,
   SelectContent,
@@ -28,372 +24,254 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { localizedLabel } from "@/lib/labels"
-
 import {
-  addStrategyVersion,
-  createStrategy,
-  listStrategies,
-  listStrategyRuns,
-  listStrategyTemplates,
-  runStrategy,
-} from "../api"
-import { StrategyEditor } from "../components/strategy-editor"
-import type { StrategyRun } from "../types"
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 
-const FALLBACK = `def before_market(context, parameters):
-    return []
+import { listStrategies, listWorkspace, versionPath } from "../api"
+import { EditStrategyAction, strategyStateLabel } from "../components/strategy-actions"
 
-
-def on_market(context, parameters):
-    return []
-
-
-def after_market(context, parameters):
-    return []
-`
-const loadDraft = () => {
-  try {
-    return JSON.parse(localStorage.getItem("strategy-draft") ?? "{}") as {
-      name?: string
-      description?: string
-      source?: string
-    }
-  } catch {
-    return {}
-  }
+function LegacyStrategyEntry({ id, versionId }: { id: string; versionId: string | null }) {
+  const query = useQuery({ queryKey: ["strategies"], queryFn: listStrategies, enabled: !versionId })
+  const selected = versionId ?? query.data?.find((row) => row.id === id)?.current_version_id
+  if (selected) return <Navigate to={versionPath(id, selected)} replace />
+  if (query.isLoading) return <LoadingState label="正在加载策略" />
+  return <ErrorState title="无法打开策略" message={query.error?.message ?? "指定策略不存在"} />
 }
 
 export function StrategiesPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const loadedReference = useRef("")
-  const queryClient = useQueryClient()
-  const strategies = useQuery({ queryKey: ["strategies"], queryFn: listStrategies })
-  const templates = useQuery({ queryKey: ["strategy-templates"], queryFn: listStrategyTemplates })
-  const draft = loadDraft()
-  const [selected, setSelected] = useState("new")
-  const [allowMock, setAllowMock] = useState(false)
-  const [name, setName] = useState(draft.name ?? "")
-  const [description, setDescription] = useState(draft.description ?? "")
-  const [source, setSource] = useState(draft.source ?? FALLBACK)
-  const [result, setResult] = useState<StrategyRun | null>(null)
-  const [tab, setTab] = useState("editor")
-  const [tradingDay, setTradingDay] = useState("")
-  const [message, setMessage] = useState("")
-  useEffect(() => {
-    const id = searchParams.get("strategy")
-    const versionId = searchParams.get("version")
-    const item = strategies.data?.find((row) => row.id === id)
-    if (!item) return
-    const reference = `${id}:${versionId}`
-    if (loadedReference.current === reference) return
-    const version = versionId
-      ? item.versions.find((row) => row.id === versionId)
-      : item.versions.at(-1)
-    if (!version) {
-      setMessage("指定策略版本不存在")
-      return
-    }
-    loadedReference.current = reference
-    setSelected(item.id)
-    setName(item.name)
-    setDescription(item.description)
-    setSource(version.source_code)
-    setMessage(`正在编辑 v${version.number}，保存将生成新版本`)
-  }, [searchParams, strategies.data])
+  const [params] = useSearchParams()
+  const id = params.get("strategy")
+  return id ? <LegacyStrategyEntry id={id} versionId={params.get("version")} /> : <StrategyList />
+}
 
-  useEffect(() => {
-    localStorage.setItem("strategy-draft", JSON.stringify({ name, description, source }))
-  }, [name, description, source])
-  const save = useMutation({
-    mutationFn: async () => {
-      if (selected === "new") {
-        const created = await createStrategy({ name, description, source_code: source })
-        return created.id
-      }
-      await addStrategyVersion(selected, source)
-      return selected
-    },
-    onSuccess: async (strategyId) => {
-      setSelected(strategyId)
-      setMessage("策略版本已保存")
-      localStorage.removeItem("strategy-draft")
-      await queryClient.invalidateQueries({ queryKey: ["strategies"] })
-    },
-    onError: (error) => setMessage(error.message),
+function StrategyList() {
+  const [params, setParams] = useSearchParams()
+  const page = Math.max(1, Number(params.get("page")) || 1)
+  const search = params.get("search") ?? ""
+  const state = params.get("state") ?? ""
+  const [searchInput, setSearchInput] = useState(search)
+  const query = useQuery({
+    queryKey: ["strategies", "workspace", page, search, state],
+    queryFn: () => listWorkspace(page, search, state),
   })
-  const runs = useQuery({
-    queryKey: ["strategy-runs", selected],
-    queryFn: () => listStrategyRuns(selected),
-    enabled: selected !== "new",
-    refetchInterval: (query) =>
-      query.state.data?.some((item) => ["queued", "running"].includes(item.status)) ? 1000 : false,
-  })
-  useEffect(() => {
-    if (!result) return
-    const refreshed = runs.data?.find((item) => item.id === result.id)
-    if (refreshed) setResult(refreshed)
-  }, [result, runs.data])
-  if (strategies.isLoading || templates.isLoading)
-    return <LoadingState label="正在加载策略工作台" />
-  if (strategies.error || templates.error)
-    return (
-      <ErrorState
-        title="无法加载策略"
-        message={(strategies.error ?? templates.error)?.message ?? "未知错误"}
-      />
-    )
-  const visibleRun = result ?? runs.data?.[0] ?? null
-  const choose = (value: string) => {
-    setSelected(value)
-    setResult(null)
-    setMessage("")
-    if (value === "new") {
-      setName("")
-      setDescription("")
-      setSource(FALLBACK)
-      return
-    }
-    const item = strategies.data?.find((row) => row.id === value)
-    if (item) {
-      setName(item.name)
-      setDescription(item.description)
-      setSource(item.versions.at(-1)?.source_code ?? FALLBACK)
-    }
+  const totalPages = Math.max(
+    1,
+    Math.ceil((query.data?.total ?? 0) / (query.data?.page_size ?? 20)),
+  )
+  function change(nextPage: number, nextSearch = search, nextState = state) {
+    setParams({
+      page: String(nextPage),
+      ...(nextSearch ? { search: nextSearch } : {}),
+      ...(nextState ? { state: nextState } : {}),
+    })
   }
+  function href(nextPage: number) {
+    return `/strategies?${new URLSearchParams({ page: String(nextPage), search, state })}`
+  }
+  useEffect(() => {
+    if (query.data && page > totalPages)
+      setParams(
+        (current) => {
+          const next = new URLSearchParams(current)
+          next.set("page", String(totalPages))
+          return next
+        },
+        { replace: true },
+      )
+  }, [query.data, page, totalPages, setParams])
+  const pages = Array.from(
+    { length: Math.min(5, totalPages) },
+    (_, index) => Math.max(1, Math.min(page - 2, totalPages - 4)) + index,
+  )
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex min-w-0 flex-col gap-5">
       <PageHeader
         title="策略工作台"
-        description="使用平台因子选股并返回交易信号；每次保存都会创建不可变版本。"
+        description="管理策略草稿与历史版本，查看回测阶段及关联实盘。"
+        actions={<IconLink icon={Plus} label="新建策略" to="/strategies/new" />}
       />
-      {selected !== "new" && (
-        <div>
-          <DeleteResourceButton
-            path={`/strategies/${selected}`}
-            label="删除策略"
-            description="删除策略会清理其全部版本与关联测试数据。"
-            disabled={save.isPending}
-            onDeleted={() => {
-              choose("new")
-              loadedReference.current = ""
-              setSearchParams({})
-              localStorage.removeItem("strategy-draft")
-            }}
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <form
+          className="flex min-w-0 flex-1 basis-64 gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            change(1, searchInput.trim())
+          }}
+        >
+          <Input
+            aria-label="搜索策略"
+            placeholder="搜索策略名称"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
           />
-        </div>
-      )}
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="editor">编辑策略</TabsTrigger>
-          <TabsTrigger value="result">最近运行</TabsTrigger>
-        </TabsList>
-        <TabsContent value="editor">
-          <Card>
-            <CardHeader>
-              <CardTitle>策略定义</CardTitle>
-              <CardDescription>草稿自动保存在当前浏览器，已保存版本由平台管理。</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-5">
-              <FieldGroup className="md:grid md:grid-cols-2">
-                <Field>
-                  <FieldLabel>已有策略</FieldLabel>
-                  <Select value={selected} onValueChange={choose}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="新建策略" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="new">新建策略</SelectItem>
-                        {strategies.data?.map((item) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            {item.name} · v{item.versions.at(-1)?.number ?? 0}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="strategy-name">名称</FieldLabel>
-                  <Input
-                    id="strategy-name"
-                    value={name}
-                    disabled={selected !== "new"}
-                    onChange={(event) => setName(event.target.value)}
-                    required
-                  />
-                </Field>
-                <Field className="md:col-span-2">
-                  <FieldLabel htmlFor="strategy-description">说明</FieldLabel>
-                  <Input
-                    id="strategy-description"
-                    value={description}
-                    disabled={selected !== "new"}
-                    onChange={(event) => setDescription(event.target.value)}
-                  />
-                  <FieldDescription>说明选股逻辑、使用的因子和信号含义。</FieldDescription>
-                </Field>
-              </FieldGroup>
-              <div className="flex flex-wrap gap-2">
-                {templates.data?.map((template) => (
-                  <Button
-                    key={template.key}
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setSource(template.source_code)
-                      if (selected === "new" && !name) setName(template.name)
-                    }}
-                  >
-                    使用{template.name}
-                  </Button>
-                ))}
-              </div>
-              <StrategyEditor value={source} onChange={setSource} />
-              {message && (
-                <Alert>
-                  <AlertTitle>策略状态</AlertTitle>
-                  <AlertDescription>{message}</AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-            <CardFooter className="flex flex-col items-start gap-2">
-              <div className="flex flex-wrap items-end gap-2">
-                <Button disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
-                  {save.isPending
-                    ? "保存中…"
-                    : selected === "new"
-                      ? "验证并创建策略"
-                      : "验证并保存新版本"}
-                </Button>
-                <Field>
-                  <FieldLabel htmlFor="strategy-run-day">快速测试交易日</FieldLabel>
-                  <DatePicker
-                    id="strategy-run-day"
-
-                    value={tradingDay}
-                    onValueChange={(dateValue) => setTradingDay(dateValue)}
-                  />
-                  <FieldDescription>
-                    快测只运行所选交易日，按因子窗口读取所需预热历史，不会模拟此前交易。
-                  </FieldDescription>
-                </Field>
-                <Button
-                  variant="outline"
-                  disabled={selected === "new" || !tradingDay}
-                  onClick={async () => {
-                    try {
-                      if (selected === "new") return
-                      const queued = await runStrategy(
-                        selected,
-                        tradingDay,
-                        { quantity: 100 },
-                        allowMock,
-                      )
-                      setResult(queued)
-                      setMessage(`快速测试任务 ${queued.id} 已进入队列`)
-                      setTab("result")
-                      await runs.refetch()
-                    } catch (error) {
-                      setMessage(error instanceof Error ? error.message : "无法创建快速测试任务")
-                    }
-                  }}
-                >
-                  运行当前版本
-                </Button>
-              </div>
-              <Field>
-                <FieldLabel htmlFor="quick-test-mock">允许快测补足技术指标历史</FieldLabel>
-                <Switch id="quick-test-mock" checked={allowMock} onCheckedChange={setAllowMock} />
-                <FieldDescription>
-                  仅重复首个已知价格补足技术窗口；不补造财报，结果会标记 Mock，不代表真实收益。
-                </FieldDescription>
-              </Field>
+          <IconButton icon={Search} label="搜索策略" type="submit" />
+        </form>
+        <Select
+          value={state || "all"}
+          onValueChange={(value) => change(1, search, value === "all" ? "" : value)}
+        >
+          <SelectTrigger aria-label="策略状态" className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">全部状态</SelectItem>
+              {Object.entries(strategyStateLabel).map(([key, label]) => (
+                <SelectItem key={key} value={key}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+      {query.isLoading && <LoadingState label="正在加载策略列表" />}
+      {query.error && <ErrorState title="无法加载策略列表" message={query.error.message} />}
+      {query.data &&
+        (query.data.items.length ? (
+          <>
+            <Card className="min-w-0">
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>策略 / 版本</TableHead>
+                      <TableHead>创建时间</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead>关联实盘</TableHead>
+                      <TableHead className="text-right">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {query.data.items.map((row) => (
+                      <TableRow key={row.version_id}>
+                        <TableCell>
+                          <Link
+                            className="font-medium underline-offset-4 hover:underline"
+                            to={versionPath(row.id, row.version_id)}
+                          >
+                            {row.name}
+                          </Link>
+                          <p className="text-xs text-muted-foreground">v{row.number}</p>
+                        </TableCell>
+                        <TableCell>
+                          <time dateTime={row.created_at}>
+                            {new Date(row.created_at).toLocaleString("zh-CN", {
+                              timeZone: "Asia/Shanghai",
+                              hour12: false,
+                            })}
+                          </time>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={row.state === "live" ? "success" : "secondary"}>
+                            {strategyStateLabel[row.state]}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {row.live_instances.length ? (
+                            <div className="flex flex-col gap-1">
+                              {row.live_instances.map((live) => (
+                                <Link key={live.id} className="underline" to={`/live/${live.id}`}>
+                                  {live.name}
+                                </Link>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">无关联实盘</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex justify-end gap-2">
+                            <IconLink
+                              icon={Eye}
+                              label={`查看 ${row.name} v${row.number}`}
+                              to={versionPath(row.id, row.version_id)}
+                            />
+                            <EditStrategyAction strategy={row} />
+                            <DeleteResourceButton
+                              path={versionPath(row.id, row.version_id)}
+                              label="删除策略"
+                              triggerLabel={`删除 ${row.name} v${row.number}`}
+                              description={`将删除“${row.name} v${row.number}”及其关联快测、回测数据。关联实盘存在时不可删除。`}
+                            />
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">
-                MA、RSI 按因子所需窗口预热，回测仍覆盖完整日期区间。动态历史与统计/EMA 默认回溯 250
-                个交易日；可声明 HISTORY_TRADING_DAYS（最多 2500），保存为新版本。
+                共 {query.data.total} 个版本 · 第 {page} / {totalPages} 页
               </p>
-            </CardFooter>
-          </Card>
-        </TabsContent>
-        <TabsContent value="result">
-          <Card>
-            <CardHeader>
-              <CardTitle>运行输出</CardTitle>
-              <CardDescription>运行只生成信号，不会执行真实交易。</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {runs.error && (
-                <Alert variant="destructive">
-                  <AlertTitle>无法加载运行记录</AlertTitle>
-                  <AlertDescription>{runs.error.message}</AlertDescription>
-                </Alert>
-              )}
-              {runs.data && runs.data.length > 1 && (
-                <div className="mb-4 flex flex-wrap gap-2">
-                  {runs.data.slice(0, 10).map((run) => (
-                    <Button key={run.id} size="sm" variant="outline" onClick={() => setResult(run)}>
-                      {run.trading_day} · {localizedLabel(run.status)}
-                    </Button>
+              <Pagination aria-label="策略列表分页" className="m-0 w-auto">
+                <PaginationContent>
+                  <PaginationItem>
+                    {page > 1 ? (
+                      <IconLink icon={ChevronLeft} label="上一页" to={href(page - 1)} />
+                    ) : (
+                      <IconButton icon={ChevronLeft} label="上一页" disabled />
+                    )}
+                  </PaginationItem>
+                  {pages.map((number) => (
+                    <PaginationItem key={number}>
+                      <PaginationLink
+                        href={href(number)}
+                        aria-label={`第 ${number} 页`}
+                        isActive={number === page}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          change(number)
+                        }}
+                      >
+                        {number}
+                      </PaginationLink>
+                    </PaginationItem>
                   ))}
-                </div>
-              )}
-              {visibleRun ? (
-                <div className="flex flex-col gap-3">
-                  <Badge variant={visibleRun.status === "failed" ? "destructive" : "secondary"}>
-                    {localizedLabel(visibleRun.status)}
-                  </Badge>
-                  {visibleRun.error && (
-                    <Alert variant="destructive">
-                      <AlertTitle>运行失败</AlertTitle>
-                      <AlertDescription>{visibleRun.error}</AlertDescription>
-                    </Alert>
-                  )}
-                  <p className="text-sm text-muted-foreground">
-                    交易日 {visibleRun.trading_day} · 任务 {visibleRun.id}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    盘中模拟报价使用开收盘均值，包含当日收盘信息。
-                  </p>
-                  {visibleRun.allow_mock && (
-                    <Badge variant="outline">
-                      Mock 模式 · 补值{" "}
-                      {visibleRun.mock_usage?.reduce((total, item) => total + item.count, 0) ?? 0}{" "}
-                      条
-                    </Badge>
-                  )}
-                  {visibleRun.portfolio && (
-                    <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-                      模拟组合：{JSON.stringify(visibleRun.portfolio, null, 2)}
-                    </pre>
-                  )}
-                  <RunTimingPanel timing={visibleRun.timing} />
-                  {visibleRun.phase_results.map((phase) => (
-                    <div className="flex flex-col gap-2" key={phase.phase}>
-                      <h3 className="font-medium">{localizedLabel(phase.phase)}</h3>
-                      <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-                        {JSON.stringify(phase.signals, null, 2)}
-                      </pre>
-                      {phase.stdout && <pre>{phase.stdout}</pre>}
-                    </div>
-                  ))}
-                  {visibleRun.status === "queued" && (
-                    <p className="text-muted-foreground">等待 worker 领取，页面会自动刷新结果。</p>
-                  )}
-                  {visibleRun.status === "running" && (
-                    <p className="text-muted-foreground">worker 正在处理，页面会自动刷新结果。</p>
-                  )}
-                </div>
-              ) : (
-                <p className="text-muted-foreground">尚未运行策略。</p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+                  <PaginationItem>
+                    {page < totalPages ? (
+                      <IconLink icon={ChevronRight} label="下一页" to={href(page + 1)} />
+                    ) : (
+                      <IconButton icon={ChevronRight} label="下一页" disabled />
+                    )}
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+              <form
+                className="flex items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  const data = new FormData(event.currentTarget)
+                  change(Math.max(1, Math.min(totalPages, Number(data.get("page")) || 1)))
+                }}
+              >
+                <Input
+                  name="page"
+                  aria-label="跳转页码"
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  className="w-20"
+                  required
+                />
+                <IconButton icon={ArrowRight} label="跳转页码" type="submit" />
+              </form>
+            </div>
+          </>
+        ) : (
+          <EmptyState
+            title="暂无策略版本"
+            message={search || state ? "请调整搜索或状态筛选。" : "点击右上角加号创建策略草稿。"}
+          />
+        ))}
     </div>
   )
 }

@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { ChartNoAxesCombined, CheckCheck, Clock3, Plus } from "lucide-react"
-import { Link } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { IconLink } from "@/components/icon-button"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 import { listBacktests } from "../api"
@@ -21,14 +20,7 @@ export function BacktestListPage() {
       <PageHeader
         title="回测研究"
         description="验证策略的历史表现，追溯每一次模拟的输入与结果。"
-        actions={
-          <Button asChild>
-            <Link to="/backtests/new">
-              <Plus data-icon="inline-start" />
-              创建回测
-            </Link>
-          </Button>
-        }
+        actions={<IconLink icon={Plus} label="创建回测" to="/backtests/new" />}
       />
       <div className="grid gap-4 sm:grid-cols-3">
         <MetricCard

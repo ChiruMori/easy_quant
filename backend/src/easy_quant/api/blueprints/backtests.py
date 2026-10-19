@@ -10,6 +10,7 @@ from easy_quant.api.schemas.backtests import BacktestCompareRequest, BacktestCre
 from easy_quant.api.strategy_context import strategy_context
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.domain.scheduling.entities import Job
+from easy_quant.domain.strategies.entities import StrategyState, advanced_strategy_state
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("backtests", __name__, url_prefix="/api/v1/backtests")
@@ -45,20 +46,11 @@ def _with_job_failure(run):
 
 def _find_owned_version(owner_id: str, version_id: str):
     repository = get_container().state.strategies
-    definition = next(
-        (
-            item
-            for item in repository.definitions.values()
-            if item.owner_id == owner_id
-            and any(version.id == version_id for version in repository.versions(item.id))
-        ),
-        None,
-    )
-    if definition is None:
+    version = repository.get_version(version_id)
+    definition = repository.get_definition(version.strategy_id) if version is not None else None
+    if definition is None or definition.owner_id != owner_id:
         return None
-    return next(
-        (item for item in repository.versions(definition.id) if item.id == version_id), None
-    )
+    return version
 
 
 @blueprint.post("")
@@ -66,7 +58,8 @@ def _find_owned_version(owner_id: str, version_id: str):
 @resource_mutation
 def create_backtest():
     payload = BacktestCreateRequest.model_validate(request.get_json() or {})
-    if _find_owned_version(g.current_user.id, payload.strategy_version_id) is None:
+    version = _find_owned_version(g.current_user.id, payload.strategy_version_id)
+    if version is None:
         return success(None, status=404)
     container = get_container()
     run_id = f"backtest-{UuidGenerator().new()}"
@@ -102,6 +95,7 @@ def create_backtest():
             container.authentication.clock.now(),
         ),
         container.jobs,
+        container.state.strategies,
     )
     record_audit(
         container,
@@ -109,7 +103,13 @@ def create_backtest():
         action="enqueue",
         resource_type="backtest",
         resource_id=run_id,
-        after={"status": "queued", "job_id": job_id},
+        before={"strategy_state": version.state.value},
+        after={
+            "status": "queued",
+            "job_id": job_id,
+            "strategy_version_id": version.id,
+            "strategy_state": advanced_strategy_state(version.state, StrategyState.TESTING).value,
+        },
     )
     return success(run, status=202)
 

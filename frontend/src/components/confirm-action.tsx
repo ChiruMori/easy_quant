@@ -1,5 +1,7 @@
+import type { LucideIcon } from "lucide-react"
 import { useRef, useState } from "react"
 
+import { IconButton } from "@/components/icon-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -21,6 +23,8 @@ export function ConfirmAction({
   destructive = true,
   open: controlledOpen,
   onOpenChange,
+  icon,
+  triggerLabel,
 }: {
   open?: boolean
   onOpenChange?: (open: boolean) => void
@@ -31,6 +35,8 @@ export function ConfirmAction({
   action: () => Promise<unknown>
   disabled?: boolean
   destructive?: boolean
+  icon?: LucideIcon
+  triggerLabel?: string
 }) {
   const [localOpen, setLocalOpen] = useState(false)
   const open = controlledOpen ?? localOpen
@@ -58,16 +64,25 @@ export function ConfirmAction({
   }
   return (
     <>
-      {!onOpenChange && (
-        <Button
-          type="button"
-          variant={destructive ? "destructive" : "outline"}
-          disabled={disabled || busy}
-          onClick={() => void inspect()}
-        >
-          {label}
-        </Button>
-      )}
+      {!onOpenChange &&
+        (icon ? (
+          <IconButton
+            icon={icon}
+            label={triggerLabel ?? label}
+            variant={destructive ? "destructive" : "outline"}
+            disabled={disabled || busy}
+            onClick={() => void inspect()}
+          />
+        ) : (
+          <Button
+            type="button"
+            variant={destructive ? "destructive" : "outline"}
+            disabled={disabled || busy}
+            onClick={() => void inspect()}
+          >
+            {label}
+          </Button>
+        ))}
       <AlertDialog
         open={open}
         onOpenChange={(value) => {
@@ -77,7 +92,9 @@ export function ConfirmAction({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{title}</AlertDialogTitle>
-            <AlertDialogDescription className="break-words">{details}</AlertDialogDescription>
+            <AlertDialogDescription className="break-words">
+              {prepare ? details : description}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           {busy && <p role="status">正在处理，请稍候…</p>}
           {error && (

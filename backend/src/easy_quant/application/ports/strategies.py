@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from easy_quant.domain.strategies.entities import StrategyDefinition, StrategyRun, StrategyVersion
+from easy_quant.domain.strategies.entities import (
+    StrategyDefinition,
+    StrategyRun,
+    StrategyState,
+    StrategyVersion,
+)
 
 
 class StrategyRepository(Protocol):
@@ -10,6 +15,9 @@ class StrategyRepository(Protocol):
     def get_definition(self, strategy_id: str) -> StrategyDefinition | None: ...
     def add_version(self, version: StrategyVersion) -> None: ...
     def versions(self, strategy_id: str) -> tuple[StrategyVersion, ...]: ...
+    def get_version(self, version_id: str) -> StrategyVersion | None: ...
+    def save_draft(self, version: StrategyVersion, expected_revision: int) -> None: ...
+    def advance_state(self, version_id: str, state: StrategyState) -> None: ...
 
 
 class StrategyValidator(Protocol):

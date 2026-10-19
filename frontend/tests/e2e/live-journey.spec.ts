@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test"
 
-test("通知订阅入口与真实接口可用", async ({ page }) => {
+test("通知订阅入口与真实接口可用", async ({ page }, testInfo) => {
   await page.goto("/login")
   await page.getByLabel("用户名").fill("admin")
   await page.getByLabel("密码").fill("change-this-admin-password")
@@ -15,4 +15,11 @@ test("通知订阅入口与真实接口可用", async ({ page }) => {
   await expect(page.getByText("***").last()).toBeVisible()
   await page.getByRole("button", { name: "测试连通性" }).last().click()
   await expect(page.getByText("测试消息已发送，请检查接收端")).toBeVisible()
+  await page.getByRole("switch", { name: "启用 测试渠道" }).click()
+  await expect(page.getByRole("button", { name: "删除渠道", exact: true })).toBeVisible()
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.screenshot({
+    path: testInfo.outputPath("notification-icon-actions.png"),
+    fullPage: true,
+  })
 })

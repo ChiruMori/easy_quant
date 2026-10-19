@@ -108,6 +108,19 @@ afterEach(() => {
 })
 
 describe("数据管理主旅程", () => {
+  it("数据落后与已过时同义时只显示一个状态标签", () => {
+    controls.showStale = true
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <DatasetsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const row = screen.getByRole("row", { name: /000016/ })
+    expect(within(row).getByText("数据落后")).toBeInTheDocument()
+    expect(within(row).queryByText("已过时")).not.toBeInTheDocument()
+  })
   it("停牌覆盖优先，隐藏落后、发布等待和日线同步入口", () => {
     controls.showStale = true
     controls.suspended = true

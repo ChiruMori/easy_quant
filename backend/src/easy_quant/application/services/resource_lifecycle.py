@@ -18,11 +18,20 @@ class ResourceLifecycleService:
         instances = docs.get("live_instances", {})
         versions = set()
         runs = set()
-        if kind == "strategy":
-            item = graph.strategies.get(identifier)
+        if kind in {"strategy", "strategy_version"}:
+            selected = graph.versions.get(identifier) if kind == "strategy_version" else None
+            if kind == "strategy_version" and selected is None:
+                raise NotFoundError(kind)
+            item = graph.strategies.get(
+                selected.strategy_id if selected is not None else identifier
+            )
             if item is None or item.owner_id != owner_id:
                 raise NotFoundError(kind)
-            versions = {key for key, row in graph.versions.items() if row.strategy_id == identifier}
+            versions = (
+                {identifier}
+                if selected is not None
+                else {key for key, row in graph.versions.items() if row.strategy_id == identifier}
+            )
             runs = {
                 key
                 for key, row in graph.backtests.items()
@@ -39,7 +48,7 @@ class ResourceLifecycleService:
                     f"已有实盘在运行或保留数据，不可删除策略：{names}。"
                     "如需删除策略，请先手动删除相关实盘数据（运行或暂停的实盘须先终止）。"
                 )
-            name = item.name
+            name = (selected.name or item.name) if selected is not None else item.name
         elif kind == "live":
             item = instances.get(identifier)
             if item is None or item["owner_id"] != owner_id:
@@ -73,10 +82,10 @@ class ResourceLifecycleService:
         quick = [
             job
             for job in graph.jobs.values()
-            if kind == "strategy"
+            if kind in {"strategy", "strategy_version"}
             and job.job_type == "strategy.run"
             and (
-                job.payload.get("strategy_id") == identifier
+                (kind == "strategy" and job.payload.get("strategy_id") == identifier)
                 or job.payload.get("strategy_version_id") in versions
             )
         ]
@@ -84,7 +93,7 @@ class ResourceLifecycleService:
             job
             for job in graph.jobs.values()
             if job in quick
-            or (kind == "strategy" and job.payload.get("backtest_id") in runs)
+            or (kind in {"strategy", "strategy_version"} and job.payload.get("backtest_id") in runs)
             or (kind == "live" and job.payload.get("instance_id") == identifier)
         ]
         if any(job.status.value == "running" for job in related):
@@ -103,10 +112,19 @@ class ResourceLifecycleService:
                 raise StateConflictError("删除前必须二次确认", summary)
             docs = graph.documents
             removed_deliveries = set()
-            if kind == "strategy":
-                versions = {
-                    key for key, row in graph.versions.items() if row.strategy_id == identifier
-                }
+            if kind in {"strategy", "strategy_version"}:
+                strategy_id = (
+                    graph.versions[identifier].strategy_id
+                    if kind == "strategy_version"
+                    else identifier
+                )
+                versions = (
+                    {identifier}
+                    if kind == "strategy_version"
+                    else {
+                        key for key, row in graph.versions.items() if row.strategy_id == strategy_id
+                    }
+                )
                 runs = {
                     key
                     for key, row in graph.backtests.items()
@@ -115,7 +133,7 @@ class ResourceLifecycleService:
                 self._remove_jobs(
                     graph,
                     lambda job: (
-                        job.payload.get("strategy_id") == identifier
+                        (kind == "strategy" and job.payload.get("strategy_id") == identifier)
                         or job.payload.get("strategy_version_id") in versions
                         or job.payload.get("backtest_id") in runs
                     ),
@@ -124,7 +142,15 @@ class ResourceLifecycleService:
                     del graph.backtests[key]
                 for key in versions:
                     del graph.versions[key]
-                del graph.strategies[identifier]
+                remaining = [
+                    row for row in graph.versions.values() if row.strategy_id == strategy_id
+                ]
+                if remaining:
+                    graph.strategies[strategy_id].current_version_id = max(
+                        remaining, key=lambda row: row.number
+                    ).id
+                else:
+                    del graph.strategies[strategy_id]
             elif kind == "live":
                 recommendations = docs.setdefault("recommendations", {}).pop(identifier, [])
                 rec_ids = {row["id"] for row in recommendations}

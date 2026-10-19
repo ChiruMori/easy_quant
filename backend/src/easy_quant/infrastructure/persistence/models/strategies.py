@@ -14,6 +14,7 @@ class StrategyModel(Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     current_version_id: Mapped[str | None] = mapped_column(String(36))
+    next_version_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class StrategyVersionModel(Base):
@@ -28,3 +29,7 @@ class StrategyVersionModel(Base):
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     parent_version_id: Mapped[str | None] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    name: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

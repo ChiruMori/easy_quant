@@ -3,6 +3,7 @@ import { Activity, ArrowRight, ChartNoAxesCombined, FlaskConical, Plus } from "l
 import { Link } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { IconLink } from "@/components/icon-button"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -63,20 +64,13 @@ export function DashboardPage() {
       <PageHeader
         title="研究概览"
         description="从策略研究到实际跟踪，掌握当前工作进展。"
-        actions={
-          <Button asChild>
-            <Link to="/backtests/new">
-              <Plus data-icon="inline-start" />
-              创建回测
-            </Link>
-          </Button>
-        }
+        actions={<IconLink icon={Plus} label="创建回测" to="/backtests/new" />}
       />
       <div className="grid gap-4 sm:grid-cols-3">
         <MetricCard
           label="已保存策略"
           value={strategies.data.length}
-          description="每次保存保留不可变版本"
+          description="草稿可编辑，回测与实盘版本锁定"
           icon={FlaskConical}
         />
         <MetricCard

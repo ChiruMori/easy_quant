@@ -36,7 +36,7 @@ test("360px 日期选择、关联阻止、取消和删除失败恢复", async ({
         liveExists = false
       }
       if (path === "/notifications/subscriptions/c") channelExists = false
-      if (path === "/strategies/s") strategyExists = false
+      if (path === "/strategies/s/versions/v") strategyExists = false
       return route.fulfill({ json: { data: { deleted: true } } })
     }
     if (path.endsWith("/deletion-preview")) {
@@ -57,6 +57,35 @@ test("360px 日期选择、关联阻止、取消和删除失败恢复", async ({
       "/auth/me": { user: { id: "u", username: "研究员", role: "admin", status: "active" } },
       "/strategies": strategyExists ? [strategy] : [],
       "/strategies/templates": [],
+      "/strategies/workspace": {
+        items: strategyExists
+          ? [
+              {
+                id: "s",
+                version_id: "v",
+                name: strategy.name,
+                number: 1,
+                state: "testing",
+                created_at: "2026-09-29T00:00:00Z",
+                live_instances: [],
+              },
+            ]
+          : [],
+        total: strategyExists ? 1 : 0,
+        page: 1,
+        page_size: 20,
+      },
+      "/strategies/s/versions/v": {
+        id: "s",
+        version_id: "v",
+        name: strategy.name,
+        number: 1,
+        state: "testing",
+        revision: 0,
+        created_at: "2026-09-29T00:00:00Z",
+        source_code: strategy.versions[0].source_code,
+        live_instances: [],
+      },
       "/strategies/s/runs": [],
       "/live-instances": liveExists
         ? [

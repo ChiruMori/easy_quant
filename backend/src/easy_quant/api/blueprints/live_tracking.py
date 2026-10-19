@@ -37,7 +37,6 @@ def delete_live(instance_id: str):
 @resource_mutation
 def start_live():
     payload = StartLiveRequest.model_validate(request.get_json() or {}).model_dump(mode="json")
-    instances = get_container().state.live_instances
     backtest = get_container().backtests.get(str(payload.get("backtest_id", "")))
     if (
         backtest is None
@@ -48,6 +47,12 @@ def start_live():
     strategy_version_id = str(payload.get("strategy_version_id") or backtest["strategy_version_id"])
     if strategy_version_id != backtest["strategy_version_id"]:
         return success(None, status=409)
+    version = get_container().state.strategies.get_version(strategy_version_id)
+    definition = (
+        get_container().state.strategies.get_definition(version.strategy_id) if version else None
+    )
+    if definition is None or definition.owner_id != g.current_user.id:
+        return success(None, status=404)
     if (
         backtest.get("allow_mock")
         or backtest.get("mock_usage")
@@ -84,7 +89,7 @@ def start_live():
         "initial_positions": dict(payload["positions"]),
         "after_market_enabled": bool(payload.get("after_market_enabled", False)),
     }
-    instances[identifier] = item
+    get_container().resource_lifecycle.add_live_instance(item)
     local_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
     schedules = get_container().state.schedules
     intraday_time = time.fromisoformat(get_container().settings.intraday_run_time)
@@ -124,7 +129,12 @@ def start_live():
         action="start",
         resource_type="live_instance",
         resource_id=identifier,
-        after={"status": "active", "strategy_version_id": strategy_version_id},
+        before={"strategy_state": version.state.value},
+        after={
+            "status": "active",
+            "strategy_version_id": strategy_version_id,
+            "strategy_state": "live",
+        },
     )
     return success(item, status=201)
 

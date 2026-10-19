@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+from dataclasses import replace
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from time import perf_counter
@@ -17,6 +19,7 @@ from easy_quant.domain.backtesting.engine import PhasedBacktestSession
 from easy_quant.domain.backtesting.entities import BacktestConfig
 from easy_quant.domain.backtesting.execution import MarketBar
 from easy_quant.domain.shared.errors import StateConflictError
+from easy_quant.domain.strategies.entities import StrategyVersion
 from easy_quant.infrastructure.persistence.market_data_pages import DailyBarPageCache
 from easy_quant.infrastructure.strategy_runtime.runner import StreamingStrategyRunner
 
@@ -65,16 +68,18 @@ def _execute_strategy_tick(
     version_id = str(payload["strategy_version_id"])
     trading_day = date.fromisoformat(str(payload["trading_day"]))
     definition = container.state.strategies.get_definition(strategy_id)
-    if definition is None or definition.owner_id != str(payload["owner_id"]):
+    if strategy_id and (definition is None or definition.owner_id != str(payload["owner_id"])):
         raise StateConflictError("策略不存在或无权运行")
-    version = next(
-        (
-            item
-            for item in container.state.strategies.versions(strategy_id)
-            if item.id == version_id
-        ),
-        None,
-    )
+    version = container.state.strategies.get_version(version_id) if version_id else None
+    if "source_code" in payload:
+        source = str(payload["source_code"])
+        digest = hashlib.sha256(source.encode()).hexdigest()
+        if version is not None:
+            version = replace(version, source_code=source, content_sha256=digest)
+        elif not strategy_id:
+            version = StrategyVersion(
+                job_id, "", 0, source, digest, container.authentication.clock.now()
+            )
     if version is None:
         raise StateConflictError("策略版本不存在")
 
@@ -302,6 +307,7 @@ def _execute_strategy_tick(
         "phase_results": phase_results,
         "mock_usage": mock_usage,
         "allow_mock": bool(payload.get("allow_mock", False)),
+        "code_snapshot_saved": False,
         "intraday_quote": "open-close-midpoint-v1 (contains closing information)",
         "portfolio": {
             "cash": str(session.portfolio.cash),

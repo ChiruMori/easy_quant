@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
+import { Trash2 } from "lucide-react"
 
 import { ConfirmAction } from "@/components/confirm-action"
 import { apiRequest } from "@/lib/api/client"
@@ -9,12 +10,14 @@ export function DeleteResourceButton({
   description,
   onDeleted,
   disabled,
+  triggerLabel,
 }: {
   path: string
   label: string
   description: string
   onDeleted?: () => void
   disabled?: boolean
+  triggerLabel?: string
 }) {
   const client = useQueryClient()
   return (
@@ -23,6 +26,8 @@ export function DeleteResourceButton({
       title={`${label}？`}
       description={description}
       disabled={disabled}
+      icon={Trash2}
+      triggerLabel={triggerLabel}
       prepare={async () => {
         const preview = await apiRequest<{
           name: string
