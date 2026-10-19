@@ -25,7 +25,7 @@ import type { Acquisition } from "../types"
 export function IndicesPanel() {
   const client = useQueryClient()
   const catalog = useQuery({ queryKey: ["admin", "indices"], queryFn: listIndices })
-  const [selected, setSelected] = useState<string[]>(["sh000300"])
+  const [selected, setSelected] = useState<string[]>([])
   const [lastTask, setLastTask] = useState<Acquisition | null>(null)
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -65,7 +65,7 @@ export function IndicesPanel() {
         <CardHeader>
           <CardTitle>同步指数历史日线</CardTitle>
           <CardDescription>
-            默认选择沪深300。先选择指数，再填写日期区间；无需先刷新股票信息。数据固定不复权，使用已启用的日线来源。
+            默认不勾选指数。先选择指数，再填写日期区间；无需先刷新股票信息。数据固定不复权，使用已启用的日线来源。日常更新可到系统管理的定时任务执行“主要指数日线同步”；通达信增量仅更新股票。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex min-w-0 flex-col gap-4">

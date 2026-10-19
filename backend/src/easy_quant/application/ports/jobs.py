@@ -16,5 +16,9 @@ class JobRepository(Protocol):
     def save(self, job: Job) -> None: ...
 
 
+class JobPageQuery(Protocol):
+    def list_page(self, page: int, page_size: int) -> tuple[list[Job], int, int]: ...
+
+
 class JobHandler(Protocol):
     def __call__(self, job: Job) -> dict[str, object] | None: ...

@@ -52,5 +52,11 @@ export interface AuditRecord {
   occurred_at: string
   trigger_source: string
 }
-export const listJobs = () => apiRequest<JobRecord[]>("/admin/jobs")
+export interface JobPage {
+  items: JobRecord[]
+  total: number
+  page: number
+  page_size: number
+}
+export const listJobs = (page = 1) => apiRequest<JobPage>(`/admin/jobs?page=${page}&page_size=20`)
 export const listAuditEvents = () => apiRequest<AuditRecord[]>("/admin/audit-events")

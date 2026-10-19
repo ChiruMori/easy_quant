@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from easy_quant.domain.market_data.calendar import TradingCalendar
-from easy_quant.domain.market_data.indices import is_index
+from easy_quant.domain.market_data.indices import INDEX_CATALOG, is_index
 from easy_quant.domain.scheduling.entities import Job
+from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
 from easy_quant.worker.registry import JobHandlerRegistry
 
@@ -201,6 +202,71 @@ def register_market_data_handlers(
         return {**result, "status": "succeeded", "task_id": task_id}
 
     registry.register("market-data-acquisition", acquire)
+
+    def update_indices(job):
+        if container is None or container.data_sync is None:
+            raise RuntimeError("数据同步服务未配置")
+        from easy_quant.application.services.scheduled_tasks import validate_index_configuration
+
+        validate_index_configuration(job.payload)
+        now = container.authentication.clock.now()
+        calendar = TradingCalendar(container.market_data.list_trading_days() or None)
+        end = (
+            date.fromisoformat(job.payload["end_day"])
+            if job.payload.get("end_day")
+            else calendar.freshness(
+                first_day=None,
+                last_day=None,
+                now=now,
+                close_time=time.fromisoformat(container.settings.daily_data_publish_time),
+            ).recommended_end_day
+        )
+        symbols = job.payload.get("symbols", list(INDEX_CATALOG))
+        coverage = container.market_data.bar_coverage(symbols)
+        count = 0
+        failures = []
+        for symbol in symbols:
+            start = (
+                date.fromisoformat(job.payload["start_day"])
+                if job.payload.get("start_day")
+                else min(coverage.get(symbol, {}).get("last_day") or date(end.year - 10, 1, 1), end)
+            )
+            if start > end:
+                raise ValidationError("开始日期不得晚于结束日期")
+            task_id = f"index:{job.id}:{symbol}"
+            payload = {
+                "task_id": task_id,
+                "dataset_key": "daily-bars",
+                "symbols": [symbol],
+                "start_day": start.isoformat(),
+                "end_day": end.isoformat(),
+                "force": True,
+            }
+            container.state.acquisitions[task_id] = {
+                "id": task_id,
+                **payload,
+                "status": "queued",
+                "job_id": job.id,
+            }
+            try:
+                result = acquire(Job(job.id, "market-data-acquisition", task_id, payload, now))
+                count += int(result.get("record_count", 0))
+            except Exception as error:
+                failures.append({"symbol": symbol, "message": str(error)})
+        if failures:
+            names = "、".join(item["symbol"] for item in failures)
+            raise ValidationError(
+                f"指数同步部分失败：{names}；已完成 {count} 条，请查看数据获取明细后重试",
+                {"record_count": count, "failed_symbols": failures},
+            )
+        return {
+            "status": "succeeded",
+            "record_count": count,
+            "symbols": symbols,
+            "end_day": end.isoformat(),
+        }
+
+    registry.register("index-daily-update", update_indices)
     registry.register("market-data.acquire", acquire)
     registry.register(
         "market-data.reparse", lambda job: {"request": job.payload, "status": "reparsed"}

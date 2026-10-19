@@ -1,11 +1,32 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from easy_quant.domain.market_data.indices import INDEX_CATALOG
 from easy_quant.domain.scheduling.entities import ScheduledTask, ScheduleKind
 from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.domain.shared.value_objects import ensure_utc
+
+
+def validate_index_configuration(configuration: dict) -> None:
+    symbols = configuration.get("symbols", list(INDEX_CATALOG))
+    if (
+        not isinstance(symbols, list)
+        or not symbols
+        or any(not isinstance(symbol, str) or symbol not in INDEX_CATALOG for symbol in symbols)
+        or len(set(symbols)) != len(symbols)
+    ):
+        raise ValidationError("请选择不重复的主要指数代码")
+    try:
+        start = (
+            date.fromisoformat(configuration["start_day"]) if "start_day" in configuration else None
+        )
+        end = date.fromisoformat(configuration["end_day"]) if "end_day" in configuration else None
+    except (ValueError, TypeError) as error:
+        raise ValidationError("指数日期必须为 YYYY-MM-DD") from error
+    if start and end and start > end:
+        raise ValidationError("开始日期不得晚于结束日期")
 
 
 def next_run(task: ScheduledTask, after: datetime) -> datetime:

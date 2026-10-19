@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from easy_quant.domain.scheduling.entities import Job, JobStatus
@@ -39,6 +39,14 @@ class InMemoryJobRepository:
 
     def list_all(self) -> list[Job]:
         return list(self.items.values())
+
+    def list_page(self, page: int, page_size: int) -> tuple[list[Job], int, int]:
+        items = sorted(
+            self.items.values(), key=lambda job: (job.available_at, job.id), reverse=True
+        )
+        total = len(items)
+        page = min(page, max(1, (total + page_size - 1) // page_size))
+        return items[(page - 1) * page_size : page * page_size], total, page
 
 
 class SqlAlchemyJobRepository:
@@ -111,6 +119,18 @@ class SqlAlchemyJobRepository:
     def list_all(self) -> list[Job]:
         with self._operation() as session:
             return [self._to_domain(row) for row in session.scalars(select(JobModel))]
+
+    def list_page(self, page: int, page_size: int) -> tuple[list[Job], int, int]:
+        with self._operation() as session:
+            total = int(session.scalar(select(func.count()).select_from(JobModel)) or 0)
+            page = min(page, max(1, (total + page_size - 1) // page_size))
+            rows = session.scalars(
+                select(JobModel)
+                .order_by(JobModel.available_at.desc(), JobModel.id.desc())
+                .limit(page_size)
+                .offset((page - 1) * page_size)
+            )
+            return [self._to_domain(row) for row in rows], total, page
 
     @staticmethod
     def _to_domain(row: JobModel) -> Job:
