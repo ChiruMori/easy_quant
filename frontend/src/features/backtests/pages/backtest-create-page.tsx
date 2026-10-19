@@ -3,6 +3,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { DatePicker } from "@/components/date-picker"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -102,11 +103,11 @@ export function BacktestCreatePage() {
             <div className="grid gap-4 md:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="start">开始日期</FieldLabel>
-                <Input id="start" type="date" name="start" required />
+                <DatePicker id="start" name="start" required />
               </Field>
               <Field>
                 <FieldLabel htmlFor="end">结束日期</FieldLabel>
-                <Input id="end" type="date" name="end" required />
+                <DatePicker id="end" name="end" required />
               </Field>
             </div>
             <Field>

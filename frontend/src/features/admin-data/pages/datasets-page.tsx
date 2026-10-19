@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { ConfirmAction } from "@/components/confirm-action"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -62,6 +63,7 @@ export function DatasetsPage() {
   const [status, setStatus] = useState("all")
   const [syncingSymbol, setSyncingSymbol] = useState("")
   const [syncTask, setSyncTask] = useState<Acquisition | null>(null)
+  const [confirmRefresh, setConfirmRefresh] = useState(false)
   const [syncError, setSyncError] = useState("")
   const [handledTaskId, setHandledTaskId] = useState("")
   const syncQuery = useQuery({
@@ -123,6 +125,7 @@ export function DatasetsPage() {
       )
     } catch (error) {
       setSyncError(error instanceof Error ? error.message : "无法创建停复牌状态任务")
+      throw error
     } finally {
       setSyncingSymbol("")
     }
@@ -130,6 +133,15 @@ export function DatasetsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
+      <ConfirmAction
+        open={confirmRefresh}
+        onOpenChange={setConfirmRefresh}
+        label="刷新停复牌状态"
+        title="刷新停复牌状态？"
+        description="将创建后台任务，更新股票停复牌状态。确认后开始刷新。"
+        destructive={false}
+        action={refreshSuspensions}
+      />
       <PageHeader
         title="数据管理"
         description="维护股票与指数行情，查看覆盖并配置可用来源。"
@@ -162,7 +174,7 @@ export function DatasetsPage() {
                     Boolean(syncingSymbol) ||
                     ["queued", "running"].includes(currentSyncTask?.status ?? "")
                   }
-                  onSelect={() => void refreshSuspensions()}
+                  onSelect={() => setConfirmRefresh(true)}
                 >
                   <RefreshCw />
                   刷新停复牌状态

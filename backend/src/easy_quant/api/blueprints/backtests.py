@@ -4,6 +4,7 @@ from flask import Blueprint, g, request
 
 from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_user
+from easy_quant.api.resource_lifecycle import resource_mutation
 from easy_quant.api.responses import success
 from easy_quant.api.schemas.backtests import BacktestCompareRequest, BacktestCreateRequest
 from easy_quant.api.strategy_context import strategy_context
@@ -62,6 +63,7 @@ def _find_owned_version(owner_id: str, version_id: str):
 
 @blueprint.post("")
 @require_user
+@resource_mutation
 def create_backtest():
     payload = BacktestCreateRequest.model_validate(request.get_json() or {})
     if _find_owned_version(g.current_user.id, payload.strategy_version_id) is None:

@@ -4,6 +4,7 @@ from flask import Blueprint, g, request
 
 from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_user
+from easy_quant.api.resource_lifecycle import delete_resource, inspect_resource, resource_mutation
 from easy_quant.api.responses import success
 from easy_quant.api.schemas.strategies import StrategyCreateRequest, StrategyRunRequest
 from easy_quant.application.services.audit_runtime import record_audit
@@ -13,6 +14,20 @@ from easy_quant.domain.scheduling.entities import Job
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("strategies", __name__, url_prefix="/api/v1/strategies")
+
+
+@blueprint.get("/<strategy_id>/deletion-preview")
+@require_user
+def deletion_preview(strategy_id: str):
+    return inspect_resource("strategy", strategy_id)
+
+
+@blueprint.delete("/<strategy_id>")
+@require_user
+def delete_strategy(strategy_id: str):
+    return delete_resource("strategy", strategy_id)
+
+
 MOVING_AVERAGE_TEMPLATE = '''def before_market(context, parameters):
     """盘前使用此前已知日线，选择价格站上 5 日均线的股票。"""
     ratio = parameters.get("ratio", "0.10")
@@ -118,6 +133,7 @@ def list_strategies():
 
 @blueprint.post("")
 @require_user
+@resource_mutation
 def create_strategy():
     payload = StrategyCreateRequest.model_validate(request.get_json() or {})
     strategy, version = strategy_service().create(
@@ -136,6 +152,7 @@ def create_strategy():
 
 @blueprint.post("/<strategy_id>/versions")
 @require_user
+@resource_mutation
 def add_version(strategy_id: str):
     payload = StrategyCreateRequest.model_validate(
         {"name": "version", **(request.get_json() or {})}
@@ -164,6 +181,7 @@ def add_version(strategy_id: str):
 
 @blueprint.post("/<strategy_id>/run")
 @require_user
+@resource_mutation
 def run_strategy(strategy_id: str):
     payload = StrategyRunRequest.model_validate(request.get_json() or {})
     strategy = repository().get_definition(strategy_id)

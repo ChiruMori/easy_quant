@@ -190,8 +190,15 @@ class Container:
     secret_box: SecretBox | None = None
     notification_channels: dict[str, Any] = field(default_factory=dict)
     live_tracking: Any = None
+    resource_lifecycle: Any = None
 
     def __post_init__(self) -> None:
+        from easy_quant.infrastructure.persistence.repositories.resource_lifecycle import (
+            InMemoryResourceLifecycleStore,
+        )
+
+        if self.resource_lifecycle is None:
+            self.resource_lifecycle = InMemoryResourceLifecycleStore(self)
         if self.live_tracking is None:
             self.live_tracking = InMemoryLiveTrackingStore(self.state)
         if self.secret_box is None:
@@ -256,6 +263,11 @@ def build_container(settings: Settings | None = None) -> Container:
         jobs=SqlAlchemyJobRepository(session, create_session_factory(engine)),
         live_tracking=SqlLiveTrackingStore(create_session_factory(engine)),
     )
+    from easy_quant.infrastructure.persistence.repositories.resource_lifecycle import (
+        SqlResourceLifecycleStore,
+    )
+
+    container.resource_lifecycle = SqlResourceLifecycleStore(create_session_factory(engine))
     raw_cache = SqlAlchemyCompressedRawCache(session)
     container.data_sync = _build_market_data_sync(container, raw_cache)
     import httpx
@@ -485,6 +497,12 @@ def build_worker():
         container.state.schedules[schedule_id] = schedule
 
     def pump_schedules() -> None:
+        with container.resource_lifecycle.guard():
+            if container.database_session is not None:
+                container.database_session.rollback()
+            pump_schedules_locked()
+
+    def pump_schedules_locked() -> None:
         now = container.authentication.clock.now()
         for schedule_id, schedule in list(container.state.schedules.items()):
             if not schedule.get("enabled", True):

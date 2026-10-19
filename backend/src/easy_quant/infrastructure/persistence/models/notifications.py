@@ -18,10 +18,8 @@ class NotificationDeliveryModel(Base):
     __tablename__ = "notification_deliveries"
     __table_args__ = (UniqueConstraint("idempotency_key"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    recommendation_id: Mapped[str] = mapped_column(ForeignKey("recommendations.id"), nullable=False)
-    subscription_id: Mapped[str] = mapped_column(
-        ForeignKey("notification_subscriptions.id"), nullable=False
-    )
+    recommendation_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    subscription_id: Mapped[str] = mapped_column(String(36), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)

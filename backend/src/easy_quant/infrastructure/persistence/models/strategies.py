@@ -20,7 +20,7 @@ class StrategyVersionModel(Base):
     __tablename__ = "strategy_versions"
     __table_args__ = (UniqueConstraint("strategy_id", "number"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    strategy_id: Mapped[str] = mapped_column(ForeignKey("strategies.id"), nullable=False)
+    strategy_id: Mapped[str] = mapped_column(String(36), nullable=False)
     number: Mapped[int] = mapped_column(Integer, nullable=False)
     source_code: Mapped[str] = mapped_column(
         Text().with_variant(LONGTEXT(), "mysql"), nullable=False

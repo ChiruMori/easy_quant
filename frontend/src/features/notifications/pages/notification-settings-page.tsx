@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { DeleteResourceButton } from "@/components/delete-resource-button"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import {
@@ -182,6 +183,14 @@ export function NotificationSettingsPage() {
             >
               测试连通性
             </Button>
+            {!item.enabled && (
+              <DeleteResourceButton
+                path={`/notifications/subscriptions/${item.id}`}
+                label="删除渠道"
+                description="将删除通知渠道及其投递记录。被实盘引用的渠道不可删除。"
+                disabled={busy}
+              />
+            )}
             <Switch
               aria-label={`启用 ${item.name ?? item.channel}`}
               checked={item.enabled}
