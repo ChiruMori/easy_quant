@@ -86,6 +86,19 @@ test("策略版本分页、草稿编辑、锁定复制、模板确认与公共�
   })
   const after = await sidebar.getByLabel("搜索库函数").boundingBox()
   expect(after?.y).toBe(before?.y)
+  async function expectQuickTestAlignment() {
+    const calendar = await page
+      .getByRole("button", { name: "选择日期 strategy-run-day", exact: true })
+      .boundingBox()
+    const run = await page.getByRole("button", { name: "运行快速测试", exact: true }).boundingBox()
+    expect(calendar).not.toBeNull()
+    expect(run).not.toBeNull()
+    expect(Math.abs(run!.y + run!.height / 2 - (calendar!.y + calendar!.height / 2))).toBeLessThan(
+      1,
+    )
+    expect(run!.x).toBeGreaterThanOrEqual(calendar!.x + calendar!.width)
+  }
+  await expectQuickTestAlignment()
   await page.screenshot({
     path: testInfo.outputPath("strategy-editor-library-desktop.png"),
     fullPage: true,
@@ -100,6 +113,7 @@ test("策略版本分页、草稿编辑、锁定复制、模板确认与公共�
   await page.goto(editUrl)
   await expect(page.getByLabel("策略代码编辑器")).toBeVisible()
   await expect(page.getByRole("complementary", { name: "策略公共库" })).toBeAttached()
+  await expectQuickTestAlignment()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )

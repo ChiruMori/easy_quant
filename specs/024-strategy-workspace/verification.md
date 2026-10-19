@@ -13,3 +13,5 @@
 本分支包含尚未合并的 PR #14 资源生命周期基础；新 PR 合并前需结合该依赖审阅。
 
 已提交推送分支 `feat/strategy-workspace-lifecycle`，审阅入口：[PR #15](https://github.com/ChiruMori/easy_quant/pull/15)。
+
+快测启动按钮修正为紧随日历按钮，与日期输入同一行居中对齐，说明文字独立放在下方。工作台 Playwright 场景在桌面和 360px 下验证按钮中心高度一致、启动按钮位于日历右侧且页面无横向溢出；该场景通过，并已查看两种宽度截图。

@@ -8,7 +8,7 @@ import { RunTimingPanel } from "@/components/run-timing"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Switch } from "@/components/ui/switch"
 import { localizedLabel } from "@/lib/labels"
 
@@ -57,21 +57,23 @@ export function StrategyQuickTest({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-4">
-        <FieldGroup className="sm:flex-row sm:items-end">
-          <Field>
-            <FieldLabel htmlFor="strategy-run-day">快速测试交易日</FieldLabel>
-            <DatePicker id="strategy-run-day" value={day} onValueChange={setDay} />
-            <FieldDescription>
-              仅模拟所选交易日。盘中报价使用开收盘均值，包含收盘信息。
-            </FieldDescription>
-          </Field>
-          <IconButton
-            icon={Play}
-            label="运行快速测试"
-            disabled={busy || !day || !source.trim()}
-            onClick={() => run.mutate()}
-          />
-        </FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="strategy-run-day">快速测试交易日</FieldLabel>
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <DatePicker id="strategy-run-day" value={day} onValueChange={setDay} />
+            </div>
+            <IconButton
+              icon={Play}
+              label="运行快速测试"
+              disabled={busy || !day || !source.trim()}
+              onClick={() => run.mutate()}
+            />
+          </div>
+          <FieldDescription>
+            仅模拟所选交易日。盘中报价使用开收盘均值，包含收盘信息。
+          </FieldDescription>
+        </Field>
         <Field orientation="horizontal">
           <Switch id="quick-test-mock" checked={allowMock} onCheckedChange={setAllowMock} />
           <FieldLabel htmlFor="quick-test-mock">允许 Mock 补足技术指标历史</FieldLabel>
