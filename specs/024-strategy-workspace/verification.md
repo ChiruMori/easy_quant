@@ -11,3 +11,5 @@
 部署先执行 `0013_strategy_workspace`，同时升级 API 与 worker。历史实盘的所有状态均参与回填，删除关联记录不会回退已锁定版本。草稿修订号防止过期保存；回测提交及实盘创建与状态提升均由同一事务提交。
 
 本分支包含尚未合并的 PR #14 资源生命周期基础；新 PR 合并前需结合该依赖审阅。
+
+已提交推送分支 `feat/strategy-workspace-lifecycle`，审阅入口：[PR #15](https://github.com/ChiruMori/easy_quant/pull/15)。
