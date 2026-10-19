@@ -245,8 +245,13 @@ function Sidebar({
   )
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar()
+function SidebarTrigger({
+  className,
+  onClick,
+  children,
+  ...props
+}: React.ComponentProps<typeof Button>) {
+  const { toggleSidebar, isMobile, openMobile, open } = useSidebar()
 
   return (
     <Button
@@ -254,6 +259,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       data-slot="sidebar-trigger"
       variant="ghost"
       size="icon"
+      aria-expanded={isMobile ? openMobile : open}
       className={cn("size-7", className)}
       onClick={(event) => {
         onClick?.(event)
@@ -261,8 +267,12 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       }}
       {...props}
     >
-      <PanelLeftIcon />
-      <span className="sr-only">切换侧边栏</span>
+      {children ?? (
+        <>
+          <PanelLeftIcon />
+          <span className="sr-only">切换侧边栏</span>
+        </>
+      )}
     </Button>
   )
 }

@@ -49,8 +49,8 @@ export function AppLayout() {
       <AppSidebar />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-3 border-b bg-card px-4 sm:px-7">
-          <SidebarTrigger aria-label="切换导航" />
-          <Separator orientation="vertical" className="h-5" />
+          <SidebarTrigger aria-label="切换导航" className="md:hidden" />
+          <Separator orientation="vertical" className="h-5 md:hidden" />
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
