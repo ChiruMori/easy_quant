@@ -21,10 +21,12 @@ export function InvitationsPage() {
   const client = useQueryClient()
   const query = useQuery({ queryKey: ["admin", "invitations"], queryFn: listInvitations })
   const [token, setToken] = useState("")
+  const [error, setError] = useState("")
   if (query.isLoading) return <LoadingState label="正在加载邀请码" />
   if (query.error) return <ErrorState title="无法加载邀请码" message={query.error.message} />
   return (
     <div className="flex flex-col gap-5">
+      {error && <ErrorState title="无法签发邀请码" message={error} />}
       <Card className="max-w-2xl">
         <CardHeader>
           <CardTitle>签发邀请码</CardTitle>
@@ -45,9 +47,14 @@ export function InvitationsPage() {
             icon={Plus}
             label="签发邀请码"
             onClick={async () => {
-              const invitation = await createInvitation()
-              setToken(invitation.token)
-              await client.invalidateQueries({ queryKey: ["admin", "invitations"] })
+              setError("")
+              try {
+                const invitation = await createInvitation()
+                setToken(invitation.token)
+                await client.invalidateQueries({ queryKey: ["admin", "invitations"] })
+              } catch (reason) {
+                setError(reason instanceof Error ? reason.message : "签发失败，请重试")
+              }
             }}
           />
         </CardFooter>
@@ -56,8 +63,11 @@ export function InvitationsPage() {
         <h2 className="text-lg font-semibold">签发记录</h2>
         <ul className="mt-3 flex flex-col gap-2">
           {query.data?.map((item) => (
-            <li className="flex items-center justify-between rounded-md border p-3" key={item.id}>
-              <span>
+            <li
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
+              key={item.id}
+            >
+              <span className="min-w-0 flex-1 basis-64 [overflow-wrap:anywhere]">
                 {item.id} · 有效期至 {new Date(item.expires_at).toLocaleString()}
               </span>
               <Badge variant="secondary">{item.used_at ? "已使用" : "未使用"}</Badge>

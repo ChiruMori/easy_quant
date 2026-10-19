@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { DatePicker } from "@/components/date-picker"
@@ -49,7 +49,9 @@ export function BacktestCreatePage() {
   return (
     <Card className="max-w-2xl">
       <CardHeader>
-        <CardTitle>创建回测</CardTitle>
+        <CardTitle>
+          <h1>创建回测</h1>
+        </CardTitle>
         <CardDescription>
           标的由策略通过平台因子选择；回测固定使用所选的不可变策略版本。MA、RSI
           按需预热，动态历史与统计/EMA 默认读取此前 250 个交易日；策略源码可用 HISTORY_TRADING_DAYS
@@ -57,6 +59,7 @@ export function BacktestCreatePage() {
         </CardDescription>
       </CardHeader>
       <form
+        className="flex min-w-0 flex-col gap-5"
         onSubmit={async (event) => {
           event.preventDefault()
           const form = event.currentTarget
@@ -86,10 +89,21 @@ export function BacktestCreatePage() {
       >
         <CardContent>
           <FieldGroup>
+            {versions.length === 0 && (
+              <Alert>
+                <AlertTitle>尚无可用策略版本</AlertTitle>
+                <AlertDescription>
+                  请先保存策略版本，再创建回测。
+                  <Button variant="link" asChild>
+                    <Link to="/strategies">前往策略工作台</Link>
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
             <Field>
-              <FieldLabel>策略版本</FieldLabel>
+              <FieldLabel htmlFor="backtest-version">策略版本</FieldLabel>
               <Select value={versionId} onValueChange={setVersionId}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="backtest-version" className="w-full">
                   <SelectValue placeholder="选择一个已保存策略版本" />
                 </SelectTrigger>
                 <SelectContent>

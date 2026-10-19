@@ -23,10 +23,13 @@ export function RegisterPage() {
     <main className="flex min-h-screen items-center justify-center bg-muted/30 p-6">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>使用邀请码注册</CardTitle>
+          <CardTitle>
+            <h1>使用邀请码注册</h1>
+          </CardTitle>
           <CardDescription>邀请码由平台管理员签发且只能使用一次。</CardDescription>
         </CardHeader>
         <form
+          className="flex min-w-0 flex-col gap-5"
           onSubmit={async (event) => {
             event.preventDefault()
             const data = new FormData(event.currentTarget)

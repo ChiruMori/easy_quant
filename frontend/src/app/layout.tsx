@@ -62,7 +62,7 @@ export function AppLayout() {
             日线研究
           </Badge>
         </header>
-        <section className="mx-auto w-full max-w-[1600px] min-w-0 flex-1 p-4 sm:p-7 lg:p-8">
+        <section className="mx-auto w-full max-w-[1600px] min-w-0 flex-1 p-4 [overflow-wrap:anywhere] sm:p-7 lg:p-8">
           <Outlet />
         </section>
       </SidebarInset>

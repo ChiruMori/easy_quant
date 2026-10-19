@@ -1,6 +1,7 @@
 import { useRef, useState } from "react"
 import { Link } from "react-router-dom"
 
+import { EmptyState } from "@/components/app-shell"
 import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -99,6 +100,9 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
         </Button>
       </div>
       <h2 className="text-lg font-semibold">建议</h2>
+      {!current.recommendations?.length && (
+        <EmptyState title="暂无建议" message="此实例尚未生成建议，后续建议会显示在这里。" />
+      )}
       <div className="flex flex-col gap-4">
         {current.recommendations?.map((item) => (
           <Card key={item.id}>

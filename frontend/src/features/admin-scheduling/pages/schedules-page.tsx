@@ -64,6 +64,7 @@ export function SchedulesPage() {
           <CardDescription>使用五段 Cron 表达式，时区默认为 Asia/Shanghai。</CardDescription>
         </CardHeader>
         <form
+          className="flex min-w-0 flex-col gap-5"
           key={editing?.id ?? "new"}
           onSubmit={async (event) => {
             event.preventDefault()

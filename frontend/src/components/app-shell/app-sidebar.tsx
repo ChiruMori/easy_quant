@@ -114,6 +114,8 @@ export function AppSidebar() {
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
+              size="lg"
+              aria-label="退出登录"
               tooltip="退出登录"
               onClick={async () => {
                 await logout()
@@ -121,7 +123,12 @@ export function AppSidebar() {
               }}
             >
               <LogOut />
-              <span>{user?.username} · 退出登录</span>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="truncate" title={user?.username}>
+                  {user?.username}
+                </span>
+                <span className="text-xs text-muted-foreground">退出登录</span>
+              </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
