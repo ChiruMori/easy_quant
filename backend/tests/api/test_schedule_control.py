@@ -81,3 +81,31 @@ def test_daily_update_manual_execution_uses_last_published_day():
     assert job.payload["start_day"] == "2026-09-28"
     assert job.payload["end_day"] == "2026-09-28"
     assert job.payload["dataset_key"] == "daily-bars"
+
+
+def test_index_schedule_supports_disabled_manual_run_and_validates_configuration():
+    container, client, headers, _ = setup()
+    payload = {
+        "task_type": "index-daily-update",
+        "enabled": False,
+        "schedule_expression": "0 22 * * 1-5",
+        "configuration": {},
+    }
+    response = client.post("/api/v1/admin/schedules", headers=headers, json=payload)
+    assert response.status_code == 201
+    item = response.get_json()["data"]
+    before = deepcopy(container.state.schedules[item["id"]])
+    headers["Idempotency-Key"] = "indices-1"
+    url = f"/api/v1/admin/schedules/{item['id']}"
+    first = client.post(url + "/run", headers=headers)
+    second = client.post(url + "/run", headers=headers)
+    assert first.status_code == 202 and first.get_json() == second.get_json()
+    assert container.jobs.get(first.get_json()["data"]["id"]).job_type == "index-daily-update"
+    assert container.state.schedules[item["id"]] == before
+    payload["configuration"] = {"symbols": ["000001"]}
+    assert client.post("/api/v1/admin/schedules", headers=headers, json=payload).status_code == 400
+    assert (
+        client.patch(url, headers=headers, json={"configuration": {"symbols": []}}).status_code
+        == 400
+    )
+    assert container.state.schedules[item["id"]] == before

@@ -66,7 +66,7 @@
     "/admin/schedules": {"get": {"operationId": "listSchedules", "responses": {"200": {"description": "schedules"}}}, "post": {"operationId": "createSchedule", "responses": {"201": {"description": "created"}}}},
     "/admin/schedules/{schedule_id}": {"patch": {"operationId": "updateSchedule", "responses": {"200": {"description": "updated"}}}},
     "/admin/schedules/{schedule_id}/run": {"post": {"operationId": "runSchedule", "parameters": [{"name": "Idempotency-Key", "in": "header", "required": true, "schema": {"type": "string", "maxLength": 128}}], "responses": {"202": {"description": "手动执行已入队，不改变下一次计划"}, "409": {"description": "幂等键冲突"}}}},
-    "/admin/jobs": {"get": {"operationId": "listJobs", "responses": {"200": {"description": "jobs"}}}},
+    "/admin/jobs": {"get": {"operationId": "listJobs", "description": "后台任务按 available_at、id 倒序，返回 items、total、page、page_size；越界定位末页", "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "default": 1}}, {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}], "responses": {"200": {"description": "分页任务"}, "400": {"description": "无效分页参数"}}}},
     "/admin/audit-events": {"get": {"operationId": "listAuditEvents", "responses": {"200": {"description": "events"}}}}
   }
 }

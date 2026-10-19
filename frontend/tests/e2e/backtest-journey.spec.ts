@@ -54,6 +54,8 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await page.getByLabel("名称").fill(`均线策略-${Date.now()}`)
   await page.getByLabel("说明").fill("通过 5 日均线因子选股")
   await page.getByRole("button", { name: "创建策略" }).click()
+  await expect(page).toHaveURL(/\/strategies\/[^/]+\/versions\/[^/]+\/edit\?saved=1$/)
+  await expect(page.getByRole("heading", { name: /^编辑 .* · v1$/ })).toBeVisible()
   await expect(page.getByText("草稿已保存")).toBeVisible()
   await page.getByLabel("快速测试交易日").fill("2026-01-30")
   await page.getByRole("button", { name: "运行快速测试" }).click()

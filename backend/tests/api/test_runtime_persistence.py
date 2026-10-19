@@ -51,7 +51,11 @@ def test_persistent_lists_are_serialized_at_the_api_boundary(endpoint, attribute
     )
     response = client.get(endpoint)
     assert response.status_code == 200
-    assert response.get_json()["data"] == [payload]
+    assert response.get_json()["data"] == (
+        {"items": [payload], "total": 1, "page": 1, "page_size": 20}
+        if attribute == "jobs"
+        else [payload]
+    )
 
 
 def test_request_teardown_releases_the_database_session() -> None:
@@ -89,7 +93,7 @@ def test_admin_jobs_reports_expired_lease_without_exposing_payload() -> None:
         "/api/v1/auth/login", json={"username": "admin", "password": "change-this-admin-password"}
     )
     response = client.get("/api/v1/admin/jobs")
-    job = response.get_json()["data"][0]
+    job = response.get_json()["data"]["items"][0]
     assert job["lease_expired"] is True
     assert job["lease_until"] == (now - timedelta(minutes=1)).isoformat()
     assert "must-not-be-returned" not in response.get_data(as_text=True)

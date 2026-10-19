@@ -7,7 +7,7 @@ from easy_quant.api.middleware.auth import require_admin
 from easy_quant.api.resource_lifecycle import resource_mutation
 from easy_quant.api.responses import success
 from easy_quant.application.services.audit_runtime import record_audit
-from easy_quant.application.services.scheduled_tasks import next_run
+from easy_quant.application.services.scheduled_tasks import next_run, validate_index_configuration
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.scheduling.entities import Job, ScheduledTask, ScheduleKind
 from easy_quant.domain.shared.errors import StateConflictError, ValidationError
@@ -21,6 +21,7 @@ def validate_schedule(payload):
         "market-data-acquisition",
         "market-data-nightly",
         "tdx-daily-update",
+        "index-daily-update",
         "live-analysis",
     }:
         raise ValidationError("不支持的任务类型")
@@ -28,6 +29,8 @@ def validate_schedule(payload):
         raise ValidationError("启停状态必须为布尔值")
     if "configuration" in payload and not isinstance(payload["configuration"], dict):
         raise ValidationError("任务配置必须为 JSON 对象")
+    if payload.get("task_type") == "index-daily-update":
+        validate_index_configuration(payload.get("configuration", {}))
     try:
         ScheduleKind(str(payload.get("schedule_kind", "cron")))
     except ValueError as error:
@@ -160,6 +163,7 @@ def run_schedule(schedule_id: str):
         "market-data-acquisition",
         "market-data-nightly",
         "tdx-daily-update",
+        "index-daily-update",
         "live-analysis",
     }:
         raise ValidationError("不支持的任务类型")
@@ -207,25 +211,54 @@ def run_schedule(schedule_id: str):
 @blueprint.get("/jobs")
 @require_admin
 def jobs():
+    try:
+        page = int(request.args.get("page", "1"))
+        page_size = int(request.args.get("page_size", "20"))
+    except ValueError as error:
+        raise ValidationError("页码和每页条数必须为整数") from error
+    if page < 1 or not 1 <= page_size <= 100:
+        raise ValidationError("页码必须大于零，每页条数须在 1 至 100 之间")
     repository = get_container().jobs
     if repository is None:
-        return success(list(get_container().state.jobs))
+        rows = sorted(
+            list(get_container().state.jobs),
+            key=lambda item: (item.get("available_at", ""), item["id"]),
+            reverse=True,
+        )
+        total = len(rows)
+        page = min(page, max(1, (total + page_size - 1) // page_size))
+        return success(
+            {
+                "items": rows[(page - 1) * page_size : page * page_size],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            }
+        )
+    items, total, page = repository.list_page(page, page_size)
     now = get_container().authentication.clock.now()
     return success(
-        [
-            {
-                "id": item.id,
-                "job_type": item.job_type,
-                "status": item.status.value,
-                "available_at": item.available_at.isoformat(),
-                "lease_until": item.lease_until.isoformat() if item.lease_until else None,
-                "lease_expired": bool(
-                    item.status.value == "running" and item.lease_until and item.lease_until <= now
-                ),
-                "attempt_count": item.attempt_count,
-                "result_summary": item.result_summary,
-                "error_summary": item.error_summary,
-            }
-            for item in repository.list_all()
-        ]
+        {
+            "items": [
+                {
+                    "id": item.id,
+                    "job_type": item.job_type,
+                    "status": item.status.value,
+                    "available_at": item.available_at.isoformat(),
+                    "lease_until": item.lease_until.isoformat() if item.lease_until else None,
+                    "lease_expired": bool(
+                        item.status.value == "running"
+                        and item.lease_until
+                        and item.lease_until <= now
+                    ),
+                    "attempt_count": item.attempt_count,
+                    "result_summary": item.result_summary,
+                    "error_summary": item.error_summary,
+                }
+                for item in items
+            ],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
     )

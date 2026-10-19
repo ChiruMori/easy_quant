@@ -108,8 +108,9 @@ export function SchedulesPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      <SelectItem value="market-data-acquisition">数据拉取</SelectItem>
-                      <SelectItem value="market-data-nightly">盘后全量数据同步</SelectItem>
+                      <SelectItem value="market-data-acquisition">指定数据集同步</SelectItem>
+                      <SelectItem value="market-data-nightly">盘后综合数据同步</SelectItem>
+                      <SelectItem value="index-daily-update">主要指数日线同步</SelectItem>
                       <SelectItem value="tdx-daily-update">通达信 A 股盘后增量</SelectItem>
                       <SelectItem value="live-analysis">实盘分析</SelectItem>
                     </SelectGroup>
@@ -122,7 +123,19 @@ export function SchedulesPage() {
                 )}
                 {taskType === "tdx-daily-update" && (
                   <FieldDescription>
-                    需先完成通达信全量导入。盘后补齐缺日，保留不复权口径；请保持后台任务进程运行。
+                    仅更新 A
+                    股股票，不包含指数。需先完成通达信全量导入。盘后补齐缺日，保留不复权口径；请保持后台任务进程运行。
+                  </FieldDescription>
+                )}
+                {taskType === "market-data-acquisition" && (
+                  <FieldDescription>
+                    同步一个指定数据集与日期区间；daily-update
+                    模式仅更新最近已发布日线。与盘后综合同步有部分重叠。
+                  </FieldDescription>
+                )}
+                {taskType === "index-daily-update" && (
+                  <FieldDescription>
+                    补齐七个主要指数至最近已发布交易日，固定不复权，使用已启用日线来源。无历史时从十年前年初开始；可保持停用并每天立即执行。
                   </FieldDescription>
                 )}
               </Field>
@@ -164,7 +177,10 @@ export function SchedulesPage() {
                   defaultValue={JSON.stringify(editing?.configuration ?? {}, null, 2)}
                 />
                 <FieldDescription>
-                  沿用任务配置；数据拉取每日更新可使用 {'{"mode": "daily-update"}'}。
+                  指定数据集同步可配置
+                  dataset_key、symbols、start_day、end_day；仅更新最近发布日线可用{" "}
+                  {'{"mode": "daily-update"}'}。指数同步默认七个主要指数，可配置
+                  symbols、start_day、end_day。
                 </FieldDescription>
               </Field>
             </FieldGroup>

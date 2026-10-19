@@ -17,6 +17,17 @@ def create_e2e_app():
 
     settings = make_test_settings()
     container = make_test_container(settings, initialize_admin=True)
+    # 与 0014 数据迁移相同的离线初始计划；不访问数据库。
+    container.state.schedules["schedule-index-daily-update"] = {
+        "id": "schedule-index-daily-update",
+        "task_type": "index-daily-update",
+        "schedule_kind": "cron",
+        "schedule_expression": "0 22 * * 1-5",
+        "timezone": "Asia/Shanghai",
+        "enabled": False,
+        "configuration": {},
+        "next_run_at": "1970-01-01T00:00:00+00:00",
+    }
 
     class OfflineNotificationChannel:
         def send(self, *_args):

@@ -16,7 +16,7 @@ test("指数入口、后台同步、覆盖与360px K线旅程", async ({ page },
     .filter({ has: page.getByRole("checkbox", { name: "选择中证500", exact: true }) })
   await expect(indexRow).toContainText("sh000905")
   await expect(indexRow).toContainText("未同步")
-  await expect(page.getByRole("checkbox", { name: "选择沪深300", exact: true })).toBeChecked()
+  await expect(page.getByRole("checkbox", { name: "选择沪深300", exact: true })).not.toBeChecked()
   await page.getByRole("button", { name: "清空选择" }).click()
   await page.getByRole("button", { name: "同步所选指数", exact: true }).click()
   await expect(page.getByText("请至少选择一个指数", { exact: true })).toBeVisible()
