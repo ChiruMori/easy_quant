@@ -14,6 +14,7 @@ from easy_quant.infrastructure.persistence.models.backtesting import (
     DataSnapshotChunkModel,
     DataSnapshotModel,
 )
+from easy_quant.infrastructure.persistence.models.strategies import StrategyVersionModel
 from easy_quant.infrastructure.persistence.repositories.runtime import SqlAlchemyBacktestStore
 from easy_quant.infrastructure.persistence.snapshot_spool import SnapshotSpool
 
@@ -209,5 +210,58 @@ def test_backtest_and_job_are_created_in_one_transaction(fail_enqueue):
     else:
         store.create_with_job(run, job, object())
         assert session.commits == 1
+        assert ("backtest_runs", (run["id"],)) in session.rows
+        assert ("jobs", ("j",)) in session.rows
+
+
+@pytest.mark.parametrize("fail_lock", [False, True])
+def test_backtest_submission_and_strategy_lock_share_commit_and_rollback(fail_lock):
+    class AtomicSession(ForeignKeySession):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        @contextmanager
+        def begin(self):
+            before = deepcopy(self.rows)
+            try:
+                yield
+                self.commit()
+            except Exception:
+                self.rows = before
+                self.pending.clear()
+                raise
+
+        def scalar(self, _statement):
+            return None
+
+        def execute(self, statement):
+            if statement.table.name == "strategy_versions":
+                self.flush()
+                if fail_lock:
+                    raise RuntimeError("lock failed")
+                self.rows["strategy_versions", ("version-1",)].state = "testing"
+            else:
+                super().execute(statement)
+
+    session = AtomicSession()
+    session.rows["strategy_versions", ("version-1",)] = StrategyVersionModel(
+        id="version-1", state="draft"
+    )
+    store = SqlAlchemyBacktestStore(cast(Session, object()), lambda: cast(Session, session))
+    run = backtest_run()
+    job = Job("j", "backtest.run", "b", {}, datetime(2026, 10, 12, tzinfo=UTC))
+    if fail_lock:
+        with pytest.raises(RuntimeError, match="lock failed"):
+            store.create_with_job(run, job, object(), object())
+        assert list(session.rows) == [("strategy_versions", ("version-1",))]
+        assert session.rows["strategy_versions", ("version-1",)].state == "draft"
+        assert session.commits == 0
+    else:
+        store.create_with_job(run, job, object(), object())
+        assert session.commits == 1
+        assert session.rows["strategy_versions", ("version-1",)].state == "testing"
         assert ("backtest_runs", (run["id"],)) in session.rows
         assert ("jobs", ("j",)) in session.rows

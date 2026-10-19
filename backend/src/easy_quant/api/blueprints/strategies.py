@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-
 from flask import Blueprint, g, request
 
 from easy_quant.api.dependencies import get_container
@@ -10,7 +8,6 @@ from easy_quant.api.schemas.strategies import StrategyCreateRequest, StrategyRun
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.strategies import StrategyService
 from easy_quant.application.services.strategy_validation import PythonStrategyValidator
-from easy_quant.domain.scheduling.entities import Job
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("strategies", __name__, url_prefix="/api/v1/strategies")
@@ -92,19 +89,20 @@ def repository():
 
 
 def strategy_service() -> StrategyService:
-    return StrategyService(repository(), PythonStrategyValidator(), ApiClock(), UuidGenerator())
-
-
-class ApiClock:
-    def now(self):
-        return datetime.now(UTC)
+    return StrategyService(
+        repository(),
+        PythonStrategyValidator(),
+        get_container().authentication.clock,
+        UuidGenerator(),
+    )
 
 
 def serialize(strategy):
     versions = repository().versions(strategy.id)
+    current = next((row for row in versions if row.id == strategy.current_version_id), None)
     return {
         "id": strategy.id,
-        "name": strategy.name,
+        "name": (current.name or strategy.name) if current else strategy.name,
         "description": strategy.description,
         "current_version_id": strategy.current_version_id,
         "versions": [
@@ -113,6 +111,10 @@ def serialize(strategy):
                 "number": version.number,
                 "source_code": version.source_code,
                 "created_at": version.created_at.isoformat(),
+                "state": version.state.value,
+                "name": version.name or strategy.name,
+                "description": version.description,
+                "revision": version.revision,
             }
             for version in versions
         ],
@@ -183,47 +185,14 @@ def add_version(strategy_id: str):
 @require_user
 @resource_mutation
 def run_strategy(strategy_id: str):
+    from easy_quant.api.blueprints.strategy_workspace import enqueue_quick_test
+
     payload = StrategyRunRequest.model_validate(request.get_json() or {})
     strategy = repository().get_definition(strategy_id)
     if strategy is None or strategy.owner_id != g.current_user.id:
         return success(None, status=404)
-    version = repository().versions(strategy_id)[-1]
-    identifier = f"job-{UuidGenerator().new()}"
-    job = get_container().jobs.enqueue(
-        Job(
-            identifier,
-            "strategy.run",
-            f"strategy-run:{identifier}",
-            {
-                "owner_id": g.current_user.id,
-                "strategy_id": strategy_id,
-                "strategy_version_id": version.id,
-                "trading_day": payload.trading_day.isoformat(),
-                "parameters": payload.parameters,
-                "allow_mock": payload.allow_mock,
-                "initial_cash": str(payload.initial_cash),
-            },
-            get_container().authentication.clock.now(),
-        )
-    )
-    record_audit(
-        get_container(),
-        actor_user_id=g.current_user.id,
-        action="run",
-        resource_type="strategy",
-        resource_id=strategy_id,
-        after={"status": job.status.value, "version_id": version.id, "job_id": job.id},
-    )
-    return success(
-        {
-            "id": job.id,
-            "status": job.status.value,
-            "strategy_version_id": version.id,
-            "trading_day": payload.trading_day.isoformat(),
-            "phase_results": [],
-        },
-        status=202,
-    )
+    version_id = payload.strategy_version_id or strategy.current_version_id
+    return enqueue_quick_test(payload, strategy_id, version_id)
 
 
 @blueprint.get("/<strategy_id>/runs")

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { DatePicker } from "@/components/date-picker"
@@ -31,8 +31,9 @@ import { createBacktest } from "../api"
 
 export function BacktestCreatePage() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const strategies = useQuery({ queryKey: ["strategies"], queryFn: listStrategies })
-  const [versionId, setVersionId] = useState("")
+  const [versionId, setVersionId] = useState(params.get("version") ?? "")
   const [error, setError] = useState("")
   const [actionUrl, setActionUrl] = useState("")
   if (strategies.isLoading) return <LoadingState label="正在加载策略" />
@@ -40,7 +41,10 @@ export function BacktestCreatePage() {
     return <ErrorState title="无法加载策略" message={strategies.error.message} />
   const versions =
     strategies.data?.flatMap((strategy) =>
-      strategy.versions.map((version) => ({ ...version, strategyName: strategy.name })),
+      strategy.versions.map((version) => ({
+        ...version,
+        strategyName: version.name || strategy.name,
+      })),
     ) ?? []
   return (
     <Card className="max-w-2xl">

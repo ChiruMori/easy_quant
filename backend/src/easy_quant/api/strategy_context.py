@@ -10,8 +10,8 @@ def strategy_context(container: Any, owner_id: str, version_id: str) -> dict[str
             if version.id == version_id:
                 return {
                     "id": definition.id,
-                    "name": definition.name,
-                    "description": definition.description,
+                    "name": version.name or definition.name,
+                    "description": version.description or definition.description,
                     "version_id": version.id,
                     "number": version.number,
                     "source_code": version.source_code,

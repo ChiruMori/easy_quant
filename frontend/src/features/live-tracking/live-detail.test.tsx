@@ -141,7 +141,7 @@ it("显示实盘名称、独立资金和历史策略代码及链接", () => {
   expect(screen.getByText("通知渠道：个人推送")).toBeInTheDocument()
   expect(screen.getByRole("link", { name: "查看或编辑此策略版本" })).toHaveAttribute(
     "href",
-    "/strategies?strategy=s&version=v1",
+    "/strategies/s/versions/v1",
   )
   expect(screen.getByText("# immutable v1")).toBeInTheDocument()
 })

@@ -84,11 +84,16 @@ def test_live_uses_one_system_intraday_schedule_without_default_after_market():
     client, headers = authenticated(container)
     owner = container.authentication.repository.get_user_by_username("admin")
     assert owner is not None
+    from tests.api.test_resource_lifecycle import SOURCE
+
+    strategy = client.post(
+        "/api/v1/strategies", headers=headers, json={"name": "调度测试", "source_code": SOURCE}
+    ).get_json()["data"]
     container.backtests.save(
         {
             "id": "b",
             "owner_id": owner.id,
-            "strategy_version_id": "v",
+            "strategy_version_id": strategy["current_version_id"],
             "status": "succeeded",
             "config": {"initial_cash": "10000", "parameters": {"ratio": "0.2"}},
         },

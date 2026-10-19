@@ -61,6 +61,7 @@ async function mockWorkspace(page: Page, role: "admin" | "user" = "admin") {
         },
       ],
       "/strategies/templates": [],
+      "/strategies/workspace": { items: [], total: 0, page: 1, page_size: 20 },
       "/backtests": [run, { ...run, id: "backtest-queued", status: "queued", metrics: {} }],
       [`/backtests/${run.id}`]: run,
       "/live-instances": [],

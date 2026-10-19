@@ -124,6 +124,11 @@ class Session:
             return
         model = next(model for model in self.rows if model.__tablename__ == name)
         params = statement.compile().params
+        if statement.__visit_name__ == "update":
+            for row in self.rows[model]:
+                if row.id == params["id_1"] and row.state in params["state_1"]:
+                    row.state = params["state"]
+            return
         column = str(statement.whereclause.left).split(".")[-1]
         expected = next(iter(params.values()))
         self.rows[model] = [row for row in self.rows[model] if getattr(row, column) != expected]
@@ -168,6 +173,25 @@ def test_sql_commit_failure_rolls_back_deletes_and_audit():
     assert len(database.rows[BacktestRunModel]) == 1
     assert len(database.rows[BacktestPeriodModel]) == 1
     assert database.rows[RuntimeDocumentModel] == []
+
+
+@pytest.mark.parametrize("fail_commit", [False, True])
+def test_live_instance_and_live_state_are_committed_atomically(fail_commit):
+    database = Database()
+    database.rows[StrategyVersionModel][0].state = "draft"
+    database.fail_commit = fail_commit
+    store = SqlResourceLifecycleStore(database.session)
+    instance = {"id": "live", "owner_id": "owner", "strategy_version_id": "v"}
+    if fail_commit:
+        with pytest.raises(RuntimeError, match="commit failed"):
+            store.add_live_instance(instance)
+        assert database.rows[StrategyVersionModel][0].state == "draft"
+        assert database.rows[RuntimeDocumentModel] == []
+    else:
+        store.add_live_instance(instance)
+        assert database.rows[StrategyVersionModel][0].state == "live"
+        assert len(database.rows[RuntimeDocumentModel]) == 1
+        assert database.rows[RuntimeDocumentModel][0].key == "live"
 
 
 def test_resource_guard_uses_transactional_mysql_upsert_lock():

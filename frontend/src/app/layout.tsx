@@ -14,8 +14,8 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 const titles: Record<string, string> = {
   "/": "概览",
   "/strategies": "策略",
+  "/strategies/new": "新建策略",
   "/factors": "因子",
-  "/strategy-library": "策略公共库",
   "/backtests": "回测",
   "/backtests/new": "创建回测",
   "/live": "实盘",
@@ -41,7 +41,9 @@ export function AppLayout() {
         ? "实盘详情"
         : pathname.startsWith("/admin/data/instruments/")
           ? "股票详情"
-          : "Easy Quant 易量化平台")
+          : pathname.startsWith("/strategies/")
+            ? "策略工作台"
+            : "Easy Quant 易量化平台")
   return (
     <SidebarProvider>
       <AppSidebar />

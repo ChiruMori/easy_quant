@@ -25,7 +25,8 @@ import { LiveDetailPage } from "@/features/live-tracking/pages/live-detail-page"
 import { LiveListPage } from "@/features/live-tracking/pages/live-list-page"
 import { NotificationSettingsPage } from "@/features/notifications/pages/notification-settings-page"
 import { StrategiesPage } from "@/features/strategies/pages/strategies-page"
-import { StrategyLibraryPage } from "@/features/strategies/pages/strategy-library-page"
+import { StrategyDetailPage } from "@/features/strategies/pages/strategy-detail-page"
+import { StrategyEditPage } from "@/features/strategies/pages/strategy-edit-page"
 
 import { AppLayout } from "./layout"
 import { AdminGuard, AuthenticatedGuard } from "./route-guards"
@@ -64,8 +65,11 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "strategies", element: <StrategiesPage /> },
+      { path: "strategies/new", element: <StrategyEditPage /> },
+      { path: "strategies/:strategyId/versions/:versionId", element: <StrategyDetailPage /> },
+      { path: "strategies/:strategyId/versions/:versionId/edit", element: <StrategyEditPage /> },
       { path: "factors", element: <FactorCatalogPage /> },
-      { path: "strategy-library", element: <StrategyLibraryPage /> },
+      { path: "strategy-library", element: <Navigate to="/strategies/new" replace /> },
       { path: "backtests/new", element: <BacktestCreatePage /> },
       { path: "backtests", element: <BacktestListPage /> },
       { path: "backtests/:runId", element: <BacktestDetailRoute /> },
