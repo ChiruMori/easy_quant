@@ -109,8 +109,11 @@ class RuntimeContext:
         self._quote_provider = quote_provider
         self._quotes: dict[str, Decimal] = {}
         self.mock_usage: list[dict[str, object]] = []
-        self._reserved_cash = Decimal(0)
-        self._reserved_positions: dict[str, Decimal] = {}
+        self._reserved_cash = decimal_value(data.get("reserved_cash", 0))
+        self._reserved_positions = {
+            key: decimal_value(value) for key, value in data.get("reserved_positions", {}).items()
+        }
+        self._buy_symbols = set(data.get("pending_buy_symbols", []))
 
     def universe(self) -> list[str]:
         symbols = set(self.data.get("universe", []))
@@ -211,6 +214,12 @@ class RuntimeContext:
     def portfolio(self) -> dict[str, object]:
         return {
             "cash": decimal_value(self.data.get("cash") or 0),
+            "available_cash": max(
+                Decimal(0), decimal_value(self.data.get("cash") or 0) - self._reserved_cash
+            ),
+            "reserved_cash": self._reserved_cash,
+            "reserved_positions": dict(self._reserved_positions),
+            "pending_buy_symbols": sorted(self._buy_symbols),
             "positions": {
                 key: decimal_value(value) for key, value in self.data.get("positions", {}).items()
             },
@@ -230,6 +239,7 @@ class RuntimeContext:
         lot_size: int = 100,
         trigger_price: object | None = None,
         trigger_operator: str | None = None,
+        expected_holdings: int = 10,
     ) -> dict[str, object]:
         fraction = decimal_value(ratio)
         if (
@@ -237,6 +247,8 @@ class RuntimeContext:
             or action not in {"buy", "sell"}
             or type(lot_size) is not int
             or lot_size <= 0
+            or type(expected_holdings) is not int
+            or expected_holdings <= 0
         ):
             raise ValueError("动作、比例或交易单位无效")
         basis = (
@@ -252,7 +264,36 @@ class RuntimeContext:
             slippage = decimal_value(self.data.get("slippage_rate", 0))
             unit_cost = decimal_value(raw_price) * (1 + slippage) * (1 + fee_rate)
             reference_price = decimal_value(raw_price)
-            amount = basis * fraction / unit_cost
+            # 单标的预算固定于调用开始，预留只减少可用额，不缩小预算。
+            equity = decimal_value(self.data.get("cash") or 0)
+            for held, held_quantity in self.data.get("positions", {}).items():
+                history = self.data.get("prices", {}).get(held, [])
+                mark = (
+                    (reference_price if held == symbol else None)
+                    or self.data.get("current_prices", {}).get(held)
+                    or (history[-1] if history else self.data.get("costs", {}).get(held, 0))
+                )
+                equity += decimal_value(held_quantity) * decimal_value(mark)
+            basis = equity / expected_holdings
+            held_value = self.position(symbol) * reference_price
+            # 同标的已预留买入时不重复建议，避免跨轮叠加。
+            occupied = {
+                key
+                for key, value in self.data.get("positions", {}).items()
+                if decimal_value(value) > 0
+            } | self._buy_symbols
+            allowed = symbol not in self._buy_symbols and (
+                symbol in occupied or len(occupied) < expected_holdings
+            )
+            budget = (
+                max(Decimal(0), min(basis * fraction, basis - held_value))
+                if allowed
+                else Decimal(0)
+            )
+            available = max(
+                Decimal(0), decimal_value(self.data.get("cash") or 0) - self._reserved_cash
+            )
+            amount = min(budget, available) / unit_cost
         else:
             amount = basis * fraction
         quantity = (amount / lot_size).to_integral_value(rounding=ROUND_DOWN) * lot_size
@@ -260,10 +301,9 @@ class RuntimeContext:
         if action == "sell" and fraction == 1:
             quantity = basis
         if action == "buy":
-            estimated = quantity * unit_cost
-            if self._reserved_cash + estimated > basis:
-                quantity = Decimal(0)
             self._reserved_cash += quantity * unit_cost
+            if quantity > 0:
+                self._buy_symbols.add(symbol)
         else:
             reserved = self._reserved_positions.get(symbol, Decimal(0))
             if reserved + quantity > basis:

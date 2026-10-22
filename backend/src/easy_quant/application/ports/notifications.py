@@ -6,11 +6,15 @@ from easy_quant.domain.notifications.entities import NotificationDelivery, Notif
 
 
 class TemporaryDeliveryError(RuntimeError):
-    pass
+    def __init__(self, message: str, code: str = "temporary_failure"):
+        super().__init__(message)
+        self.code = code
 
 
 class PermanentDeliveryError(RuntimeError):
-    pass
+    def __init__(self, message: str, code: str = "permanent_failure"):
+        super().__init__(message)
+        self.code = code
 
 
 class NotificationChannel(Protocol):

@@ -100,7 +100,7 @@ def test_quick_test_history_uses_five_previous_trading_days_across_weekend() -> 
     assert quick_test_start_day(set(), date(2026, 9, 29)) == date(2026, 9, 29)
 
 
-def test_sample_moving_average_returns_many_signals_through_worker() -> None:
+def test_sample_moving_average_bounds_signals_by_expected_holdings_through_worker() -> None:
     client, container, headers = _client_and_container()
     days = ("2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-28")
     container.market_data.upsert_bars(
@@ -124,13 +124,13 @@ def test_sample_moving_average_returns_many_signals_through_worker() -> None:
     queued = client.post(
         f"/api/v1/strategies/{strategy['id']}/run",
         headers=headers,
-        json={"trading_day": "2026-09-28", "parameters": {}},
+        json={"trading_day": "2026-09-28", "parameters": {"ratio": "1", "expected_holdings": 10}},
     )
     assert queued.status_code == 202
     _run_worker_once(container)
     run = client.get(f"/api/v1/strategies/{strategy['id']}/runs").get_json()["data"][0]
     assert run["status"] == "succeeded"
-    assert len(run["phase_results"][0]["signals"]) == 3000
+    assert len(run["phase_results"][0]["signals"]) == 10
     assert run["phase_results"][0]["stdout"] == ""
 
 

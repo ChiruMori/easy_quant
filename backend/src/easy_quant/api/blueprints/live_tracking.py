@@ -8,10 +8,16 @@ from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_user
 from easy_quant.api.resource_lifecycle import delete_resource, inspect_resource, resource_mutation
 from easy_quant.api.responses import success
-from easy_quant.api.schemas.live_tracking import StartLiveRequest
+from easy_quant.api.schemas.live_tracking import ManualOperationRequest, StartLiveRequest
 from easy_quant.api.strategy_context import strategy_context
 from easy_quant.application.services.audit_runtime import record_audit
+from easy_quant.application.services.live_reporting import (
+    operation_page,
+    portfolio_summary,
+    reporting_snapshot,
+)
 from easy_quant.application.services.live_runtime import analyze_live_instance
+from easy_quant.application.services.manual_operations import ManualCommand, ManualOperationService
 from easy_quant.application.services.recommendation_actions import audit_row
 from easy_quant.domain.market_data.indices import is_index
 from easy_quant.domain.shared.errors import NotFoundError, ValidationError
@@ -76,6 +82,7 @@ def start_live():
     now = get_container().authentication.clock.now()
     item = {
         "id": identifier,
+        "started_at": now.isoformat(),
         "name": payload["name"].strip(),
         "subscription_ids": sorted(selected),
         "owner_id": g.current_user.id,
@@ -157,11 +164,116 @@ def live_detail(instance_id: str):
     item = get_container().state.live_instances.get(instance_id)
     if item is None or item["owner_id"] != g.current_user.id:
         return success(None, status=404)
+    with get_container().live_tracking.transaction() as state:
+        item = state.instances.get(instance_id)
+        if item is None or item["owner_id"] != g.current_user.id:
+            raise NotFoundError("live_instance")
+        operations = operation_page(state, instance_id, 1, 20)
+        snapshot = reporting_snapshot(state, instance_id)
+        recommendation_ids = {row["id"] for row in state.recommendations.get(instance_id, [])}
+        deliveries = [
+            {
+                key: row.get(key)
+                for key in (
+                    "id",
+                    "event_id",
+                    "channel",
+                    "status",
+                    "attempts",
+                    "created_at",
+                    "last_attempt_at",
+                    "delivered_at",
+                    "updated_at",
+                    "error",
+                    "error_code",
+                )
+            }
+            for row in state.deliveries
+            if row.get("owner_id") == g.current_user.id
+            and (
+                row.get("live_instance_id") == instance_id
+                or row.get("event_id") in recommendation_ids
+                or str(row.get("event_id", "")).startswith(f"{instance_id}:")
+            )
+        ]
+        deliveries.sort(
+            key=lambda row: (str(row.get("created_at") or ""), str(row["id"])), reverse=True
+        )
+    portfolio = portfolio_summary(
+        snapshot,
+        instance_id,
+        get_container().market_data,
+        get_container().authentication.clock.now(),
+    )
     return success(
         {
             **_present(item),
-            "recommendations": get_container().state.recommendations.get(instance_id, []),
+            "recommendations": [
+                row
+                for row in operations["items"]
+                if row["operation_type"] in {"buy_signal", "sell_signal"}
+            ],
+            "operations": operations,
+            "notification_deliveries": deliveries[:20],
+            "portfolio": portfolio,
         }
+    )
+
+
+@blueprint.get("/<instance_id>/operations")
+@require_user
+def live_operations(instance_id: str):
+    try:
+        page = int(request.args.get("page", "1"))
+        page_size = int(request.args.get("page_size", "20"))
+    except ValueError as error:
+        raise ValidationError("分页参数必须为整数") from error
+    if page < 1 or not 1 <= page_size <= 100:
+        raise ValidationError("页码必须为正数，每页 1–100 条")
+    status = request.args.get("status", "")
+    operation_type = request.args.get("operation_type", "")
+    if status not in {"", "pending", "rejected", "executed"} or operation_type not in {
+        "",
+        "buy_signal",
+        "sell_signal",
+        "manual_buy",
+        "manual_sell",
+    }:
+        raise ValidationError("未知操作状态或类型")
+    with get_container().live_tracking.transaction() as state:
+        item = state.instances.get(instance_id)
+        if item is None or item["owner_id"] != g.current_user.id:
+            raise NotFoundError("live_instance")
+        return success(
+            operation_page(
+                state,
+                instance_id,
+                page,
+                page_size,
+                request.args.get("search", ""),
+                status,
+                operation_type,
+            )
+        )
+
+
+@blueprint.post("/<instance_id>/manual-operations/<mode>")
+@require_user
+@resource_mutation
+def manual_operation(instance_id: str, mode: str):
+    if mode not in {"preview", "record"}:
+        raise NotFoundError("manual_operation")
+    payload = ManualOperationRequest.model_validate(request.get_json() or {})
+    container = get_container()
+    return success(
+        ManualOperationService(
+            container.live_tracking, container.authentication.clock, UuidGenerator()
+        ).apply(
+            instance_id,
+            g.current_user.id,
+            ManualCommand(**payload.model_dump()),
+            preview=mode == "preview",
+        )
     )
 
 

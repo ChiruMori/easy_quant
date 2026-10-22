@@ -65,7 +65,7 @@ def test_insufficient_cash_does_not_write_or_consume_key(kind):
     container = action_container(cash=Decimal(10))
     before = snapshot(container)
     actions = service(container)
-    values = {"symbol": "000001", "action": "buy", "quantity": Decimal(10), "price": Decimal(10)}
+    values = {"symbol": "000001", "action": "buy", "quantity": Decimal(100), "price": Decimal(10)}
     with pytest.raises(StateConflictError, match="负现金"):
         actions.apply("r", "u", command(kind, **values))
     assert snapshot(container) == before
@@ -76,8 +76,8 @@ def test_insufficient_cash_does_not_write_or_consume_key(kind):
             OperationKind.CORRECT,
             symbol="000001",
             action="buy",
-            quantity=Decimal(1),
-            price=Decimal(10),
+            quantity=Decimal(100),
+            price=Decimal("0.1"),
         ),
     )
     assert len(container.state.portfolio_ledger) == 1
@@ -85,6 +85,7 @@ def test_insufficient_cash_does_not_write_or_consume_key(kind):
 
 def test_overselling_does_not_write_and_reject_has_no_ledger():
     container = action_container()
+    container.state.recommendations["l"][0]["action"] = "sell"
     before = snapshot(container)
     actions = service(container)
     with pytest.raises(StateConflictError, match="负持仓"):
@@ -95,7 +96,7 @@ def test_overselling_does_not_write_and_reject_has_no_ledger():
                 OperationKind.CORRECT,
                 symbol="000001",
                 action="sell",
-                quantity=Decimal(1),
+                quantity=Decimal(100),
                 price=Decimal(10),
             ),
         )
@@ -156,7 +157,7 @@ def test_owner_is_rechecked_and_keys_are_isolated_by_user():
 
 @pytest.mark.parametrize("same_recommendation", [True, False])
 def test_concurrent_commands_validate_against_latest_committed_ledger(same_recommendation):
-    container = action_container(cash=Decimal(100))
+    container = action_container(cash=Decimal(200))
     seed_recommendation(container, "r2")
     actions = service(container)
 
@@ -172,9 +173,10 @@ def test_concurrent_commands_validate_against_latest_committed_ledger(same_recom
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(apply, [0, 1]))
-    assert sum(result is not None for result in results) == 1
-    assert len(container.state.portfolio_ledger) == len(container.state.operations) == 1
-    assert container.state.live_instances["l"]["cash"] == "0"
+    expected = 1 if same_recommendation else 2
+    assert sum(result is not None for result in results) == expected
+    assert len(container.state.portfolio_ledger) == len(container.state.operations) == expected
+    assert container.state.live_instances["l"]["cash"] == ("100" if same_recommendation else "0")
 
 
 @pytest.mark.parametrize("stage", ["ledger", "audit", "commit"])

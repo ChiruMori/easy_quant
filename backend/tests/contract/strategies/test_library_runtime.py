@@ -42,11 +42,11 @@ def test_subprocess_uses_same_decimal_factor_as_platform(key, parameters, fixed_
 
 def test_partial_sizing_decimal_fees_and_budget_are_respected():
     context = RuntimeContext({"cash": "100000", "positions": {"x": "1000"}})
-    buy = context.signal("x", "buy", "0.1", "配置仓位", price="10")
+    buy = context.signal("x", "buy", "0.1", "配置仓位", price="1")
     sell = context.signal("x", "sell", "0.5", "降低风险")
-    assert buy["quantity"] == Decimal(900)
+    assert buy["quantity"] == Decimal(1000)
     assert sell["quantity"] == Decimal(500)
-    assert buy["ratio"] == Decimal("0.1") and buy["ratio_basis"] == Decimal(100000)
+    assert buy["ratio"] == Decimal("0.1") and buy["ratio_basis"] == Decimal(10100)
     assert context.position("x") == Decimal(1000)
     with pytest.raises(ValueError):
         context.signal("x", "buy", "NaN", "bad", price=10)

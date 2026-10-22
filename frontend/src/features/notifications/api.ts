@@ -9,7 +9,17 @@ export interface Subscription {
 }
 export const listSubscriptions = () => apiRequest<Subscription[]>("/notifications/subscriptions")
 export const listDeliveries = () =>
-  apiRequest<Array<{ id: string; status: string; channel: string }>>("/notifications/deliveries")
+  apiRequest<
+    Array<{
+      id: string
+      status: string
+      channel: string
+      attempts?: number
+      updated_at?: string
+      error?: string
+      error_code?: string
+    }>
+  >("/notifications/deliveries")
 export const addSubscription = (channel: string, destination: string, name: string) =>
   apiRequest<Subscription>("/notifications/subscriptions", {
     method: "POST",

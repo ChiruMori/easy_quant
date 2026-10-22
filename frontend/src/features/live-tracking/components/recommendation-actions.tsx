@@ -1,115 +1,194 @@
-import { useId, useState } from "react"
+import { Check, Pencil, X } from "lucide-react"
+import { useId, useRef, useState } from "react"
 
+import { ConfirmAction } from "@/components/confirm-action"
+import { IconButton } from "@/components/icon-button"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { localizedLabel } from "@/lib/labels"
+
+import type { Recommendation } from "../api"
+
+export function TradeFields({
+  quantity,
+  price,
+  fee = "0",
+  disabled,
+}: {
+  quantity?: string
+  price?: string
+  fee?: string
+  disabled?: boolean
+}) {
+  const id = useId()
+  return (
+    <FieldGroup>
+      <Field>
+        <FieldLabel htmlFor={`${id}-quantity`}>实际数量</FieldLabel>
+        <Input
+          id={`${id}-quantity`}
+          name="quantity"
+          type="number"
+          min="100"
+          step="100"
+          defaultValue={quantity}
+          disabled={disabled}
+          required
+        />
+      </Field>
+      <Field>
+        <FieldLabel htmlFor={`${id}-price`}>实际价格</FieldLabel>
+        <Input
+          id={`${id}-price`}
+          name="price"
+          type="number"
+          min="0.0001"
+          step="any"
+          defaultValue={price}
+          disabled={disabled}
+          required
+        />
+      </Field>
+      <Field>
+        <FieldLabel htmlFor={`${id}-fee`}>手续费</FieldLabel>
+        <Input
+          id={`${id}-fee`}
+          name="fee"
+          type="number"
+          min="0"
+          step="any"
+          defaultValue={fee}
+          disabled={disabled}
+          required
+        />
+      </Field>
+    </FieldGroup>
+  )
+}
 
 export function RecommendationActions({
   onSubmit,
   disabled = false,
+  recommendation,
 }: {
-  onSubmit: (kind: "confirm" | "reject" | "correct", values?: Record<string, string>) => void
+  onSubmit: (
+    kind: "confirm" | "reject" | "correct",
+    values?: Record<string, string>,
+  ) => Promise<unknown> | void
   disabled?: boolean
+  recommendation: Recommendation
 }) {
-  const formId = useId()
-  const [showCorrection, setShowCorrection] = useState(false)
-  const [actualAction, setActualAction] = useState("buy")
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const sending = useRef(false)
+  async function submit(kind: "confirm" | "reject" | "correct", values?: Record<string, string>) {
+    if (sending.current || disabled) return
+    sending.current = true
+    setBusy(true)
+    setError("")
+    try {
+      if (values) await onSubmit(kind, values)
+      else await onSubmit(kind)
+      setOpen(false)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "处理失败，请重试")
+    } finally {
+      sending.current = false
+      setBusy(false)
+    }
+  }
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
-        <Button disabled={disabled} onClick={() => onSubmit("confirm")}>
-          快速确认
-        </Button>
-        <Button disabled={disabled} variant="outline" onClick={() => onSubmit("reject")}>
-          拒绝建议
-        </Button>
-        <Button
-          disabled={disabled}
-          variant="outline"
-          onClick={() => setShowCorrection((value) => !value)}
-        >
-          修正成交
-        </Button>
-      </div>
-      {showCorrection && (
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (disabled) return
-            const data = new FormData(event.currentTarget)
-            onSubmit("correct", {
-              ...(Object.fromEntries(data) as Record<string, string>),
-              action: actualAction,
-            })
+        <ConfirmAction
+          icon={Check}
+          label="接受建议"
+          title="确认接受建议"
+          description={`请确认已实际${localizedLabel(recommendation.action)} ${recommendation.instrument_id} ${recommendation.quantity} 股，将按推荐价格 ${recommendation.suggested_price ?? "未记录"} 记账并释放本条预留。实际成交有差异请修改。`}
+          destructive={false}
+          disabled={disabled || busy}
+          action={async () => {
+            await onSubmit("confirm")
           }}
-        >
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-symbol`}>实际标的</FieldLabel>
-              <Input id={`${formId}-symbol`} name="symbol" required />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-action`}>实际方向</FieldLabel>
-              <Select value={actualAction} onValueChange={setActualAction}>
-                <SelectTrigger id={`${formId}-action`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="buy">买入</SelectItem>
-                    <SelectItem value="sell">卖出</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-quantity`}>实际数量</FieldLabel>
-              <Input
-                id={`${formId}-quantity`}
-                name="quantity"
-                type="number"
-                min="0.0001"
-                step="any"
-                required
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-fee`}>手续费</FieldLabel>
-              <Input
-                id={`${formId}-fee`}
-                name="fee"
-                type="number"
-                min="0"
-                step="any"
-                defaultValue="0"
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-price`}>实际价格</FieldLabel>
-              <Input
-                id={`${formId}-price`}
-                name="price"
-                type="number"
-                min="0.0001"
-                step="any"
-                required
-              />
-            </Field>
-          </FieldGroup>
-          <Button disabled={disabled} type="submit">
-            提交修正
-          </Button>
-        </form>
-      )}
+        />
+        <ConfirmAction
+          icon={X}
+          label="拒绝建议"
+          title="确认拒绝建议"
+          description={`拒绝 ${recommendation.instrument_id} 的建议后将释放本条预留，不记录实际成交。请确认未发生对应买卖。`}
+          disabled={disabled || busy}
+          action={async () => {
+            await onSubmit("reject")
+          }}
+        />
+        <IconButton
+          icon={Pencil}
+          label="修正成交"
+          disabled={disabled || busy}
+          variant="outline"
+          onClick={() => {
+            setError("")
+            setOpen(true)
+          }}
+        />
+      </div>
+      {error && !open && <p role="alert">{error}</p>}
+      <Dialog
+        open={open}
+        onOpenChange={(value) => {
+          if (!busy) setOpen(value)
+        }}
+      >
+        <DialogContent showCloseButton={!busy} className="max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>修正成交</DialogTitle>
+            <DialogDescription>
+              标的 {recommendation.instrument_id} · {localizedLabel(recommendation.action)}
+              ；仅调整实际成交数量、价格与费用，数量按整百增减。
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const values = Object.fromEntries(new FormData(event.currentTarget)) as Record<
+                string,
+                string
+              >
+              void submit("correct", {
+                ...values,
+                symbol: recommendation.instrument_id,
+                action: recommendation.action,
+              })
+            }}
+          >
+            <TradeFields
+              quantity={recommendation.quantity}
+              price={recommendation.suggested_price}
+              fee={recommendation.suggested_fee}
+              disabled={busy}
+            />
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            <Button disabled={disabled || busy} type="submit">
+              {busy ? "正在提交…" : "提交修正"}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

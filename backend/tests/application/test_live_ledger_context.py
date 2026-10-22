@@ -55,7 +55,7 @@ def test_live_analysis_rebuilds_portfolio_and_does_not_overwrite_concurrent_conf
                 "v",
                 StrategyRunStatus.SUCCEEDED,
                 {},
-                [Signal("000002", "buy", Decimal(1), "new")],
+                [Signal("000002", "buy", Decimal(100), "new", reference_price=Decimal(1))],
             )
 
     monkeypatch.setattr(live_runtime, "SubprocessStrategyRunner", Runner)
@@ -115,7 +115,7 @@ def test_confirmation_during_analysis_is_preserved_by_fresh_transaction(monkeypa
                 "v",
                 StrategyRunStatus.SUCCEEDED,
                 {},
-                [Signal("000002", "buy", Decimal(1), "new")],
+                [Signal("000002", "buy", Decimal(100), "new", reference_price=Decimal(1))],
             )
 
     monkeypatch.setattr(live_runtime, "SubprocessStrategyRunner", Runner)

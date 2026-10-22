@@ -17,6 +17,11 @@ from easy_quant.domain.live_tracking.ledger import (
     entry_for_operation,
     rebuild_portfolio,
 )
+from easy_quant.domain.live_tracking.reservations import (
+    ensure_available,
+    reservations,
+    validate_lot,
+)
 from easy_quant.domain.shared.errors import NotFoundError, StateConflictError
 
 
@@ -168,10 +173,15 @@ class RecommendationActionService:
             ):
                 raise StateConflictError("建议已被其他请求处理")
             now = self.clock.now()
-            symbol = (
-                stored["instrument_id"] if command.kind is OperationKind.CONFIRM else command.symbol
-            )
-            action = stored["action"] if command.kind is OperationKind.CONFIRM else command.action
+            if command.kind is OperationKind.CORRECT:
+                if command.symbol not in (None, stored["instrument_id"]) or command.action not in (
+                    None,
+                    stored["action"],
+                ):
+                    raise StateConflictError("修正成交不允许修改标的或方向")
+                validate_lot(command.quantity)
+            symbol = stored["instrument_id"]
+            action = stored["action"]
             quantity = (
                 Decimal(str(stored["quantity"]))
                 if command.kind is OperationKind.CONFIRM
@@ -180,6 +190,9 @@ class RecommendationActionService:
             price = command.price
             if command.kind is OperationKind.CONFIRM and price == 0:
                 price = Decimal(str(stored.get("suggested_price") or "0"))
+            fee = command.fee
+            if command.kind is OperationKind.CONFIRM and fee == 0:
+                fee = Decimal(str(stored.get("suggested_fee") or "0"))
             operation = ActualOperation(
                 self.ids.new(),
                 recommendation_id,
@@ -191,7 +204,7 @@ class RecommendationActionService:
                 action,
                 quantity,
                 price,
-                command.fee,
+                fee,
             )
             entry = entry_for_operation(self.ids.new(), instance_id, operation)
             entries = ledger_entries(state, instance_id)
@@ -208,6 +221,10 @@ class RecommendationActionService:
                     for symbol, value in instance.get("initial_positions", {}).items()
                 },
             )
+            if entry is not None:
+                ensure_available(
+                    portfolio, reservations(state.recommendations[instance_id], recommendation_id)
+                )
             status = {
                 OperationKind.CONFIRM: RecommendationStatus.CONFIRMED,
                 OperationKind.REJECT: RecommendationStatus.REJECTED,
@@ -231,7 +248,7 @@ class RecommendationActionService:
                 "action": action,
                 "quantity": str(quantity),
                 "price": str(price),
-                "fee": str(command.fee),
+                "fee": str(fee),
                 "request_fingerprint": fingerprint,
                 "response": response,
             }

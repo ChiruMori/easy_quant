@@ -120,6 +120,7 @@ const routes = [
 
 for (const width of [360, 768, 1440]) {
   test(`${width}px 全部页面与兼容入口的布局、长文本及表单标签`, async ({ page }, testInfo) => {
+    test.setTimeout(90000)
     await page.setViewportSize({ width, height: 1000 })
     await prepare(page)
     for (const [path, title] of routes) {
@@ -150,9 +151,13 @@ for (const width of [360, 768, 1440]) {
       if (path === `/live/${longId}`) {
         for (const button of await page
           .getByRole("button", { name: "修正成交", exact: true })
-          .all())
+          .all()) {
           await button.click()
-        await expect(page.getByRole("combobox", { name: "实际方向" })).toHaveCount(2)
+          await expect(page.getByRole("dialog", { name: "修正成交" })).toBeVisible()
+          await expect(page.getByRole("combobox", { name: "实际方向" })).toHaveCount(0)
+          await expect(page.getByLabel("实际数量")).toHaveValue("100")
+          await page.getByRole("button", { name: "关闭", exact: true }).click()
+        }
         const ids = await page
           .locator("input[id]")
           .evaluateAll((nodes) => nodes.map((node) => node.id))
@@ -202,7 +207,7 @@ test("因子无搜索结果与实盘空态、加载失败后可恢复", async ({
   failed = false
   await page.getByRole("button", { name: "重新加载", exact: true }).click()
   await expect(page.getByRole("heading", { name: "实盘实例 retry-ui-v1" })).toBeVisible()
-  await expect(page.getByText("暂无建议", { exact: true })).toBeVisible()
+  await expect(page.getByText("暂无操作", { exact: true })).toBeVisible()
 })
 
 test("保存失败提供明确反馈，CSV 切换数据集后重新预检", async ({ page }) => {

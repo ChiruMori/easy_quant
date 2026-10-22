@@ -109,11 +109,12 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   const confirmation = page.waitForResponse(
     `**/api/v1/recommendations/${recommendation.id}/confirm`,
   )
-  await page.getByRole("button", { name: "快速确认" }).click()
+  await page.getByRole("button", { name: "接受建议", exact: true }).click()
+  await page.getByRole("button", { name: "确认接受建议", exact: true }).click()
   const confirmed = await confirmation
   expect(confirmed.ok()).toBeTruthy()
-  await expect(page.getByText(/已确认/)).toBeVisible()
-  await expect(page.getByRole("button", { name: "快速确认" })).toBeDisabled()
+  await expect(page.getByRole("cell", { name: "已操作", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "接受建议", exact: true })).toBeDisabled()
   const retry = await page.request.post(`/api/v1/recommendations/${recommendation.id}/confirm`, {
     headers,
     data: confirmed.request().postDataJSON(),
@@ -127,8 +128,8 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   expect(portfolio.positions["000001"]).toBe(recommendation.quantity)
   expect(portfolio.ledger).toHaveLength(1)
   await page.reload()
-  await expect(page.getByText(/已确认/)).toBeVisible()
-  await expect(page.getByRole("button", { name: "快速确认" })).toBeDisabled()
+  await expect(page.getByRole("cell", { name: "已操作", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "接受建议", exact: true })).toBeDisabled()
 
   const live = (await (await page.request.get(`/api/v1/live-instances/${liveId}`)).json()).data
   const limitedResponse = await page.request.post("/api/v1/live-instances", {
@@ -149,7 +150,7 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   expect(limitedAnalysis.ok()).toBeTruthy()
   expect((await limitedAnalysis.json()).data.created).toEqual([])
   await page.goto(`/live/${limited.id}`)
-  await expect(page.getByRole("button", { name: "快速确认" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "接受建议", exact: true })).toHaveCount(0)
   const unchanged = (
     await (await page.request.get(`/api/v1/recommendations/portfolio/${limited.id}`)).json()
   ).data

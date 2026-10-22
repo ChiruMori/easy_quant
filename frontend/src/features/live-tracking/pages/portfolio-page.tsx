@@ -6,6 +6,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatMoney } from "@/lib/finance"
 
 export interface PortfolioView {
   cash: string
@@ -18,7 +19,7 @@ export function PortfolioPage({ portfolio }: { portfolio: PortfolioView }) {
   return (
     <div className="flex flex-col gap-5">
       <h1 className="text-2xl font-semibold">实际组合</h1>
-      <p>现金：{portfolio.cash}</p>
+      <p>现金：{formatMoney(portfolio.cash)}</p>
       <Table>
         <TableHeader>
           <TableRow>
@@ -32,7 +33,7 @@ export function PortfolioPage({ portfolio }: { portfolio: PortfolioView }) {
             <TableRow key={symbol}>
               <TableCell>{symbol}</TableCell>
               <TableCell>{quantity}</TableCell>
-              <TableCell>{portfolio.costs[symbol]}</TableCell>
+              <TableCell>{formatMoney(portfolio.costs[symbol])}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -51,7 +52,7 @@ export function PortfolioPage({ portfolio }: { portfolio: PortfolioView }) {
           {portfolio.ledger.map((entry) => (
             <TableRow key={entry.id}>
               <TableCell>{entry.id}</TableCell>
-              <TableCell>{entry.cash_delta}</TableCell>
+              <TableCell>{formatMoney(entry.cash_delta)}</TableCell>
               <TableCell>{entry.symbol ?? "-"}</TableCell>
               <TableCell>{entry.quantity_delta}</TableCell>
             </TableRow>

@@ -215,7 +215,10 @@ export function NotificationSettingsPage() {
               >
                 <span>{localizedLabel(delivery.channel)}</span>
                 <span className="text-sm text-muted-foreground">
-                  {localizedLabel(delivery.status)}
+                  {delivery.status === "delivered" ? "渠道已接收" : localizedLabel(delivery.status)}
+                  {delivery.attempts !== undefined && ` · ${delivery.attempts} 次`}
+                  {delivery.error && ` · ${delivery.error}`}
+                  {delivery.error_code && `（${delivery.error_code}）`}
                 </span>
               </div>
             ))}

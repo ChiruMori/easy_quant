@@ -34,6 +34,7 @@ class InMemoryLiveTrackingStore:
                 deepcopy(self.state.operations),
                 deepcopy(self.state.portfolio_ledger),
                 deepcopy(self.state.audit_events),
+                deepcopy(self.state.deliveries),
             )
             yield working
             self.state.live_instances = working.instances
@@ -41,6 +42,7 @@ class InMemoryLiveTrackingStore:
             self.state.operations = working.operations
             self.state.portfolio_ledger = working.ledger
             self.state.audit_events = working.audit
+            self.state.deliveries = working.deliveries
 
 
 class SqlLiveTrackingStore:
@@ -71,4 +73,5 @@ class SqlLiveTrackingStore:
                 SqlJsonDict(session, "operations", commit_on_write=False),
                 SqlJsonList(session, "portfolio_ledger", commit_on_write=False),
                 SqlJsonList(session, "audit_events", commit_on_write=False),
+                SqlJsonList(session, "deliveries", commit_on_write=False),
             )
