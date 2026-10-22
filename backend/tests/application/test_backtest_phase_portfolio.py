@@ -50,7 +50,7 @@ def test_quick_and_backtest_share_warmup_quotes_accounting_and_kv(fixed_now):
     c.store.set('n',c.store.get('n',0)+1)
     ma=c.factor('technical.ma',symbol='000001',window=5)
     print(c.store.get('n'),ma['available'],ma.get('value'))
-    return [c.signal('000001','buy','0.2','test',price='10',lot_size=1)]
+    return [c.signal('000001','buy','0.2','test',price='10',lot_size=1,expected_holdings=1)]
 def on_market(c,p):
     print(c.store.get('n'),c.current_price('000001'),c.position('000001'))
     return [c.signal('000001','sell','0.5','test',lot_size=1)]

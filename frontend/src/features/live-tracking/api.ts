@@ -16,6 +16,8 @@ export interface LiveInstance {
   status: string
   next_decision_at: string
   recommendations?: Recommendation[]
+  operations?: OperationPage
+  portfolio?: LivePortfolio
 }
 export interface Recommendation {
   id: string
@@ -28,7 +30,45 @@ export interface Recommendation {
   status: string
   version: number
   suggested_price?: string
+  suggested_fee?: string
+  decision_at?: string
+  operation_type?: string
+  actual_quantity?: string | null
+  actual_price?: string | null
+  actual_fee?: string | null
 }
+export interface OperationPage {
+  items: Recommendation[]
+  total: number
+  page: number
+  page_size: number
+}
+export interface LivePortfolio {
+  cash: string
+  available_cash: string
+  reserved_cash: string
+  reserved_positions: Record<string, string>
+  positions: Record<string, string>
+  capital_pool: string | null
+  profit: string | null
+  return_rate: string | null
+  valuation_note: string
+  missing_symbols: string[]
+  curve: Array<{ at: string; profit: string | null; return_rate: string | null }>
+}
+export const listOperations = (id: string, page: number, search: string) =>
+  apiRequest<OperationPage>(
+    `/live-instances/${id}/operations?${new URLSearchParams({ page: String(page), search })}`,
+  )
+export const manualOperation = (
+  id: string,
+  mode: "preview" | "record",
+  values: Record<string, unknown>,
+) =>
+  apiRequest<{ required_increase: string; capital_pool: string }>(
+    `/live-instances/${id}/manual-operations/${mode}`,
+    { method: "POST", body: JSON.stringify(values) },
+  )
 export interface RecommendationActionResult {
   id: string
   kind: "confirm" | "reject" | "correct"

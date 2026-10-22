@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from flask import Blueprint, g, request
 
 from easy_quant.api.dependencies import get_container
@@ -12,6 +14,7 @@ from easy_quant.application.services.recommendation_actions import (
     ledger_entries,
 )
 from easy_quant.domain.live_tracking.ledger import OperationKind
+from easy_quant.domain.live_tracking.reservations import reservations
 from easy_quant.domain.shared.errors import NotFoundError, ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
 
@@ -59,9 +62,13 @@ def portfolio(live_instance_id: str):
         if instance is None or instance["owner_id"] != g.current_user.id:
             raise NotFoundError("live_instance")
         portfolio_state = actual_portfolio(state, live_instance_id)
+        locked = reservations(state.recommendations.get(live_instance_id, []))
         return success(
             {
                 "cash": str(portfolio_state.cash),
+                "available_cash": str(max(Decimal(0), portfolio_state.cash - locked.cash)),
+                "reserved_cash": str(locked.cash),
+                "reserved_positions": {key: str(value) for key, value in locked.positions.items()},
                 "positions": {key: str(value) for key, value in portfolio_state.positions.items()},
                 "costs": {key: str(value) for key, value in portfolio_state.costs.items()},
                 "ledger": [

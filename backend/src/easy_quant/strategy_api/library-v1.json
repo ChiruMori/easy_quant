@@ -85,19 +85,19 @@
     "signature": "context.portfolio() / context.position(symbol)",
     "description": "读取阶段开始时的现金、数量及平均成本，数值为 Decimal。",
     "parameters": "portfolio 无参数；position 接收证券代码。",
-    "output": "{'cash': Decimal, 'positions': dict, 'costs': dict}；不存在的持仓数量为 Decimal(0)。",
+    "output": "包含 cash、positions、costs、available_cash、reserved_cash、reserved_positions、pending_buy_symbols；数值为 Decimal。",
     "example": "portfolio = context.portfolio()\nquantity = context.position(symbol)",
     "runtime": "快测和回测读取已模拟成交的组合；实盘从人工实际账本重建。修改副本不改变账本。"
   },
   {
     "key": "signal",
     "name": "按比例建议",
-    "signature": "context.signal(symbol, action, ratio, reason, *, price=None, lot_size=100, trigger_price=None, trigger_operator=None)",
-    "description": "买入按可用现金比例计算，卖出按该股票持仓比例计算；允许加仓与减仓。",
-    "parameters": "action：buy/sell；ratio：(0,1]；买入需参考价，盘中可省略；lot_size：交易单位；trigger_operator：lte/gte。",
+    "signature": "context.signal(symbol, action, ratio, reason, *, price=None, lot_size=100, trigger_price=None, trigger_operator=None, expected_holdings=10)",
+    "description": "买入比例基于单标的等额子仓位预算（组合权益/预计持股数），卖出基于该股持仓；保护可用资金、持仓和持股数上限。",
+    "parameters": "expected_holdings：正整数，默认 10；ratio：(0,1]，10% 指子仓位的 10%；其余参数同信号契约。",
     "output": "带 quantity、ratio、ratio_basis、reason 的信号字典，需放入钩子返回列表；不足一手时数量为零。",
     "example": "return [context.signal(symbol, 'buy', Decimal('0.10'), '符合买入规则', price=reference_price)]\n# 部分卖出\nreturn [context.signal(symbol, 'sell', Decimal('0.50'), '降低风险')]",
-    "runtime": "买入预留配置中的费用和滑点，数量向下取整。多信号共享阶段开始快照，需要策略分配总预算。模拟引擎入账，实盘等待人工反馈。"
+    "runtime": "同次调用自动预留费用及数量；实盘未处理建议跨轮锁定，同标的待买入时不重复建议；确认/修正/拒绝后释放，快测/回测模拟成交后推进。"
   },
   {
     "key": "store",

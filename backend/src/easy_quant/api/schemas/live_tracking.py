@@ -1,6 +1,18 @@
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+
+class ManualOperationRequest(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=80)
+    symbol: str = Field(min_length=1, max_length=32)
+    action: Literal["buy", "sell"]
+    quantity: Decimal = Field(gt=0)
+    price: Decimal = Field(gt=0)
+    fee: Decimal = Field(default=Decimal(0), ge=0)
+    risk_acknowledged: bool = False
+    confirmed_increase: Decimal = Field(default=Decimal(0), ge=0)
 
 
 class StartLiveRequest(BaseModel):

@@ -16,6 +16,7 @@ from easy_quant.application.services.strategy_validation import (
     extract_factor_dependencies,
     extract_history_trading_days,
 )
+from easy_quant.domain.live_tracking.reservations import ensure_available, reservations
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.indices import is_index
 from easy_quant.domain.shared.errors import StateConflictError
@@ -47,6 +48,7 @@ def analyze_live_instance(
             return {"phase": phase, "created": [], "skipped": "该阶段已执行"}
         state_revision = int(instance.get("state_revision", 0))
         portfolio = actual_portfolio(state, instance_id)
+        locked = reservations(state.recommendations.get(instance_id, []))
         instance = {
             **instance,
             "positions": {key: str(value) for key, value in portfolio.positions.items()},
@@ -152,6 +154,9 @@ def analyze_live_instance(
             },
             "positions": instance.get("positions", {}),
             "cash": instance["cash"],
+            "reserved_cash": str(locked.cash),
+            "reserved_positions": {key: str(value) for key, value in locked.positions.items()},
+            "pending_buy_symbols": sorted(locked.buy_symbols),
             "costs": instance["costs"],
             "trading_day": trading_day.isoformat(),
             "phase": phase,
@@ -245,6 +250,23 @@ def analyze_live_instance(
                     "status": "pending",
                     "version": 0,
                 }
+                price = Decimal(str(item["suggested_price"] or "0"))
+                if not price.is_finite() or price <= 0:
+                    continue
+                quantity = signal.quantity // 100 * 100
+                if quantity <= 0:
+                    continue
+                item["quantity"] = str(quantity)
+                item["suggested_fee"] = str(quantity * price * Decimal("0.0003"))
+                item["reserved_cash"] = (
+                    str(quantity * price + Decimal(str(item["suggested_fee"])))
+                    if signal.action == "buy"
+                    else "0"
+                )
+                try:
+                    ensure_available(latest_portfolio, reservations([*recommendations, item]))
+                except StateConflictError:
+                    continue
                 recommendations.append(item)
                 created.append(item)
                 state.audit.append(
@@ -264,7 +286,8 @@ def analyze_live_instance(
                     (
                         str(item["id"]),
                         "Easy Quant 操作建议",
-                        f"{signal.symbol} {signal.action} {signal.quantity}：{signal.reason}",
+                        f"{signal.symbol} {signal.action} {quantity}，"
+                        f"参考价 {price}：{signal.reason}",
                     )
                 )
         else:

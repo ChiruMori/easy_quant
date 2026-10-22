@@ -16,7 +16,8 @@ from tests.fakes.live_tracking import action_container
 
 
 def prepare(fixed_now, source):
-    container = action_container()
+    container = action_container(cash=Decimal(1000000))
+    container.state.recommendations["l"] = []
     container.state.strategies.add_definition(StrategyDefinition("s", "u", "通用测试"))
     container.state.strategies.add_version(StrategyVersion("v", "s", 1, source, "h", fixed_now))
     return container
@@ -53,15 +54,15 @@ def after_market(c,p):
             0,
             symbol="000001",
             action="buy",
-            quantity=Decimal(5),
+            quantity=Decimal(500),
             price=Decimal(10),
             fee=Decimal(0),
         ),
     )
     result = analyze_live_instance(container, "l", "on_market", fixed_now, {"000001": "12"})
-    assert result["stdout"] == "1 5\n"
-    assert cast(list[dict[str, Any]], result["created"])[0]["quantity"] == "2"
-    assert container.state.live_instances["l"]["positions"] == {"000001": "5"}
+    assert result["stdout"] == "1 500\n"
+    assert cast(list[dict[str, Any]], result["created"])[0]["quantity"] == "200"
+    assert container.state.live_instances["l"]["positions"] == {"000001": "500"}
     assert (
         analyze_live_instance(container, "l", "on_market", fixed_now, {"000001": "12"})["created"]
         == []
