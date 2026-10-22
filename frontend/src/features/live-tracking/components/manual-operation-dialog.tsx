@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { formatMoney } from "@/lib/finance"
 
 import { manualOperation } from "../api"
 import { TradeFields } from "./recommendation-actions"
@@ -149,7 +150,7 @@ export function ManualOperationDialog({
         onOpenChange={setConfirm}
         label="录入操作"
         title="确认手动成交风险"
-        description={`此操作可能偏离策略并改变后续信号，请确认没有重复录入。${prepared?.increase !== "0" ? `可用资金不足，需要追加 ${prepared?.increase} 元，资金池将调整为 ${prepared?.pool} 元；追加资金不计作收益。` : "资金池无需追加。"}`}
+        description={`此操作可能偏离策略并改变后续信号，请确认没有重复录入。${prepared?.increase !== "0" ? `可用资金不足，需要追加 ${formatMoney(prepared?.increase)} 元，资金池将调整为 ${formatMoney(prepared?.pool)} 元；追加资金不计作收益。` : "资金池无需追加。"}`}
         action={async () => {
           if (!prepared) return
           await manualOperation(instanceId, "record", {

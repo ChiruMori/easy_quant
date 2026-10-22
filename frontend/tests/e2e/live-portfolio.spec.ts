@@ -15,7 +15,7 @@ for (const width of [1440, 360]) {
       quantity: "100",
       suggested_price: "10.5",
       suggested_fee: "0.315",
-      reason: "测试建议",
+      reason: "这是超过十五个字的完整操作建议说明，供用户核对成交依据",
       status: "pending",
       version: 0,
       decision_at: "2026-10-21T02:00:00Z",
@@ -50,11 +50,22 @@ for (const width of [1440, 360]) {
     let writes = 0
     let manualWrites = 0
     let failCorrection = true
+    let recommendationWrites = 0
     await page.route("**/api/v1/live-instances/live-ui-v1**", async (route) => {
       const url = new URL(route.request().url())
       if (url.pathname.endsWith("/operations")) {
         const search = url.searchParams.get("search") ?? ""
-        const selected = rows.filter((row) => row.instrument_id.includes(search))
+        const status = url.searchParams.get("status") ?? ""
+        const type = url.searchParams.get("operation_type") ?? ""
+        const selected = rows.filter(
+          (row) =>
+            row.instrument_id.includes(search) &&
+            (!status ||
+              (status === "executed"
+                ? ["confirmed", "corrected", "executed"].includes(row.status)
+                : row.status === status)) &&
+            (!type || row.operation_type === type),
+        )
         const number = Number(url.searchParams.get("page") ?? 1)
         return route.fulfill({
           json: {
@@ -105,6 +116,15 @@ for (const width of [1440, 360]) {
         },
       })
     })
+    await page.route("**/api/v1/recommendations/*/reject", (route) => {
+      recommendationWrites++
+      rows[1].status = "rejected"
+      return route.fulfill({
+        json: {
+          data: { id: "rejected", recommendation_status: "rejected", version: 1, kind: "reject" },
+        },
+      })
+    })
     await page.goto("/live/live-ui-v1")
     await expect(page.getByText("操作列表", { exact: true })).toBeVisible()
     await expect(page.getByRole("table").getByRole("row")).toHaveCount(21)
@@ -130,6 +150,27 @@ for (const width of [1440, 360]) {
     await expect(dialog.getByRole("alert")).toContainText("可用资金不足")
     await dialog.getByRole("button", { name: "提交修正", exact: true }).click()
     await expect(dialog).toHaveCount(0)
+    await page.getByRole("button", { name: /^查看完整说明/ }).hover()
+    await expect(page.getByRole("dialog")).toContainText(rows[0].reason)
+    await page.mouse.move(0, 0)
+    await expect(page.getByRole("dialog")).toHaveCount(0)
+    await page.getByLabel("搜索操作").fill("000001")
+    await page.getByRole("button", { name: "搜索", exact: true }).click()
+    await page.getByRole("button", { name: "接受建议", exact: true }).click()
+    expect(recommendationWrites).toBe(0)
+    await page.getByRole("button", { name: "取消", exact: true }).click()
+    await page.getByRole("button", { name: "拒绝建议", exact: true }).click()
+    expect(recommendationWrites).toBe(0)
+    await page.getByRole("button", { name: "确认拒绝建议", exact: true }).click()
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+    expect(recommendationWrites).toBe(1)
+    await page.getByRole("combobox", { name: "操作状态", exact: true }).click()
+    await page.getByRole("option", { name: "已拒绝", exact: true }).click()
+    await expect(page.getByRole("cell", { name: "已拒绝", exact: true })).toBeVisible()
+    await page.getByRole("combobox", { name: "操作类型", exact: true }).click()
+    await page.getByRole("option", { name: "手动买入", exact: true }).click()
+    await expect(page.getByText("暂无操作", { exact: true })).toBeVisible()
+
     await page.getByRole("button", { name: "暂停", exact: true }).click()
     expect(writes).toBe(0)
     await page.getByRole("button", { name: "取消", exact: true }).click()
@@ -141,7 +182,7 @@ for (const width of [1440, 360]) {
     await page.getByLabel("实际标的", { exact: true }).fill("000001")
     await page.getByLabel("实际价格", { exact: true }).fill("10")
     await page.getByRole("button", { name: "核对并继续", exact: true }).click()
-    await expect(page.getByRole("alertdialog")).toContainText("追加 5000.3 元")
+    await expect(page.getByRole("alertdialog")).toContainText("追加 5000.30 元")
     expect(manualWrites).toBe(0)
     await page.getByRole("button", { name: "确认录入操作", exact: true }).click()
     await expect(page.getByRole("alertdialog")).toHaveCount(0)

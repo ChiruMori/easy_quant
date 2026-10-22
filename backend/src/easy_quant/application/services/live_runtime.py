@@ -282,12 +282,19 @@ def analyze_live_instance(
                         trigger_source="worker",
                     )
                 )
+            if created:
+                lines = [
+                    f"{item['instrument_id']} {'买入' if item['action'] == 'buy' else '卖出'} "
+                    f"{item['quantity']} 股，参考价 {item['suggested_price']}"
+                    for item in created[:20]
+                ]
                 notifications.append(
                     (
-                        str(item["id"]),
-                        "Easy Quant 操作建议",
-                        f"{signal.symbol} {signal.action} {quantity}，"
-                        f"参考价 {price}：{signal.reason}",
+                        f"{instance_id}:{trading_day.isoformat()}:{phase}:signals",
+                        "Easy Quant 操作建议汇总",
+                        f"本轮共 {len(created)} 条建议，请登录核对实际成交。\n"
+                        + "\n".join(lines)
+                        + (f"\n另 {len(created) - 20} 条请登录查看。" if len(created) > 20 else ""),
                     )
                 )
         else:
@@ -339,6 +346,7 @@ def _drain_live_notifications(container: Any, instance_id: str) -> None:
             f"{instance.get('name', '实盘')} · {message['title']}",
             str(message["body"]),
             instance.get("subscription_ids"),
+            instance_id,
         )
         with container.live_tracking.transaction() as state:
             current = state.instances.get(instance_id)

@@ -253,10 +253,10 @@ def test_pagination_search_and_equity_excludes_cash_injection():
         assert summary["profit"] == "199.87"
         assert summary["reserved_cash"] == "100"
         assert summary["available_cash"] == "0"
-        page = operation_page(state, "l", 99, 1, "手动买入")
+        page = operation_page(state, "l", 99, 1, operation_type="manual_buy")
         assert page["page"] == 1 and page["total"] == 1
         assert page["items"][0]["status"] == "executed"
-        assert operation_page(state, "l", 1, 1, "待操作")["total"] == 1
+        assert operation_page(state, "l", 1, 1, status="pending")["total"] == 1
     c.market_data.daily_bars.clear()
     with c.live_tracking.transaction() as state:
         summary = portfolio_summary(state, "l", c.market_data, now)

@@ -6,6 +6,7 @@ import { DeleteResourceButton } from "@/components/delete-resource-button"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { formatMoney } from "@/lib/finance"
 import { localizedLabel } from "@/lib/labels"
 
 import { listLive, type LiveInstance } from "../api"
@@ -38,7 +39,7 @@ export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {})
                     <CardDescription className="break-all">
                       {item.strategy?.name ?? "策略"} ·{" "}
                       {item.strategy ? `v${item.strategy.number}` : item.strategy_version_id} ·
-                      初始资金 {item.initial_cash ?? "—"}
+                      初始资金 {formatMoney(item.initial_cash)}
                     </CardDescription>
                   </CardHeader>
                   <CardContent>

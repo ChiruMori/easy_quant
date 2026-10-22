@@ -8,6 +8,7 @@ from easy_quant.api.blueprints.admin_users import blueprint as admin_users_bluep
 from easy_quant.api.blueprints.audit import blueprint as audit_blueprint
 from easy_quant.api.blueprints.auth import blueprint as auth_blueprint
 from easy_quant.api.blueprints.backtests import blueprint as backtests_blueprint
+from easy_quant.api.blueprints.chart_comparisons import blueprint as chart_comparisons_blueprint
 from easy_quant.api.blueprints.factors import blueprint as factors_blueprint
 from easy_quant.api.blueprints.live_tracking import blueprint as live_tracking_blueprint
 from easy_quant.api.blueprints.notifications import blueprint as notifications_blueprint
@@ -47,6 +48,7 @@ def create_app(*, settings: Settings | None = None, container: Container | None 
     register_error_handlers(app)
     app.register_blueprint(auth_blueprint)
     app.register_blueprint(backtests_blueprint)
+    app.register_blueprint(chart_comparisons_blueprint)
     app.register_blueprint(factors_blueprint)
     app.register_blueprint(live_tracking_blueprint)
     app.register_blueprint(notifications_blueprint)

@@ -1,20 +1,13 @@
 import Decimal from "decimal.js"
 import { useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts"
 
 import { EmptyState } from "@/components/app-shell"
+import { CollapsedDescription } from "@/components/collapsed-description"
 import { ConfirmAction } from "@/components/confirm-action"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
+import { PortfolioChart } from "@/components/portfolio-chart"
 import {
   Accordion,
   AccordionContent,
@@ -27,6 +20,14 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Table,
   TableBody,
   TableCell,
@@ -35,6 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { StrategyPreview } from "@/features/strategies/components/strategy-preview"
+import { formatMoney } from "@/lib/finance"
 import { localizedLabel } from "@/lib/labels"
 
 import type { LiveInstance } from "../api"
@@ -56,16 +58,21 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
   )
   const [search, setSearch] = useState("")
   const [appliedSearch, setAppliedSearch] = useState("")
+  const [filters, setFilters] = useState({ status: "", operationType: "" })
+  const [appliedFilters, setAppliedFilters] = useState({ status: "", operationType: "" })
   const [pageBusy, setPageBusy] = useState(false)
   const loading = useRef(false)
-  async function loadPage(page: number, query = appliedSearch) {
+  async function loadPage(page: number, query = appliedSearch, selected = appliedFilters) {
     if (loading.current) return
     loading.current = true
     setPageBusy(true)
     setError(undefined)
     try {
-      setOperations(await listOperations(current.id, page, query))
+      setOperations(
+        await listOperations(current.id, page, query, selected.status, selected.operationType),
+      )
       setAppliedSearch(query)
+      setAppliedFilters(selected)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "列表加载失败，请重试")
     } finally {
@@ -160,7 +167,7 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
           label="当前收益"
           value={
             current.portfolio && current.portfolio.profit !== null
-              ? `${Number(current.portfolio.profit).toFixed(2)} 元`
+              ? `${formatMoney(current.portfolio.profit)} 元`
               : "暂不可估值"
           }
         />
@@ -174,11 +181,11 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
         />
         <MetricCard
           label="可用资金"
-          value={current.portfolio ? `${current.portfolio.available_cash} 元` : "—"}
+          value={current.portfolio ? `${formatMoney(current.portfolio.available_cash)} 元` : "—"}
         />
         <MetricCard
           label="锁定资金"
-          value={current.portfolio ? `${current.portfolio.reserved_cash} 元` : "—"}
+          value={current.portfolio ? `${formatMoney(current.portfolio.reserved_cash)} 元` : "—"}
           description="待操作买入建议预留成交额及预计费用"
         />
       </div>
@@ -194,29 +201,25 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
             <p role="status">缺少估值行情：{current.portfolio.missing_symbols.join("、")}</p>
           )}
           {current.portfolio?.curve.some((point) => point.profit !== null) ? (
-            <div className="h-64 min-w-0" role="img" aria-label="实盘以来累计收益曲线，单位元">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={current.portfolio.curve.map((point) => ({
-                    date: new Date(point.at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }),
-                    profit: point.profit === null ? null : Number(point.profit),
-                  }))}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" minTickGap={60} />
-                  <YAxis width={65} />
-                  <Tooltip formatter={(value: number) => [`${value.toFixed(2)} 元`, "累计收益"]} />
-                  <Line
-                    dataKey="profit"
-                    name="累计收益（元）"
-                    type="linear"
-                    stroke="var(--primary)"
-                    connectNulls={false}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            <PortfolioChart
+              key={current.id}
+              kind="live"
+              resourceId={current.id}
+              amountLabel="累计收益"
+              series={[
+                {
+                  id: `live:${current.id}`,
+                  name: "累计收益",
+                  points: current.portfolio.curve.map((point) => ({
+                    day: new Date(point.at).toLocaleDateString("sv-SE", {
+                      timeZone: "Asia/Shanghai",
+                    }),
+                    amount: point.profit,
+                    return_rate: point.return_rate,
+                  })),
+                },
+              ]}
+            />
           ) : (
             <p>暂无可估值的收益曲线</p>
           )}
@@ -227,8 +230,8 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
               .join("、") || "无"}
           </p>
           <p className="text-sm">
-            资金池：{current.portfolio?.capital_pool ?? "—"} 元 · 当前现金：
-            {current.portfolio?.cash ?? "—"} 元
+            资金池：{formatMoney(current.portfolio?.capital_pool)} 元 · 当前现金：
+            {formatMoney(current.portfolio?.cash)} 元
           </p>
           {!!Object.keys(current.portfolio?.positions ?? {}).length && (
             <Table>
@@ -268,17 +271,60 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
             className="flex flex-wrap gap-2"
             onSubmit={(event) => {
               event.preventDefault()
-              void loadPage(1, search)
+              void loadPage(1, search, filters)
             }}
           >
             <Input
               aria-label="搜索操作"
               className="min-w-0 flex-1 basis-40"
-              placeholder="标的、日期、状态或操作类型"
+              placeholder="标的、日期或说明"
               value={search}
               disabled={pageBusy}
               onChange={(event) => setSearch(event.target.value)}
             />
+            <Select
+              value={filters.status || "all"}
+              disabled={pageBusy}
+              onValueChange={(value) => {
+                const next = { ...filters, status: value === "all" ? "" : value }
+                setFilters(next)
+                void loadPage(1, appliedSearch, next)
+              }}
+            >
+              <SelectTrigger aria-label="操作状态" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="all">全部状态</SelectItem>
+                  <SelectItem value="pending">待操作</SelectItem>
+                  <SelectItem value="executed">已操作</SelectItem>
+                  <SelectItem value="rejected">已拒绝</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Select
+              value={filters.operationType || "all"}
+              disabled={pageBusy}
+              onValueChange={(value) => {
+                const next = { ...filters, operationType: value === "all" ? "" : value }
+                setFilters(next)
+                void loadPage(1, appliedSearch, next)
+              }}
+            >
+              <SelectTrigger aria-label="操作类型" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="all">全部类型</SelectItem>
+                  <SelectItem value="buy_signal">买入信号</SelectItem>
+                  <SelectItem value="sell_signal">卖出信号</SelectItem>
+                  <SelectItem value="manual_buy">手动买入</SelectItem>
+                  <SelectItem value="manual_sell">手动卖出</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <Button type="submit" disabled={pageBusy}>
               搜索
             </Button>
@@ -296,7 +342,9 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
                 <TableHead>推荐/录入价格</TableHead>
                 <TableHead>股数</TableHead>
                 <TableHead>状态</TableHead>
-                <TableHead>说明与处理</TableHead>
+                <TableHead>说明</TableHead>
+                <TableHead>实际成交</TableHead>
+                <TableHead>操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -335,22 +383,22 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex min-w-56 flex-col gap-2">
-                      <p className="max-w-sm break-words">
-                        {item.reason} · {localizedLabel(item.status)}
-                      </p>
-                      {item.actual_quantity && (
-                        <p className="text-sm text-muted-foreground">
-                          实际成交 {item.actual_quantity} 股 · 价格 {item.actual_price} · 费用{" "}
-                          {item.actual_fee}
-                        </p>
-                      )}
-                      {item.ratio && (
-                        <p className="text-sm text-muted-foreground">
-                          建议按{item.action === "buy" ? "该标的子仓位预算" : "该股持仓"}的{" "}
-                          {Number(item.ratio) * 100}% 操作（基数 {item.ratio_basis}）。
-                        </p>
-                      )}
+                    <CollapsedDescription
+                      text={
+                        item.reason +
+                        (item.ratio
+                          ? `\n建议按${item.action === "buy" ? "该标的子仓位预算" : "该股持仓"}的 ${new Decimal(item.ratio).mul(100).toFixed()}% 操作（基数 ${formatMoney(item.ratio_basis)}）。`
+                          : "")
+                      }
+                    />
+                  </TableCell>
+                  <TableCell>
+                    {item.actual_quantity
+                      ? `${item.actual_quantity} 股 · 价格 ${formatMoney(item.actual_price)} · 费用 ${formatMoney(item.actual_fee)}`
+                      : "—"}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex min-w-32 gap-2">
                       {!item.operation_type?.startsWith("manual_") && (
                         <RecommendationActions
                           recommendation={item}
@@ -413,6 +461,71 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
           </div>
         </CardContent>
       </Card>
+      <Card className="min-w-0">
+        <CardHeader>
+          <CardTitle>通知投递诊断</CardTitle>
+        </CardHeader>
+        <CardContent className="flex min-w-0 flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            渠道已接收表示通知服务接受请求，不保证终端已收到。每轮信号汇总发送，最近 20
+            条记录持久保存，可在日志丢失后核查。
+          </p>
+          <Link to="/notifications" className="text-sm underline">
+            检查通知渠道及测试连通性
+          </Link>
+          {!current.notification_deliveries?.length ? (
+            <p className="text-sm text-muted-foreground">
+              暂无此实例的投递记录，历史终端接收结果无法追溯。
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>渠道</TableHead>
+                  <TableHead>投递状态</TableHead>
+                  <TableHead>尝试次数</TableHead>
+                  <TableHead>最近时间</TableHead>
+                  <TableHead>诊断</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {current.notification_deliveries.map((delivery) => (
+                  <TableRow key={delivery.id}>
+                    <TableCell>
+                      {delivery.channel === "none"
+                        ? "未选择有效渠道"
+                        : localizedLabel(delivery.channel)}
+                    </TableCell>
+                    <TableCell>
+                      {{
+                        delivered: "渠道已接收",
+                        sending: "发送中",
+                        pending: "待投递",
+                        retry: "等待重试",
+                        failed: "失败",
+                        skipped: "未发送",
+                      }[delivery.status] ?? delivery.status}
+                    </TableCell>
+                    <TableCell>{delivery.attempts}</TableCell>
+                    <TableCell>
+                      {delivery.updated_at || delivery.created_at
+                        ? new Date(delivery.updated_at || delivery.created_at!).toLocaleString(
+                            "zh-CN",
+                            { timeZone: "Asia/Shanghai" },
+                          )
+                        : "未记录"}
+                    </TableCell>
+                    <TableCell>
+                      {delivery.error ?? "—"}
+                      {delivery.error_code && `（${delivery.error_code}）`}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
       <Accordion type="single" collapsible>
         <AccordionItem value="configuration">
           <AccordionTrigger>策略与启动配置</AccordionTrigger>
@@ -427,7 +540,7 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
                   <CardTitle>启动配置</CardTitle>
                 </CardHeader>
                 <CardContent className="flex min-w-0 flex-col gap-2 break-words">
-                  <p>初始资金：{current.initial_cash ?? "—"}</p>
+                  <p>初始资金：{formatMoney(current.initial_cash)}</p>
                   <p>
                     通知渠道：
                     {current.notification_channels

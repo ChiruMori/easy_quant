@@ -170,6 +170,35 @@ def live_detail(instance_id: str):
             raise NotFoundError("live_instance")
         operations = operation_page(state, instance_id, 1, 20)
         snapshot = reporting_snapshot(state, instance_id)
+        recommendation_ids = {row["id"] for row in state.recommendations.get(instance_id, [])}
+        deliveries = [
+            {
+                key: row.get(key)
+                for key in (
+                    "id",
+                    "event_id",
+                    "channel",
+                    "status",
+                    "attempts",
+                    "created_at",
+                    "last_attempt_at",
+                    "delivered_at",
+                    "updated_at",
+                    "error",
+                    "error_code",
+                )
+            }
+            for row in state.deliveries
+            if row.get("owner_id") == g.current_user.id
+            and (
+                row.get("live_instance_id") == instance_id
+                or row.get("event_id") in recommendation_ids
+                or str(row.get("event_id", "")).startswith(f"{instance_id}:")
+            )
+        ]
+        deliveries.sort(
+            key=lambda row: (str(row.get("created_at") or ""), str(row["id"])), reverse=True
+        )
     portfolio = portfolio_summary(
         snapshot,
         instance_id,
@@ -185,6 +214,7 @@ def live_detail(instance_id: str):
                 if row["operation_type"] in {"buy_signal", "sell_signal"}
             ],
             "operations": operations,
+            "notification_deliveries": deliveries[:20],
             "portfolio": portfolio,
         }
     )
@@ -200,12 +230,30 @@ def live_operations(instance_id: str):
         raise ValidationError("分页参数必须为整数") from error
     if page < 1 or not 1 <= page_size <= 100:
         raise ValidationError("页码必须为正数，每页 1–100 条")
+    status = request.args.get("status", "")
+    operation_type = request.args.get("operation_type", "")
+    if status not in {"", "pending", "rejected", "executed"} or operation_type not in {
+        "",
+        "buy_signal",
+        "sell_signal",
+        "manual_buy",
+        "manual_sell",
+    }:
+        raise ValidationError("未知操作状态或类型")
     with get_container().live_tracking.transaction() as state:
         item = state.instances.get(instance_id)
         if item is None or item["owner_id"] != g.current_user.id:
             raise NotFoundError("live_instance")
         return success(
-            operation_page(state, instance_id, page, page_size, request.args.get("search", ""))
+            operation_page(
+                state,
+                instance_id,
+                page,
+                page_size,
+                request.args.get("search", ""),
+                status,
+                operation_type,
+            )
         )
 
 

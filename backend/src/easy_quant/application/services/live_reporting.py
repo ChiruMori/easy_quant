@@ -23,7 +23,15 @@ def reporting_snapshot(state: LiveTrackingState, instance_id: str) -> LiveTracki
     )
 
 
-def operation_page(state, instance_id: str, page: int, page_size: int, search: str = ""):
+def operation_page(
+    state,
+    instance_id: str,
+    page: int,
+    page_size: int,
+    search: str = "",
+    status: str = "",
+    operation_type: str = "",
+):
     actual = {
         row["recommendation_id"]: row
         for row in state.operations.values()
@@ -53,17 +61,11 @@ def operation_page(state, instance_id: str, page: int, page_size: int, search: s
         for row in state.operations.values()
         if row.get("live_instance_id") == instance_id and row.get("kind") == "manual"
     ]
-    labels = {
-        "pending": "待操作",
-        "confirmed": "已操作 已确认",
-        "corrected": "已操作 已修正",
-        "rejected": "已拒绝",
-        "executed": "已操作",
-        "buy_signal": "买入信号",
-        "sell_signal": "卖出信号",
-        "manual_buy": "手动买入",
-        "manual_sell": "手动卖出",
-    }
+    if status:
+        accepted = {"confirmed", "corrected", "executed"} if status == "executed" else {status}
+        rows = [row for row in rows if row["status"] in accepted]
+    if operation_type:
+        rows = [row for row in rows if row["operation_type"] == operation_type]
     needle = search.strip().casefold()
     if needle:
         rows = [
@@ -71,13 +73,8 @@ def operation_page(state, instance_id: str, page: int, page_size: int, search: s
             for row in rows
             if needle
             in " ".join(
-                str(row.get(key, ""))
-                for key in ("instrument_id", "reason", "decision_at", "status", "operation_type")
+                str(row.get(key, "")) for key in ("instrument_id", "reason", "decision_at")
             ).casefold()
-            + " "
-            + labels.get(str(row["status"]), "")
-            + " "
-            + labels.get(str(row["operation_type"]), "")
         ]
     fields = {
         "id",
@@ -192,6 +189,7 @@ def portfolio_summary(state, instance_id: str, market_data: Any, now: datetime):
         "positions": {key: str(value) for key, value in portfolio.positions.items()},
         "reserved_positions": {key: str(value) for key, value in locked.positions.items()},
         "capital_pool": str(initial_cash + Decimal(str(instance.get("capital_added", 0)))),
+        "initial_equity": str(baseline) if not baseline_missing else None,
         "curve": curve,
         "valuation_note": (
             "按已发布日线收盘价估值；收益扣除追加资金，收益率=累计收益/累计投入资金。"

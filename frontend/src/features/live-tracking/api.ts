@@ -18,6 +18,16 @@ export interface LiveInstance {
   recommendations?: Recommendation[]
   operations?: OperationPage
   portfolio?: LivePortfolio
+  notification_deliveries?: Array<{
+    id: string
+    channel: string
+    status: string
+    attempts: number
+    created_at?: string
+    updated_at?: string
+    error?: string
+    error_code?: string
+  }>
 }
 export interface Recommendation {
   id: string
@@ -50,15 +60,22 @@ export interface LivePortfolio {
   reserved_positions: Record<string, string>
   positions: Record<string, string>
   capital_pool: string | null
+  initial_equity?: string | null
   profit: string | null
   return_rate: string | null
   valuation_note: string
   missing_symbols: string[]
   curve: Array<{ at: string; profit: string | null; return_rate: string | null }>
 }
-export const listOperations = (id: string, page: number, search: string) =>
+export const listOperations = (
+  id: string,
+  page: number,
+  search: string,
+  status = "",
+  operationType = "",
+) =>
   apiRequest<OperationPage>(
-    `/live-instances/${id}/operations?${new URLSearchParams({ page: String(page), search })}`,
+    `/live-instances/${id}/operations?${new URLSearchParams({ page: String(page), search, status, operation_type: operationType })}`,
   )
 export const manualOperation = (
   id: string,

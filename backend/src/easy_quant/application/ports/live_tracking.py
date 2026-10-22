@@ -13,6 +13,7 @@ class LiveTrackingState:
     operations: MutableMapping[str, dict[str, Any]]
     ledger: Any
     audit: Any
+    deliveries: Any = None
 
 
 class LiveTrackingStore(Protocol):

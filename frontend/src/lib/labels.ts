@@ -7,6 +7,8 @@ const labels: Record<string, string> = {
   failed: "失败",
   retry: "等待重试",
   delivered: "已送达",
+  sending: "发送中",
+  skipped: "未发送",
   confirmed: "已确认",
   rejected: "已拒绝",
   corrected: "已修正",

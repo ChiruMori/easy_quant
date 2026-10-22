@@ -7,6 +7,7 @@ export interface Backtest {
   config?: { initial_cash: string; parameters?: Record<string, unknown> }
   benchmark?: { symbol: string; name: string } | null
   id: string
+  created_at?: string
   job_id?: string
   strategy_version_id: string
   status: string

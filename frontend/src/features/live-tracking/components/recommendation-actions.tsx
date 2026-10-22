@@ -1,5 +1,8 @@
+import { Check, Pencil, X } from "lucide-react"
 import { useId, useRef, useState } from "react"
 
+import { ConfirmAction } from "@/components/confirm-action"
+import { IconButton } from "@/components/icon-button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -107,28 +110,37 @@ export function RecommendationActions({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" disabled={disabled || busy} onClick={() => void submit("confirm")}>
-          快速确认
-        </Button>
-        <Button
-          size="sm"
+        <ConfirmAction
+          icon={Check}
+          label="接受建议"
+          title="确认接受建议"
+          description={`请确认已实际${localizedLabel(recommendation.action)} ${recommendation.instrument_id} ${recommendation.quantity} 股，将按推荐价格 ${recommendation.suggested_price ?? "未记录"} 记账并释放本条预留。实际成交有差异请修改。`}
+          destructive={false}
           disabled={disabled || busy}
-          variant="outline"
-          onClick={() => void submit("reject")}
-        >
-          拒绝建议
-        </Button>
-        <Button
-          size="sm"
+          action={async () => {
+            await onSubmit("confirm")
+          }}
+        />
+        <ConfirmAction
+          icon={X}
+          label="拒绝建议"
+          title="确认拒绝建议"
+          description={`拒绝 ${recommendation.instrument_id} 的建议后将释放本条预留，不记录实际成交。请确认未发生对应买卖。`}
+          disabled={disabled || busy}
+          action={async () => {
+            await onSubmit("reject")
+          }}
+        />
+        <IconButton
+          icon={Pencil}
+          label="修正成交"
           disabled={disabled || busy}
           variant="outline"
           onClick={() => {
             setError("")
             setOpen(true)
           }}
-        >
-          修正成交
-        </Button>
+        />
       </div>
       {error && !open && <p role="alert">{error}</p>}
       <Dialog

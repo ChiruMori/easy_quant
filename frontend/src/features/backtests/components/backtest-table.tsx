@@ -23,6 +23,7 @@ export function BacktestTable({ runs }: { runs: Backtest[] }) {
         <TableRow>
           <TableHead>回测记录 / 策略版本</TableHead>
           <TableHead>状态</TableHead>
+          <TableHead>创建时间</TableHead>
           <TableHead className="text-right">累计收益率</TableHead>
           <TableHead className="text-right">最大回撤</TableHead>
           <TableHead className="text-right">交易次数</TableHead>
@@ -60,6 +61,11 @@ export function BacktestTable({ runs }: { runs: Backtest[] }) {
               >
                 {backtestStatusLabel(run.status)}
               </Badge>
+            </TableCell>
+            <TableCell>
+              {run.created_at
+                ? new Date(run.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
+                : "未记录"}
             </TableCell>
             <TableCell className="text-right tabular-nums">
               {formatMetric("cumulative_return", run.metrics.cumulative_return ?? null)}

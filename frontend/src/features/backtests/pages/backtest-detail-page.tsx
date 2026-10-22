@@ -1,19 +1,10 @@
-import { useId, useState } from "react"
-import {
-  Area,
-  CartesianGrid,
-  ComposedChart,
-  Legend,
-  Line,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts"
+import Decimal from "decimal.js"
+import { useState } from "react"
 
 import { EmptyState } from "@/components/app-shell"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
+import { PortfolioChart, type PortfolioSeries } from "@/components/portfolio-chart"
 import { executionStageLabel, RunTimingPanel } from "@/components/run-timing"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -35,7 +26,33 @@ import { backtestStatusLabel, formatMetric, metricLabel } from "../format"
 
 export function BacktestDetailPage({ run }: { run: Backtest }) {
   const [configureLive, setConfigureLive] = useState(false)
-  const gradientId = useId()
+  const initial = new Decimal(run.config?.initial_cash ?? run.periods[0]?.equity ?? "1")
+  const series: PortfolioSeries[] = [
+    {
+      id: `backtest:${run.id}`,
+      name: "组合权益",
+      points: run.periods.map((point) => ({
+        day: point.trading_day,
+        amount: point.equity,
+        return_rate: initial.gt(0)
+          ? new Decimal(point.equity).div(initial).minus(1).toFixed()
+          : null,
+      })),
+    },
+  ]
+  if (run.benchmark)
+    series.push({
+      id: `instrument:${run.benchmark.symbol}`,
+      name: run.benchmark.name,
+      points: run.periods.map((point) => ({
+        day: point.trading_day,
+        amount: point.benchmark_equity ?? null,
+        return_rate:
+          point.benchmark_equity !== null && point.benchmark_equity !== undefined && initial.gt(0)
+            ? new Decimal(point.benchmark_equity).div(initial).minus(1).toFixed()
+            : null,
+      })),
+    })
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
@@ -164,94 +181,12 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
         <Card>
           <CardHeader>
             <CardTitle>组合权益</CardTitle>
-            <CardDescription>按交易日展示模拟组合权益，单位：元。</CardDescription>
+            <CardDescription>
+              按交易日展示模拟组合，可切换金额或收益率；新增对比仅当前页面有效。
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <div
-              role="img"
-              aria-label={`组合权益曲线，共 ${run.periods.length} 个交易日，单位为元`}
-              className="h-72 w-full min-w-0"
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart
-                  data={run.periods.map((period) => ({
-                    ...period,
-                    equity: Number(period.equity),
-                    benchmark_equity:
-                      period.benchmark_equity === null || period.benchmark_equity === undefined
-                        ? null
-                        : Number(period.benchmark_equity),
-                  }))}
-                  margin={{ top: 10, right: 12, bottom: 0, left: 0 }}
-                >
-                  <defs>
-                    <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.16} />
-                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.01} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid
-                    vertical={false}
-                    stroke="var(--chart-grid)"
-                    strokeDasharray="3 3"
-                  />
-                  <XAxis
-                    dataKey="trading_day"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
-                    tickMargin={12}
-                    minTickGap={45}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    width={65}
-                    tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
-                    tickFormatter={(value: number) =>
-                      Math.abs(value) >= 10000
-                        ? `${(value / 10000).toLocaleString("zh-CN", { maximumFractionDigits: 1 })}万`
-                        : value.toLocaleString("zh-CN")
-                    }
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "var(--popover)",
-                      color: "var(--popover-foreground)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                    formatter={(value, name) => [
-                      `${Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 元`,
-                      name,
-                    ]}
-                  />
-                  {run.benchmark && <Legend />}
-                  <Area
-                    dataKey="equity"
-                    name="组合权益"
-                    type="linear"
-                    stroke="var(--chart-1)"
-                    strokeWidth={2}
-                    fill={`url(#${gradientId})`}
-                    dot={run.periods.length === 1}
-                    isAnimationActive={false}
-                  />
-                  {run.benchmark && (
-                    <Line
-                      dataKey="benchmark_equity"
-                      name={run.benchmark.name}
-                      stroke="var(--chart-2)"
-                      strokeWidth={2}
-                      dot={run.periods.length === 1}
-                      isAnimationActive={false}
-                      connectNulls={false}
-                    />
-                  )}
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
+            <PortfolioChart key={run.id} kind="backtest" resourceId={run.id} series={series} />
           </CardContent>
         </Card>
       )}

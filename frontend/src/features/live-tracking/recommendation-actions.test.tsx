@@ -22,11 +22,14 @@ describe("建议处理", () => {
         onSubmit={submit}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "快速确认" }))
+    fireEvent.click(screen.getByRole("button", { name: "接受建议" }))
+    expect(submit).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "确认接受建议" }))
     expect(submit).toHaveBeenCalledWith("confirm")
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument())
     expect(screen.getByRole("button", { name: "拒绝建议" })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole("button", { name: "修正成交" })).toBeEnabled())
-    fireEvent.click(screen.getByText("修正成交"))
+    fireEvent.click(screen.getByRole("button", { name: "修正成交" }))
     expect(screen.getByRole("dialog")).toBeInTheDocument()
     expect(screen.queryByLabelText("实际标的")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("实际方向")).not.toBeInTheDocument()

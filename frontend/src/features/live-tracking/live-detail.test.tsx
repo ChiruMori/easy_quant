@@ -61,10 +61,13 @@ describe("实盘建议处理反馈", () => {
         <LiveDetailPage instance={instance} />
       </MemoryRouter>,
     )
-    fireEvent.click(screen.getByRole("button", { name: "快速确认" }))
+    fireEvent.click(screen.getByRole("button", { name: "接受建议" }))
+    fireEvent.click(screen.getByRole("button", { name: "确认接受建议" }))
     await screen.findAllByText("建议已被其他请求处理")
-    expect(screen.getByRole("button", { name: "快速确认" })).toBeDisabled()
-    expect(listOperations).toHaveBeenCalledWith("live", 1, "")
+    fireEvent.click(screen.getByRole("button", { name: "取消" }))
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument())
+    expect(screen.getByRole("button", { name: "接受建议" })).toBeDisabled()
+    expect(listOperations).toHaveBeenCalledWith("live", 1, "", "", "")
   })
   it("成功后立即更新状态并禁用已处理按钮", async () => {
     vi.mocked(actOnRecommendation).mockResolvedValue(result)
@@ -73,9 +76,11 @@ describe("实盘建议处理反馈", () => {
         <LiveDetailPage instance={instance} />
       </MemoryRouter>,
     )
-    fireEvent.click(screen.getByRole("button", { name: "快速确认" }))
-    await waitFor(() => expect(screen.getByRole("button", { name: "快速确认" })).toBeDisabled())
-    expect(await screen.findByText(/测试建议.*已确认/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "接受建议" }))
+    fireEvent.click(screen.getByRole("button", { name: "确认接受建议" }))
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument())
+    expect(screen.getByRole("button", { name: "接受建议" })).toBeDisabled()
+    expect(await screen.findByRole("cell", { name: "已操作" })).toBeInTheDocument()
     expect(actOnRecommendation).toHaveBeenCalledTimes(1)
   })
   it("显示失败原因，相同请求重试保持幂等键", async () => {
@@ -88,10 +93,11 @@ describe("实盘建议处理反馈", () => {
         <LiveDetailPage instance={instance} />
       </MemoryRouter>,
     )
-    fireEvent.click(screen.getByRole("button", { name: "快速确认" }))
+    fireEvent.click(screen.getByRole("button", { name: "接受建议" }))
+    fireEvent.click(screen.getByRole("button", { name: "确认接受建议" }))
     await screen.findAllByText("账本产生负现金")
-    await waitFor(() => expect(screen.getByRole("button", { name: "快速确认" })).toBeEnabled())
-    fireEvent.click(screen.getByRole("button", { name: "快速确认" }))
+    await waitFor(() => expect(screen.getByRole("button", { name: "确认接受建议" })).toBeEnabled())
+    fireEvent.click(screen.getByRole("button", { name: "确认接受建议" }))
     await waitFor(() => expect(actOnRecommendation).toHaveBeenCalledTimes(2))
     expect(vi.mocked(actOnRecommendation).mock.calls[0][4]).toBe(
       vi.mocked(actOnRecommendation).mock.calls[1][4],
@@ -109,13 +115,15 @@ describe("实盘建议处理反馈", () => {
         <LiveDetailPage instance={instance} />
       </MemoryRouter>,
     )
-    const button = screen.getByRole("button", { name: "快速确认" })
+    const button = screen.getByRole("button", { name: "接受建议" })
     fireEvent.click(button)
-    fireEvent.click(button)
+    const confirm = screen.getByRole("button", { name: "确认接受建议" })
+    fireEvent.click(confirm)
+    fireEvent.click(confirm)
     expect(actOnRecommendation).toHaveBeenCalledTimes(1)
     expect(screen.getByRole("status")).toHaveTextContent("正在处理")
     resolve(result)
-    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument())
   })
   it("暂停更新不丢失已加载建议", async () => {
     vi.mocked(pauseLive).mockResolvedValue({
