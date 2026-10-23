@@ -1,5 +1,5 @@
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 from easy_quant.application.ports.core import Clock
@@ -25,6 +25,30 @@ class FixtureIndexAcquisition:
             row
             for row in self.rows
             if request.parameters["start_date"] <= row["date"] <= request.parameters["end_date"]
+        ]
+        now = self.clock.now()
+        return RawEnvelope(
+            request.identity,
+            "akshare",
+            json.dumps(rows).encode(),
+            "application/json",
+            now,
+            now + timedelta(hours=1),
+        ), [SourceAttempt("akshare", 1, AttemptStatus.SUCCEEDED)]
+
+
+class FixtureCalendarAcquisition:
+    """v1 离线验收工作日日历，固定范围，不作为真实行情使用。"""
+
+    def __init__(self, clock: Clock):
+        self.clock = clock
+
+    def acquire_with_attempts(self, request, *, force=False, source_keys=None):
+        start = date(2025, 12, 1)
+        rows = [
+            {"trade_date": (start + timedelta(days=offset)).isoformat()}
+            for offset in range(335)
+            if (start + timedelta(days=offset)).weekday() < 5
         ]
         now = self.clock.now()
         return RawEnvelope(

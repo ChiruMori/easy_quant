@@ -71,7 +71,14 @@ async function mockWorkspace(page: Page, role: "admin" | "user" = "admin") {
         status: 404,
         json: { error: { code: "fixture_missing", message: `未定义界面 fixture: ${path}` } },
       })
-    return route.fulfill({ json: { data: responses[path] } })
+    return route.fulfill({
+      json: {
+        data:
+          path === "/live-instances" && new URL(route.request().url()).searchParams.has("page")
+            ? { items: [], total: 0, page: 1, page_size: 20 }
+            : responses[path],
+      },
+    })
   })
 }
 

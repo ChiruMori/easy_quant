@@ -7,6 +7,7 @@ export interface Backtest {
   config?: { initial_cash: string; parameters?: Record<string, unknown> }
   benchmark?: { symbol: string; name: string } | null
   id: string
+  name?: string
   created_at?: string
   job_id?: string
   strategy_version_id: string
@@ -41,6 +42,25 @@ export const createBacktest = (payload: Record<string, unknown>) =>
   apiRequest<Backtest>("/backtests", { method: "POST", body: JSON.stringify(payload) })
 export const getBacktest = (id: string) => apiRequest<Backtest>(`/backtests/${id}`)
 export const listBacktests = () => apiRequest<Backtest[]>("/backtests")
+export const renameBacktest = (id: string, name: string) =>
+  apiRequest<{ id: string; name: string }>(`/backtests/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  })
+
+export interface StockPerformance {
+  symbol: string
+  quantity: string
+  realized_profit: string
+  unrealized_profit: string | null
+  profit: string | null
+  market_value: string | null
+  remaining_cost: string
+}
+export const getStockPerformance = (id: string, page: number) =>
+  apiRequest<{ items: StockPerformance[]; total: number; page: number; page_size: number }>(
+    `/backtests/${id}/stock-performance?page=${page}&page_size=20`,
+  )
 export const compareBacktests = (runIds: [string, string]) =>
   apiRequest<{ runs: Backtest[] }>("/backtests/compare", {
     method: "POST",

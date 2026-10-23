@@ -67,6 +67,12 @@ async function prepare(page: Page) {
     ],
     "/backtests": [backtest],
     "/backtests/backtest-audit-v1": backtest,
+    "/backtests/backtest-audit-v1/stock-performance": {
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 20,
+    },
     "/live-instances": [live],
     [`/live-instances/${longId}`]: live,
     "/admin/market-data/instruments/000001": {
@@ -80,12 +86,39 @@ async function prepare(page: Page) {
     "/notifications/subscriptions": [
       { id: "subscription-audit-v1", channel: "ntfy", destination: longId, enabled: true },
     ],
+    [`/live-instances/${longId}/portfolio`]: {
+      cash: "100000",
+      available_cash: "100000",
+      reserved_cash: "0",
+      positions: {},
+      reserved_positions: {},
+      capital_pool: "100000",
+      profit: null,
+      return_rate: null,
+      missing_symbols: [],
+      curve: [],
+      valuation_note: "暂无估值",
+    },
+    [`/live-instances/${longId}/deliveries`]: { items: [], total: 0, page: 1, page_size: 20 },
     "/admin/invitations": [{ id: longId, expires_at: "2026-10-07T00:00:00Z" }],
   }
   await page.route("**/api/v1/**", (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api/v1", "")
     if (route.request().method() === "GET" && path in fixtures)
-      return route.fulfill({ json: { data: fixtures[path] } })
+      return route.fulfill({
+        json: {
+          data:
+            ["/notifications/subscriptions", "/live-instances"].includes(path) &&
+            new URL(route.request().url()).searchParams.has("page")
+              ? {
+                  items: fixtures[path],
+                  total: 1,
+                  page: 1,
+                  page_size: path === "/live-instances" ? 20 : 10,
+                }
+              : fixtures[path],
+        },
+      })
     return route.continue()
   })
 }
@@ -146,8 +179,13 @@ for (const width of [360, 768, 1440]) {
       }
       if (path === "/backtests/new")
         await expect(page.getByRole("combobox", { name: "策略版本" })).toBeVisible()
-      if (path === "/notifications")
+      if (path === "/notifications") {
+        await page.getByRole("button", { name: "添加渠道", exact: true }).click()
+        await expect(page.getByRole("dialog", { name: "添加通知渠道" })).toBeVisible()
         await expect(page.getByRole("combobox", { name: "渠道" })).toBeVisible()
+        await page.getByRole("button", { name: "取消", exact: true }).click()
+        await expect(page.getByRole("dialog")).toHaveCount(0)
+      }
       if (path === `/live/${longId}`) {
         for (const button of await page
           .getByRole("button", { name: "修正成交", exact: true })
@@ -194,7 +232,7 @@ test("因子无搜索结果与实盘空态、加载失败后可恢复", async ({
   await page.getByLabel("搜索因子").fill("no-such-factor-ui-v1")
   await expect(page.getByText("没有匹配的因子", { exact: true })).toBeVisible()
   let failed = true
-  await page.route("**/api/v1/live-instances/retry-ui-v1", (route) =>
+  await page.route("**/api/v1/live-instances/retry-ui-v1?view=summary", (route) =>
     failed
       ? route.fulfill({
           status: 503,
@@ -225,10 +263,11 @@ test("保存失败提供明确反馈，CSV 切换数据集后重新预检", asyn
   await page.getByRole("button", { name: "东方财富 已启用", exact: true }).first().click()
   await expect(page.getByRole("alert")).toContainText("保存失败，已恢复原配置")
   await page.goto("/notifications")
+  await page.getByRole("button", { name: "添加渠道", exact: true }).click()
   await page.getByLabel("渠道名称", { exact: true }).fill("UI 压力渠道")
   await page.getByLabel("通知目标", { exact: true }).fill("ui-fixture-v1")
-  await page.getByRole("button", { name: "添加渠道", exact: true }).click()
-  await expect(page.getByRole("status")).toContainText("服务暂不可用")
+  await page.getByRole("dialog").getByRole("button", { name: "添加渠道", exact: true }).click()
+  await expect(page.getByRole("alert")).toContainText("服务暂不可用")
   await expect(page.getByLabel("通知目标", { exact: true })).toHaveValue("ui-fixture-v1")
   await page.goto("/admin/invitations")
   await page.getByRole("button", { name: "签发邀请码", exact: true }).click()

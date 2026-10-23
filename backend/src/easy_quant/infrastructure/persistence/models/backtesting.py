@@ -27,6 +27,7 @@ class BacktestRunModel(Base):
     __table_args__ = (Index("ix_backtests_owner_created", "owner_id", "created_at"),)
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     strategy_version_id: Mapped[str] = mapped_column(String(36), nullable=False)
     snapshot_id: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)

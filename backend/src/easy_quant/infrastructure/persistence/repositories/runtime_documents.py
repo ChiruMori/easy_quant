@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, MutableMapping
+from collections.abc import ItemsView, Iterator, MutableMapping, ValuesView
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from easy_quant.infrastructure.persistence.models.runtime_state import RuntimeDocumentModel
@@ -58,6 +58,54 @@ class SqlJsonDict(MutableMapping[str, dict[str, Any]]):
     def __len__(self) -> int:
         return len(list(iter(self)))
 
+    def items(self) -> ItemsView[str, dict[str, Any]]:
+        rows = self.session.execute(
+            select(RuntimeDocumentModel.key, RuntimeDocumentModel.payload_json).where(
+                RuntimeDocumentModel.namespace == self.namespace
+            )
+        )
+        return {key: json.loads(payload) for key, payload in rows}.items()
+
+    def values(self) -> ValuesView[dict[str, Any]]:
+        return dict(self.items()).values()
+
+    def page_for_owner(self, owner_id: str, page: int, size: int, search: str, status: str):
+        def field(name):
+            return func.json_unquote(
+                func.json_extract(RuntimeDocumentModel.payload_json, f"$.{name}")
+            )
+
+        conditions = [
+            RuntimeDocumentModel.namespace == self.namespace,
+            field("owner_id") == owner_id,
+        ]
+        if search:
+            conditions.append(
+                func.lower(field("name")).contains(search.casefold(), autoescape=True)
+            )
+        if status:
+            conditions.append(field("status") == status)
+        total = (
+            self.session.scalar(
+                select(func.count()).select_from(RuntimeDocumentModel).where(*conditions)
+            )
+            or 0
+        )
+        page = min(page, max(1, (total + size - 1) // size))
+        rows = self.session.scalars(
+            select(RuntimeDocumentModel.payload_json)
+            .where(*conditions)
+            .order_by(field("started_at").desc(), RuntimeDocumentModel.key.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        return {
+            "items": [json.loads(row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": size,
+        }
+
 
 class SqlJsonList:
     """小规模受限部署使用的持久 JSON 列表。"""
@@ -67,6 +115,57 @@ class SqlJsonList:
 
     def _keys(self) -> list[str]:
         return sorted(self._mapping)
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        # 默认序列迭代反复查询所有 key，再逐条 get，会产生 N+1 甚至平方开销。
+        rows = self._mapping.session.scalars(
+            select(RuntimeDocumentModel.payload_json)
+            .where(RuntimeDocumentModel.namespace == self._mapping.namespace)
+            .order_by(RuntimeDocumentModel.key)
+            .execution_options(yield_per=500)
+        )
+        if self._mapping.namespace == "datasets":
+            rows = rows.all()
+        return (json.loads(row) for row in rows)
+
+    def page_for_live(
+        self, owner_id: str, instance_id: str, event_ids: set[str], page: int, size: int
+    ) -> dict[str, Any]:
+        def field(name):
+            return func.json_unquote(
+                func.json_extract(RuntimeDocumentModel.payload_json, f"$.{name}")
+            )
+
+        conditions = (
+            RuntimeDocumentModel.namespace == self._mapping.namespace,
+            field("owner_id") == owner_id,
+            or_(
+                field("live_instance_id") == instance_id,
+                field("event_id").in_(sorted(event_ids)),
+                field("event_id").startswith(instance_id + ":", autoescape=True),
+            ),
+        )
+        session = self._mapping.session
+        total = (
+            session.scalar(
+                select(func.count()).select_from(RuntimeDocumentModel).where(*conditions)
+            )
+            or 0
+        )
+        page = min(page, max(1, (total + size - 1) // size))
+        rows = session.scalars(
+            select(RuntimeDocumentModel.payload_json)
+            .where(*conditions)
+            .order_by(field("created_at").desc(), field("id").desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        return {
+            "items": [json.loads(row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": size,
+        }
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         return self._mapping[self._keys()[index]]
@@ -86,4 +185,7 @@ class SqlJsonList:
         self._mapping[key] = value
 
     def append(self, value: dict[str, Any]) -> None:
+        if self._mapping.namespace == "datasets":
+            self._mapping[str(value["key"])] = value
+            return
         self.insert(len(self), value)

@@ -59,7 +59,7 @@ _TRADING_STATUS_DESCRIPTION = "盘后自动确认停牌及真实成交复牌；�
 
 
 def _refresh_dataset_description(datasets: Any) -> None:
-    for index, dataset in enumerate(datasets):
+    for index, dataset in enumerate(list(datasets)):
         if dataset.get("key") == "daily-bars" and dataset.get("description") in {
             "前复权日线开高低收与成交量",
             "日线行情；公开接口提供前复权，通达信全量导入为不复权",
@@ -75,7 +75,7 @@ def _refresh_dataset_description(datasets: Any) -> None:
 
 
 def _ensure_independent_daily_source(datasets: Any) -> None:
-    for index, dataset in enumerate(datasets):
+    for index, dataset in enumerate(list(datasets)):
         if dataset.get("key") != "daily-bars":
             continue
         sources = list(dataset.get("sources", []))
@@ -83,6 +83,16 @@ def _ensure_independent_daily_source(datasets: Any) -> None:
             continue
         dataset["sources"] = [*sources, dict(_TENCENT_DAILY_SOURCE)]
         datasets[index] = dataset
+
+
+def ensure_dataset_catalog(datasets: Any) -> list[dict[str, Any]]:
+    rows = list(datasets)
+    keys = {row["key"] for row in rows}
+    for dataset in _default_datasets():
+        if dataset["key"] not in keys:
+            datasets.append(dataset)
+            rows.append(dataset)
+    return rows
 
 
 def _default_datasets() -> list[dict[str, Any]]:

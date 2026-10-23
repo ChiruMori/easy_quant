@@ -1,7 +1,9 @@
 import gzip
 import hashlib
 import json
-from datetime import date
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, cast
 
 from sqlalchemy.dialects import mysql
@@ -25,6 +27,7 @@ def test_snapshot_spool_matches_legacy_hash_and_gzip_payload() -> None:
             spool.append(row)
         assert spool.finish() == hashlib.sha256(expected).hexdigest()
         assert spool.record_count == len(rows)
+        assert spool.byte_count == len(expected)
         assert b"".join(spool.chunks()) == expected
         assert gzip.decompress(b"".join(streamed_snapshot_chunks(spool))) == expected
 
@@ -48,6 +51,10 @@ def test_snapshot_scan_uses_primary_for_short_range_and_years() -> None:
                 return ["000001"]
             return []
 
+        def execute(self, statement):
+            self.statements.append(statement)
+            return []
+
     session = FakeSession()
     store = SqlAlchemyMarketDataStore(cast(Session, session))
     assert list(store.iter_snapshot_bars(date(2026, 9, 1), date(2026, 9, 2))) == []
@@ -58,3 +65,33 @@ def test_snapshot_scan_uses_primary_for_short_range_and_years() -> None:
     assert "FORCE INDEX (ix_daily_bars_day_symbol)" in sql[2]
     assert "FORCE INDEX (PRIMARY)" in sql[3]
     assert "daily_bars.symbol IN" in sql[3]
+
+
+def test_scalar_snapshot_preserves_fields_and_exact_decimal_text():
+    row = SimpleNamespace(
+        symbol="000001",
+        trading_day=date(2026, 9, 1),
+        open=Decimal("10.000000"),
+        high=Decimal("11.000000"),
+        low=Decimal("9.000000"),
+        close=Decimal("10.500000"),
+        volume=Decimal("100.0000"),
+        amount=None,
+        available_at=datetime(2026, 9, 1, 7, tzinfo=UTC),
+        source="测试",
+        adjustment="none",
+        archive_sha256="a" * 64,
+    )
+
+    class FakeSession:
+        def scalars(self, _statement):
+            return ["000001"]
+
+        def execute(self, statement):
+            assert len(statement.column_descriptions) == 12
+            return [row]
+
+    store = SqlAlchemyMarketDataStore(cast(Session, FakeSession()))
+    assert list(store.iter_snapshot_bars(row.trading_day, row.trading_day)) == [
+        store._snapshot_row(row)
+    ]

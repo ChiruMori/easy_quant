@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   check:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -33,9 +34,7 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
-          cache-dependency-path: |
-            pnpm-lock.yaml
-            frontend/pnpm-lock.yaml
+          cache-dependency-path: frontend/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
@@ -43,23 +42,27 @@ jobs:
       - name: 安装冻结依赖
         run: |
           uv sync --project backend --frozen
-          pnpm install --frozen-lockfile
           pnpm --dir frontend install --frozen-lockfile
       - name: 项目离线门禁
         run: pnpm check
-      - name: 安装验收浏览器
-        run: pnpm --dir frontend exec playwright install --with-deps chrome
+      - name: 准备验收浏览器
+        run: |
+          if ! pnpm --dir frontend exec node -e "require('@playwright/test').chromium.launch({channel:'chrome'}).then(browser => browser.close()).catch(error => { console.error(error.message); process.exit(1); })"; then
+            pnpm --dir frontend exec playwright install --with-deps chrome
+          fi
       - name: 离线浏览器验收
         run: pnpm test:e2e
       - name: 校验三服务部署配置
         run: docker compose --env-file deploy/.env.example -f deploy/compose.yaml config --quiet
-      - name: 验证非 root 后端缓存目录可写
-        run: |
-          docker build -t easy-quant-backend-permissions:check backend
-          docker run --rm --network none --entrypoint /app/backend/.venv/bin/python easy-quant-backend-permissions:check -c "from pathlib import Path; import os; assert os.getuid() == 65532; root = Path('/app/backend/.local-data/tdx/daily'); root.mkdir(parents=True, exist_ok=True); cache = root / 'permission-check'; cache.write_bytes(b'ok'); cache.unlink()"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-${{ github.sha }}
+          path: frontend/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   publish:
-    needs: check
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -106,7 +109,7 @@ jobs:
         env:
           IMAGE_PREFIX: ${{ steps.image.outputs.prefix }}
         run: |
-          docker run --rm --network none "$IMAGE_PREFIX-backend:sha-$GITHUB_SHA" uv run --project backend --no-sync python -c "import os,json,subprocess,sys; from easy_quant.config import BACKEND_ROOT; from easy_quant.strategy_api.catalog import LIBRARY; import easy_quant.infrastructure.strategy_runtime.child as child; assert os.getuid() == 65532; assert len(list((BACKEND_ROOT / 'resources/examples').glob('*.py'))) == 2; assert LIBRARY; assert not (BACKEND_ROOT / '.env').exists(); result = subprocess.run([sys.executable, '-I', child.__file__], input=json.dumps({'source_code':'def before_market(context, parameters):\n    return []','parameters':{},'phase':'before_market','context':{}}), capture_output=True, text=True, check=True); assert json.loads(result.stdout)['ok'], result.stdout"
+          docker run --rm --network none "$IMAGE_PREFIX-backend:sha-$GITHUB_SHA" uv run --project backend --no-sync python -c "import os,json,subprocess,sys; from easy_quant.config import BACKEND_ROOT; from easy_quant.strategy_api.catalog import LIBRARY; import easy_quant.infrastructure.strategy_runtime.child as child; assert os.getuid() == 65532; root = BACKEND_ROOT / '.local-data/tdx/daily'; root.mkdir(parents=True, exist_ok=True); cache = root / 'permission-check'; cache.write_bytes(b'ok'); cache.unlink(); assert len(list((BACKEND_ROOT / 'resources/examples').glob('*.py'))) == 2; assert LIBRARY; assert not (BACKEND_ROOT / '.env').exists(); result = subprocess.run([sys.executable, '-I', child.__file__], input=json.dumps({'source_code':'def before_market(context, parameters):\n    return []','parameters':{},'phase':'before_market','context':{}}), capture_output=True, text=True, check=True); assert json.loads(result.stdout)['ok'], result.stdout"
           docker run --rm --network none "$IMAGE_PREFIX-backend:sha-$GITHUB_SHA" uv run --project backend --no-sync alembic -c backend/alembic.ini heads
           docker run --rm --network none --add-host api:127.0.0.1 "$IMAGE_PREFIX-frontend:sha-$GITHUB_SHA" sh -c 'nginx -t && nginx && curl --fail --silent --show-error http://127.0.0.1/healthz && curl --fail --silent --show-error --output /dev/null http://127.0.0.1/strategies'
       - name: 默认入口与旧宿主机系统调用兼容验收

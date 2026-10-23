@@ -218,7 +218,7 @@ def register_market_data_handlers(
                 first_day=None,
                 last_day=None,
                 now=now,
-                close_time=time.fromisoformat(container.settings.daily_data_publish_time),
+                close_time=time(15, 0),
             ).recommended_end_day
         )
         symbols = job.payload.get("symbols", list(INDEX_CATALOG))

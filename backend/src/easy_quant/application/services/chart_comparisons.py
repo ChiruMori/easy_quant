@@ -40,14 +40,17 @@ def comparison_candidates(container, identifier: str, owner_id: str, search: str
     if identity is None:
         return []
     return [
-        {"id": run["id"], "name": f"{run['id']} · {run.get('created_at', '未记录时间')}"}
+        {
+            "id": run["id"],
+            "name": run.get("name") or run["id"],
+        }
         for run in container.backtests.list_for_owner(owner_id)
         if run["id"] != identifier
         and run.get("status") == "succeeded"
         and comparison_identity(run) == identity
         and search.casefold()
         in " ".join(
-            str(run.get(key, "")) for key in ("id", "strategy_version_id", "created_at")
+            str(run.get(key, "")) for key in ("name", "id", "strategy_version_id", "created_at")
         ).casefold()
     ][:20]
 
@@ -110,7 +113,7 @@ def comparison_series(
             }
             return {
                 "id": f"backtest:{other_run_id}",
-                "name": other_run_id,
+                "name": other.get("name") or other_run_id,
                 "points": [
                     {
                         "day": day,
@@ -127,6 +130,8 @@ def comparison_series(
             instance = state.instances.get(identifier)
             if instance is None or instance["owner_id"] != owner_id:
                 raise NotFoundError("live_instance")
+            if instance.get("status") == "terminated":
+                raise StateConflictError("实盘已终止，停止收益跟踪与行情比较")
             snapshot = reporting_snapshot(state, identifier)
         summary = portfolio_summary(snapshot, identifier, container.market_data, now)
         if summary["initial_equity"] is None:

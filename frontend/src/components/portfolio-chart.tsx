@@ -1,5 +1,5 @@
 import { Plus, X } from "lucide-react"
-import { useId, useRef, useState } from "react"
+import { memo, useId, useMemo, useRef, useState } from "react"
 import {
   Area,
   CartesianGrid,
@@ -14,6 +14,7 @@ import {
 
 import { IconButton } from "@/components/icon-button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -33,16 +34,18 @@ export interface PortfolioSeries {
   name: string
   points: Array<{ day: string; amount: string | null; return_rate: string | null }>
 }
-export function PortfolioChart({
+export const PortfolioChart = memo(function PortfolioChart({
   kind,
   resourceId,
   series,
   amountLabel = "组合权益",
+  comparisonsEnabled = true,
 }: {
   kind: "backtest" | "live"
   resourceId: string
   series: PortfolioSeries[]
   amountLabel?: string
+  comparisonsEnabled?: boolean
 }) {
   const gradient = useId()
   const [unit, setUnit] = useState("amount")
@@ -54,23 +57,28 @@ export function PortfolioChart({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const sending = useRef(false)
-  const curves = [...series, ...extra]
-  const days = [...new Set(series.flatMap((item) => item.points.map((point) => point.day)))].sort()
-  const indexed = curves.map((item) => new Map(item.points.map((point) => [point.day, point])))
-  const data = days.map((day) =>
-    Object.fromEntries([
-      ["day", day],
-      ...curves.map((_, index) => {
-        const value = indexed[index].get(day)?.[unit === "amount" ? "amount" : "return_rate"]
-        return [
-          `line${index}`,
-          value === null || value === undefined
-            ? null
-            : Number(value) * (unit === "amount" ? 1 : 100),
-        ]
-      }),
-    ]),
-  )
+  const { curves, days, data } = useMemo(() => {
+    const curves = [...series, ...extra]
+    const days = [
+      ...new Set(series.flatMap((item) => item.points.map((point) => point.day))),
+    ].sort()
+    const indexed = curves.map((item) => new Map(item.points.map((point) => [point.day, point])))
+    const data = days.map((day) =>
+      Object.fromEntries([
+        ["day", day],
+        ...curves.map((_, index) => {
+          const value = indexed[index].get(day)?.[unit === "amount" ? "amount" : "return_rate"]
+          return [
+            `line${index}`,
+            value === null || value === undefined
+              ? null
+              : Number(value) * (unit === "amount" ? 1 : 100),
+          ]
+        }),
+      ]),
+    )
+    return { curves, days, data }
+  }, [series, extra, unit])
   async function find() {
     if (sending.current) return
     sending.current = true
@@ -82,7 +90,13 @@ export function PortfolioChart({
         source === "instrument"
           ? "/chart-comparisons/instruments"
           : `/chart-comparisons/backtest/${resourceId}/candidates`
-      setResults(await apiRequest(`${url}?${new URLSearchParams({ search })}`))
+      setResults(
+        (
+          await apiRequest<Array<{ id: string; name: string }>>(
+            `${url}?${new URLSearchParams({ search })}`,
+          )
+        ).slice(0, 20),
+      )
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "搜索失败，请重试")
     } finally {
@@ -92,10 +106,11 @@ export function PortfolioChart({
   }
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <ToggleGroup
           type="single"
           variant="outline"
+          size="sm"
           value={unit}
           onValueChange={(value) => {
             if (value) setUnit(value)
@@ -103,129 +118,140 @@ export function PortfolioChart({
           aria-label="图表显示单位"
         >
           <ToggleGroupItem value="amount" aria-label="金额（元）">
-            金额（元）
+            ￥
           </ToggleGroupItem>
           <ToggleGroupItem value="return_rate" aria-label="收益率（%）">
-            收益率（%）
+            %
           </ToggleGroupItem>
         </ToggleGroup>
-        <Popover
-          open={open}
-          onOpenChange={(value) => {
-            if (!busy) setOpen(value)
-          }}
-        >
-          <PopoverTrigger asChild>
-            <Button variant="outline" disabled={extra.length >= 8}>
-              <Plus data-icon="inline-start" />
-              添加对比
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            className="flex max-h-[75dvh] w-80 max-w-[calc(100vw-2rem)] flex-col gap-3 overflow-y-auto"
-            align="start"
+        {comparisonsEnabled && (
+          <Popover
+            open={open}
+            onOpenChange={(value) => {
+              if (!busy) setOpen(value)
+            }}
           >
-            <p className="font-medium">添加临时对比</p>
-            {kind === "backtest" && (
-              <Select
-                value={source}
-                disabled={busy}
-                onValueChange={(value) => {
-                  setSource(value)
-                  setResults([])
-                  setError("")
-                }}
-              >
-                <SelectTrigger aria-label="对比来源">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="instrument">指数 / 股票</SelectItem>
-                    <SelectItem value="backtest">相同配置的回测</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            )}
-            <form
-              className="flex gap-2"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void find()
-              }}
-            >
-              <Input
-                aria-label="搜索对比对象"
-                value={search}
-                disabled={busy}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={
-                  source === "instrument" ? "代码或名称，如沪深300" : "回测编号、版本或日期"
-                }
+            <PopoverTrigger asChild>
+              <IconButton
+                icon={Plus}
+                label="添加对比"
+                size="icon-sm"
+                disabled={extra.length >= 8}
               />
-              <Button type="submit" disabled={busy}>
-                搜索
-              </Button>
-            </form>
-            <p className="text-xs text-muted-foreground">
-              仅当前页面展示，最多添加 8 条；市场金额按相同初始权益归一，使用已发布收盘价。
-              {source === "backtest" && "仅列出起止日期、初始资金及持仓相同的已完成回测。"}
-            </p>
-            {busy && <p role="status">正在加载…</p>}
-            {error && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            {!busy && !results.length && (
-              <p className="text-sm text-muted-foreground">
-                搜索后选择对象；没有匹配时请调整关键词或补齐行情。
-              </p>
-            )}
-            {results.map((result) => (
-              <Button
-                key={result.id}
-                className="h-auto justify-start whitespace-normal"
-                variant="outline"
-                disabled={busy || curves.some((item) => item.id === `${source}:${result.id}`)}
-                onClick={async () => {
-                  if (sending.current) return
-                  sending.current = true
-                  setBusy(true)
-                  setError("")
-                  try {
-                    const value = await apiRequest<PortfolioSeries>(
-                      `/chart-comparisons/${kind}/${resourceId}/series?${new URLSearchParams({ [source === "instrument" ? "symbol" : "backtest_id"]: result.id })}`,
-                    )
-                    setExtra((previous) =>
-                      previous.some((item) => item.id === value.id)
-                        ? previous
-                        : [...previous, value],
-                    )
-                    setOpen(false)
-                  } catch (caught) {
-                    setError(caught instanceof Error ? caught.message : "添加失败，请重试")
-                  } finally {
-                    sending.current = false
-                    setBusy(false)
-                  }
+            </PopoverTrigger>
+            <PopoverContent
+              className="flex max-h-[75dvh] w-80 max-w-[calc(100vw-2rem)] flex-col gap-3 overflow-y-auto"
+              align="start"
+            >
+              <p className="font-medium">添加临时对比</p>
+              {kind === "backtest" && (
+                <Select
+                  value={source}
+                  disabled={busy}
+                  onValueChange={(value) => {
+                    setSource(value)
+                    setResults([])
+                    setError("")
+                  }}
+                >
+                  <SelectTrigger aria-label="对比来源">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="instrument">指数 / 股票</SelectItem>
+                      <SelectItem value="backtest">相同配置的回测</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              )}
+              <form
+                className="flex gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void find()
                 }}
               >
-                {result.name} · {result.id}
-              </Button>
-            ))}
-          </PopoverContent>
-        </Popover>
+                <Input
+                  aria-label="搜索对比对象"
+                  value={search}
+                  disabled={busy}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={source === "instrument" ? "代码或名称，如沪深300" : "回测名称或编号"}
+                />
+                <Button type="submit" disabled={busy}>
+                  搜索
+                </Button>
+              </form>
+              <p className="text-xs text-muted-foreground">
+                仅当前页面展示，最多添加 8 条；市场金额按相同初始权益归一，使用已发布收盘价。
+                {source === "backtest" && "仅列出起止日期、初始资金及持仓相同的已完成回测。"}
+              </p>
+              {busy && <p role="status">正在加载…</p>}
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              {!busy && !results.length && (
+                <p className="text-sm text-muted-foreground">
+                  搜索后选择对象；没有匹配时请调整关键词或补齐行情。
+                </p>
+              )}
+              {results.map((result) => (
+                <Button
+                  key={result.id}
+                  className="w-full min-w-0 justify-start"
+                  title={result.name || result.id}
+                  variant="outline"
+                  disabled={busy || curves.some((item) => item.id === `${source}:${result.id}`)}
+                  onClick={async () => {
+                    if (sending.current) return
+                    sending.current = true
+                    setBusy(true)
+                    setError("")
+                    try {
+                      const value = await apiRequest<PortfolioSeries>(
+                        `/chart-comparisons/${kind}/${resourceId}/series?${new URLSearchParams({ [source === "instrument" ? "symbol" : "backtest_id"]: result.id })}`,
+                      )
+                      setExtra((previous) =>
+                        previous.some((item) => item.id === value.id)
+                          ? previous
+                          : [...previous, value],
+                      )
+                      setOpen(false)
+                    } catch (caught) {
+                      setError(caught instanceof Error ? caught.message : "添加失败，请重试")
+                    } finally {
+                      sending.current = false
+                      setBusy(false)
+                    }
+                  }}
+                >
+                  <span className="min-w-0 truncate">
+                    {source === "backtest"
+                      ? Array.from(result.name || result.id)
+                          .slice(0, 20)
+                          .join("") + (Array.from(result.name || result.id).length > 20 ? "…" : "")
+                      : `${result.name} · ${result.id}`}
+                  </span>
+                </Button>
+              ))}
+            </PopoverContent>
+          </Popover>
+        )}
         {extra.map((item) => (
-          <div key={item.id} className="flex min-w-0 items-center gap-1 text-sm">
+          <Badge key={item.id} variant="secondary" className="h-8 min-w-0 gap-1 px-2">
             <span className="max-w-40 truncate">{item.name}</span>
             <IconButton
               icon={X}
               label={`移除对比 ${item.name}`}
               size="icon"
+              variant="ghost"
+              className="size-5 rounded-full"
               onClick={() => setExtra((previous) => previous.filter((row) => row.id !== item.id))}
             />
-          </div>
+          </Badge>
         ))}
       </div>
       <div
@@ -310,4 +336,4 @@ export function PortfolioChart({
       </div>
     </div>
   )
-}
+})

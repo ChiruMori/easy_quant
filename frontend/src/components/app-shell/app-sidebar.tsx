@@ -68,8 +68,8 @@ export function AppSidebar() {
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" asChild tooltip="Easy Quant 量化工作台">
                 <Link to="/" onClick={closeMobile}>
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                    <ChartNoAxesCombined className="size-5" />
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg shadow-sm">
+                    <img src="/brand/eq.png" alt="" className="size-8 rounded-lg" />
                   </span>
                   <span className="flex flex-col gap-0.5">
                     <span className="font-semibold text-foreground">Easy Quant</span>
@@ -97,9 +97,9 @@ export function AppSidebar() {
                   <>
                     <span
                       data-slot="sidebar-brand-icon"
-                      className="absolute inset-0 flex items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity group-hover/expand:opacity-0 group-focus-visible/expand:opacity-0"
+                      className="absolute inset-0 flex items-center justify-center rounded-lg shadow-sm transition-opacity group-hover/expand:opacity-0 group-focus-visible/expand:opacity-0"
                     >
-                      <ChartNoAxesCombined aria-hidden="true" />
+                      <img src="/brand/eq.png" alt="" className="size-8 rounded-lg" />
                     </span>
                     <PanelLeftOpen
                       data-slot="sidebar-expand-icon"

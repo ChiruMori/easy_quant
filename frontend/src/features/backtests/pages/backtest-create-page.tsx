@@ -68,6 +68,7 @@ export function BacktestCreatePage() {
           setActionUrl("")
           try {
             const run = await createBacktest({
+              name: data.get("name"),
               strategy_version_id: versionId,
               start_day: data.get("start"),
               end_day: data.get("end"),
@@ -89,6 +90,16 @@ export function BacktestCreatePage() {
       >
         <CardContent>
           <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="backtest-name">回测名称</FieldLabel>
+              <Input
+                id="backtest-name"
+                name="name"
+                maxLength={160}
+                placeholder="例如：低波动策略 · 三季度验证"
+              />
+              <FieldDescription>可留空，默认使用策略名称、版本和日期区间。</FieldDescription>
+            </Field>
             {versions.length === 0 && (
               <Alert>
                 <AlertTitle>尚无可用策略版本</AlertTitle>

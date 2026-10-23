@@ -8,27 +8,44 @@ export interface Subscription {
   enabled: boolean
 }
 export const listSubscriptions = () => apiRequest<Subscription[]>("/notifications/subscriptions")
-export const listDeliveries = () =>
-  apiRequest<
-    Array<{
-      id: string
-      status: string
-      channel: string
-      attempts?: number
-      updated_at?: string
-      error?: string
-      error_code?: string
-    }>
-  >("/notifications/deliveries")
+export interface NotificationPage<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+}
+export interface Delivery {
+  id: string
+  status: string
+  channel: string
+  attempts?: number
+  updated_at?: string
+  created_at?: string
+  error?: string
+  error_code?: string
+}
+export const listSubscriptionsPage = (page: number) =>
+  apiRequest<NotificationPage<Subscription>>(
+    `/notifications/subscriptions?page=${page}&page_size=10`,
+  )
+export const listDeliveries = (page = 1) =>
+  apiRequest<NotificationPage<Delivery>>(`/notifications/deliveries?page=${page}&page_size=10`)
+export const getSubscription = (id: string) =>
+  apiRequest<Subscription>(`/notifications/subscriptions/${id}`)
 export const addSubscription = (channel: string, destination: string, name: string) =>
   apiRequest<Subscription>("/notifications/subscriptions", {
     method: "POST",
     body: JSON.stringify({ channel, destination, name }),
   })
-export const updateSubscription = (id: string, enabled: boolean, name?: string) =>
+export const updateSubscription = (
+  id: string,
+  enabled: boolean,
+  name?: string,
+  destination?: string,
+) =>
   apiRequest<Subscription>(`/notifications/subscriptions/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({ enabled, name }),
+    body: JSON.stringify({ enabled, name, destination }),
   })
 
 export const testSubscription = (id: string) =>

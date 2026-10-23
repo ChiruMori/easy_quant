@@ -9,11 +9,28 @@ from easy_quant.api.responses import success
 from easy_quant.api.schemas.backtests import BacktestCompareRequest, BacktestCreateRequest
 from easy_quant.api.strategy_context import strategy_context
 from easy_quant.application.services.audit_runtime import record_audit
+from easy_quant.application.services.backtest_reporting import stock_performance_page
 from easy_quant.domain.scheduling.entities import Job
+from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.domain.strategies.entities import StrategyState, advanced_strategy_state
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("backtests", __name__, url_prefix="/api/v1/backtests")
+
+
+@blueprint.patch("/<run_id>")
+@require_user
+def rename_backtest(run_id: str):
+    container = get_container()
+    run = container.backtests.get(run_id)
+    if run is None or run["owner_id"] != g.current_user.id:
+        return success(None, status=404)
+    payload = request.get_json() or {}
+    name = payload.get("name") if isinstance(payload, dict) else None
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 160:
+        raise ValidationError("回测名称须为 1–160 字")
+    container.backtests.rename(run_id, name.strip())
+    return success({"id": run_id, "name": name.strip()})
 
 
 def _with_job_failure(run):
@@ -66,6 +83,11 @@ def create_backtest():
     job_id = f"job-{UuidGenerator().new()}"
     run = {
         "id": run_id,
+        "name": payload.name
+        or (
+            f"{container.state.strategies.get_definition(version.strategy_id).name} · "
+            f"v{version.number} · {payload.start_day} 至 {payload.end_day}"
+        ),
         "job_id": job_id,
         "owner_id": g.current_user.id,
         "strategy_version_id": payload.strategy_version_id,
@@ -138,6 +160,19 @@ def get_backtest(run_id: str):
             ),
         }
     )
+
+
+@blueprint.get("/<run_id>/stock-performance")
+@require_user
+def stock_performance(run_id: str):
+    try:
+        page = int(request.args.get("page", 1))
+        size = int(request.args.get("page_size", 20))
+    except ValueError as error:
+        raise ValidationError("分页参数必须为整数") from error
+    if page < 1 or not 1 <= size <= 100:
+        raise ValidationError("页码必须为正数，每页 1–100 条")
+    return success(stock_performance_page(get_container(), run_id, g.current_user.id, page, size))
 
 
 @blueprint.post("/compare")

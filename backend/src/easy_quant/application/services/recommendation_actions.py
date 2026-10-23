@@ -167,6 +167,8 @@ class RecommendationActionService:
                         raise StateConflictError("幂等键已用于不同操作")
                     # Legacy rows did not save full request fields: do not assume an exact replay.
                     raise StateConflictError("旧操作缺少请求身份，请查看建议和账本确认处理结果")
+            if instance.get("status") == "terminated":
+                raise StateConflictError("实盘已终止，数据已冻结，不可继续处理建议")
             if (
                 int(stored["version"]) != command.expected_version
                 or stored["status"] != RecommendationStatus.PENDING.value

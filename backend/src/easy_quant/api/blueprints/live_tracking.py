@@ -13,14 +13,17 @@ from easy_quant.api.strategy_context import strategy_context
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.live_reporting import (
     operation_page,
-    portfolio_summary,
+    portfolio_balances,
+    read_portfolio,
     reporting_snapshot,
+    termination_snapshot,
+    validate_termination_snapshot,
 )
 from easy_quant.application.services.live_runtime import analyze_live_instance
 from easy_quant.application.services.manual_operations import ManualCommand, ManualOperationService
 from easy_quant.application.services.recommendation_actions import audit_row
 from easy_quant.domain.market_data.indices import is_index
-from easy_quant.domain.shared.errors import NotFoundError, ValidationError
+from easy_quant.domain.shared.errors import NotFoundError, StateConflictError, ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("live_tracking", __name__, url_prefix="/api/v1/live-instances")
@@ -149,6 +152,38 @@ def start_live():
 @blueprint.get("")
 @require_user
 def list_live():
+    if any(key in request.args for key in ("page", "page_size", "search", "status")):
+        try:
+            page, size = int(request.args.get("page", 1)), int(request.args.get("page_size", 20))
+        except ValueError as error:
+            raise ValidationError("分页参数必须为整数") from error
+        status, search = request.args.get("status", ""), request.args.get("search", "").strip()
+        if page < 1 or not 1 <= size <= 100 or status not in {"", "active", "paused", "terminated"}:
+            raise ValidationError("分页或状态参数无效")
+        instances = get_container().state.live_instances
+        if hasattr(instances, "page_for_owner"):
+            result = instances.page_for_owner(g.current_user.id, page, size, search, status)
+        else:
+            rows = [
+                row
+                for row in instances.values()
+                if row["owner_id"] == g.current_user.id
+                and search.casefold() in str(row.get("name", "")).casefold()
+                and (not status or row["status"] == status)
+            ]
+            rows.sort(
+                key=lambda row: (str(row.get("started_at", "")), str(row["id"])), reverse=True
+            )
+            total = len(rows)
+            page = min(page, max(1, (total + size - 1) // size))
+            result = {
+                "items": rows[(page - 1) * size : page * size],
+                "page": page,
+                "page_size": size,
+                "total": total,
+            }
+        result["items"] = [_present(row) for row in result["items"]]
+        return success(result)
     return success(
         [
             _present(item)
@@ -170,6 +205,14 @@ def live_detail(instance_id: str):
             raise NotFoundError("live_instance")
         operations = operation_page(state, instance_id, 1, 20)
         snapshot = reporting_snapshot(state, instance_id)
+        if request.args.get("view") == "summary":
+            return success(
+                {
+                    **_present(item),
+                    "operations": operations,
+                    "balances": portfolio_balances(snapshot, instance_id),
+                }
+            )
         recommendation_ids = {row["id"] for row in state.recommendations.get(instance_id, [])}
         deliveries = [
             {
@@ -199,12 +242,7 @@ def live_detail(instance_id: str):
         deliveries.sort(
             key=lambda row: (str(row.get("created_at") or ""), str(row["id"])), reverse=True
         )
-    portfolio = portfolio_summary(
-        snapshot,
-        instance_id,
-        get_container().market_data,
-        get_container().authentication.clock.now(),
-    )
+    portfolio = read_portfolio(get_container(), instance_id, g.current_user.id)
     return success(
         {
             **_present(item),
@@ -218,6 +256,74 @@ def live_detail(instance_id: str):
             "portfolio": portfolio,
         }
     )
+
+
+@blueprint.get("/<instance_id>/portfolio")
+@require_user
+def live_portfolio(instance_id: str):
+    metrics_only = request.args.get("view") == "metrics"
+    result = read_portfolio(
+        get_container(), instance_id, g.current_user.id, include_curve=not metrics_only
+    )
+    return success(
+        {key: result[key] for key in ("at", "profit", "return_rate")} if metrics_only else result
+    )
+
+
+@blueprint.get("/<instance_id>/deliveries")
+@require_user
+def live_deliveries(instance_id: str):
+    try:
+        page = int(request.args.get("page", "1"))
+        size = int(request.args.get("page_size", "20"))
+    except ValueError as error:
+        raise ValidationError("分页参数必须为整数") from error
+    if page < 1 or not 1 <= size <= 100:
+        raise ValidationError("页码必须为正数，每页 1–100 条")
+    container = get_container()
+    item = container.state.live_instances.get(instance_id)
+    if item is None or item["owner_id"] != g.current_user.id:
+        raise NotFoundError("live_instance")
+    recommendation_ids = {row["id"] for row in container.state.recommendations.get(instance_id, [])}
+    deliveries = container.state.deliveries
+    if hasattr(deliveries, "page_for_live"):
+        result = deliveries.page_for_live(
+            g.current_user.id, instance_id, recommendation_ids, page, size
+        )
+    else:
+        rows = [
+            row
+            for row in deliveries
+            if row.get("owner_id") == g.current_user.id
+            and (
+                row.get("live_instance_id") == instance_id
+                or row.get("event_id") in recommendation_ids
+                or str(row.get("event_id", "")).startswith(f"{instance_id}:")
+            )
+        ]
+        rows.sort(key=lambda row: (str(row.get("created_at") or ""), str(row["id"])), reverse=True)
+        total = len(rows)
+        page = min(page, max(1, (total + size - 1) // size))
+        result = {
+            "items": rows[(page - 1) * size : page * size],
+            "total": total,
+            "page": page,
+            "page_size": size,
+        }
+    fields = {
+        "id",
+        "channel",
+        "status",
+        "attempts",
+        "created_at",
+        "updated_at",
+        "error",
+        "error_code",
+    }
+    result["items"] = [
+        {key: value for key, value in row.items() if key in fields} for row in result["items"]
+    ]
+    return success(result)
 
 
 @blueprint.get("/<instance_id>/operations")
@@ -286,11 +392,29 @@ def pause_live(instance_id: str):
 
 def _set_status(instance_id: str, status: str, action: str):
     container = get_container()
+    snapshot, frozen = (
+        termination_snapshot(container, instance_id, g.current_user.id)
+        if status == "terminated"
+        else (None, None)
+    )
     with container.live_tracking.transaction() as state:
         item = state.instances.get(instance_id)
         if item is None or item["owner_id"] != g.current_user.id:
             raise NotFoundError("live_instance")
         previous_status = str(item["status"])
+        if previous_status == "terminated":
+            if status != "terminated":
+                raise StateConflictError("已终止实盘不可恢复或修改")
+            return item
+        if status == "terminated":
+            validate_termination_snapshot(state, instance_id, snapshot)
+            assert frozen is not None
+            item = {
+                **item,
+                "terminated_at": frozen["at"],
+                "frozen_balances": portfolio_balances(state, instance_id),
+                "frozen_portfolio": frozen,
+            }
         item = {**item, "status": status}
         state.instances[instance_id] = item
         state.audit.append(
@@ -346,7 +470,12 @@ def analyze_live(instance_id: str, phase: str):
 
 def _present(item):
     return {
-        **item,
+        **{key: value for key, value in item.items() if key != "frozen_portfolio"},
+        **(
+            {"return_rate": item["frozen_portfolio"]["return_rate"]}
+            if item.get("frozen_portfolio")
+            else {}
+        ),
         "strategy": strategy_context(
             get_container(), str(item["owner_id"]), str(item["strategy_version_id"])
         ),

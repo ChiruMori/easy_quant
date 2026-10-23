@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class BacktestCreateRequest(BaseModel):
+    name: str = Field(default="", max_length=160)
     strategy_version_id: str
     symbols: list[str] = Field(default_factory=list)
     start_day: date
@@ -18,6 +19,7 @@ class BacktestCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def dates_are_ordered(self):
+        self.name = self.name.strip()
         if self.start_day > self.end_day:
             raise ValueError("开始日期不得晚于结束日期")
         return self

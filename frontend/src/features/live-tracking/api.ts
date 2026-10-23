@@ -14,10 +14,22 @@ export interface LiveInstance {
   backtest_id: string
   strategy_version_id: string
   status: string
+  return_rate?: string | null
+  terminated_at?: string
   next_decision_at: string
   recommendations?: Recommendation[]
   operations?: OperationPage
   portfolio?: LivePortfolio
+  frozen_portfolio?: LivePortfolio
+  balances?: Pick<
+    LivePortfolio,
+    | "cash"
+    | "available_cash"
+    | "reserved_cash"
+    | "positions"
+    | "reserved_positions"
+    | "capital_pool"
+  >
   notification_deliveries?: Array<{
     id: string
     channel: string
@@ -114,7 +126,19 @@ export const startLive = (
     }),
   })
 export const listLive = () => apiRequest<LiveInstance[]>("/live-instances")
-export const getLive = (id: string) => apiRequest<LiveInstance>(`/live-instances/${id}`)
+export const listLivePage = (page: number, search: string, status: string) =>
+  apiRequest<{ items: LiveInstance[]; total: number; page: number; page_size: number }>(
+    `/live-instances?${new URLSearchParams({ page: String(page), page_size: "20", search, status })}`,
+  )
+export const getLive = (id: string, progressive = false) =>
+  apiRequest<LiveInstance>(`/live-instances/${id}${progressive ? "?view=summary" : ""}`)
+export const getLivePortfolio = (id: string) =>
+  apiRequest<LivePortfolio>(`/live-instances/${id}/portfolio`)
+export type LiveDelivery = NonNullable<LiveInstance["notification_deliveries"]>[number]
+export const getLiveDeliveries = (id: string, page: number) =>
+  apiRequest<{ items: LiveDelivery[]; total: number; page: number; page_size: number }>(
+    `/live-instances/${id}/deliveries?page=${page}&page_size=20`,
+  )
 export const pauseLive = (id: string) =>
   apiRequest<LiveInstance>(`/live-instances/${id}/pause`, { method: "POST" })
 export const terminateLive = (id: string) =>
@@ -134,3 +158,8 @@ export const actOnRecommendation = (
       ...values,
     }),
   })
+
+export const getLiveMetrics = (id: string) =>
+  apiRequest<{ at: string | null; profit: string | null; return_rate: string | null }>(
+    `/live-instances/${id}/portfolio?view=metrics`,
+  )

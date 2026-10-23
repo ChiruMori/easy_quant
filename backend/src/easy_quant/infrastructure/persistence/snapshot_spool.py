@@ -15,18 +15,20 @@ class SnapshotSpool:
         self._digest = hashlib.sha256()
         self.record_count = 0
         self._closed = False
+        self._encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=True)
+        self.byte_count = 0
         self._write(b"[")
 
     def _write(self, chunk: bytes) -> None:
         self._file.write(chunk)
         self._digest.update(chunk)
+        self.byte_count += len(chunk)
 
     def append(self, row: dict[str, Any]) -> None:
         if self._closed:
             raise RuntimeError("快照已经结束")
-        if self.record_count:
-            self._write(b", ")
-        self._write(json.dumps(row, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+        encoded = self._encoder.encode(row).encode("utf-8")
+        self._write((b", " if self.record_count else b"") + encoded)
         self.record_count += 1
 
     def finish(self) -> str:

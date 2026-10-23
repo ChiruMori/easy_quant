@@ -5,6 +5,7 @@ import { useState } from "react"
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { EmptyState } from "@/components/app-shell"
 import { IconButton } from "@/components/icon-button"
+import { PageNumberButtons } from "@/components/list-pagination"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -83,13 +84,14 @@ export function JobsPage() {
           <p className="text-sm text-muted-foreground">
             共 {query.data.total} 个任务 · 第 {page} / {totalPages} 页 · 按计划时间倒序
           </p>
-          <nav aria-label="后台任务分页" className="flex items-center gap-2">
+          <nav aria-label="后台任务分页" className="flex flex-wrap items-center gap-2">
             <IconButton
               icon={ChevronLeft}
               label="上一页"
               disabled={page <= 1}
               onClick={() => setPage(page - 1)}
             />
+            <PageNumberButtons page={page} totalPages={totalPages} onChange={setPage} />
             <IconButton
               icon={ChevronRight}
               label="下一页"

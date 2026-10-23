@@ -25,7 +25,9 @@ class StrategyService:
         self.validator.validate(source_code)
         strategy = StrategyDefinition(self.ids.new(), owner_id, name, description)
         self.repository.add_definition(strategy)
-        return strategy, self.add_version(strategy.id, source_code)
+        version = self.add_version(strategy.id, source_code)
+        strategy.current_version_id = version.id
+        return strategy, version
 
     def add_version(
         self,

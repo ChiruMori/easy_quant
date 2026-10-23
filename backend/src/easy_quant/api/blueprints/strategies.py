@@ -66,35 +66,51 @@ def after_market(context, parameters):
     return []
 '''
 
-POSITIVE_EXPECTATION_TEMPLATE = '''def before_market(context, parameters):
-    """以市值和历史预期回报筛选候选股票。"""
-    # 每股分配组合权益的 1/预计持股数；10% 指该子仓位的 10%。
-    # signal 自动预留预算；实盘未确认建议跨轮继续锁定，回测/快测模拟成交后释放。
-    expected_holdings = int(parameters.get("expected_holdings", 10))
-    ratio = parameters.get("ratio", "0.10")
-    signals = []
-    for symbol in context.universe():
-        if context.position(symbol) > 0:
-            continue
-        value = context.factor("market.value", symbol=symbol)
-        expected = context.factor("stat.expected-return", symbol=symbol)
-        if value and expected["available"] and expected["expected_return"] > 0:
-            bars = context.factor("market.daily-bars", symbol=symbol)
-            if bars:
-                signals.append(context.signal(
-                    symbol, "buy", ratio, "正预期回报候选", price=bars[-1]["close"],
-                expected_holdings=expected_holdings,
-                ))
-    return [signal for signal in signals if signal["quantity"] > 0]
+GRID_TEMPLATE = """
+# 参数示例：{"symbol":"000001","anchor_price":"10","grid_step":"0.05",
+#            "base_weight":"0.5","grid_weight":"0.1"}
+# 单标的、日线离散网格示范；不保证盈利，不模拟日内多次穿网格。
+def before_market(context, parameters):
+    return []
 
 
 def on_market(context, parameters):
-    return []
+    symbol = str(parameters.get("symbol", "000001"))
+    anchor = Decimal(str(parameters.get("anchor_price", "10")))
+    step = Decimal(str(parameters.get("grid_step", "0.05")))
+    base = Decimal(str(parameters.get("base_weight", "0.5")))
+    weight = Decimal(str(parameters.get("grid_weight", "0.1")))
+    if anchor <= 0 or not 0 < step < 1 or not 0 <= base <= 1 or not 0 < weight <= 1:
+        raise ValueError("网格参数无效：锚定价为正，步长与每格仓位在0和1之间")
+    price = context.current_price(symbol)
+    if price is None or price <= 0:
+        return []
+    account = context.portfolio()
+    # 未确认买入不重复发出；卖出同样由平台扣除锁定股数。
+    if symbol in account["pending_buy_symbols"]:
+        return []
+    held = context.position(symbol)
+    equity = account["cash"] + held * price
+    if equity <= 0:
+        return []
+    level = int((anchor - price) / (anchor * step))
+    target_weight = max(Decimal(0), min(Decimal(1), base + level * weight))
+    target = int(equity * target_weight / price / 100) * 100
+    difference = target - held
+    if difference >= 100:
+        signal = context.signal(symbol, "buy", min(Decimal(1), difference * price / equity),
+                                "网格下跌补仓", price=price, expected_holdings=1)
+    elif difference <= -100 and held > 0:
+        signal = context.signal(symbol, "sell", min(Decimal(1), -difference / held),
+                                "网格上涨减仓", price=price, expected_holdings=1)
+    else:
+        return []
+    return [signal] if signal["quantity"] > 0 else []
 
 
 def after_market(context, parameters):
     return []
-'''
+"""
 
 
 def repository():
@@ -162,7 +178,10 @@ def create_strategy():
         resource_id=strategy.id,
         after={"version_id": version.id, "version": version.number},
     )
-    return success({**serialize(strategy), "version": version.number}, status=201)
+    return success(
+        {**serialize(strategy), "current_version_id": version.id, "version": version.number},
+        status=201,
+    )
 
 
 @blueprint.post("/<strategy_id>/versions")
@@ -249,9 +268,9 @@ def templates():
                 "source_code": MOVING_AVERAGE_TEMPLATE,
             },
             {
-                "key": "positive-expectation",
-                "name": "正预期示例",
-                "source_code": POSITIVE_EXPECTATION_TEMPLATE,
+                "key": "single-symbol-grid",
+                "name": "单标的网格策略",
+                "source_code": GRID_TEMPLATE,
             },
         ]
     )

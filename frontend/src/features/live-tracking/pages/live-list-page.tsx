@@ -1,67 +1,233 @@
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
+import { Eye } from "lucide-react"
+import { useState } from "react"
 import { Link } from "react-router-dom"
 
-import { EmptyState, ErrorState, LoadingState } from "@/components/app-shell"
+import { EmptyState } from "@/components/app-shell"
 import { DeleteResourceButton } from "@/components/delete-resource-button"
+import { IconLink } from "@/components/icon-button"
+import { ListPagination } from "@/components/list-pagination"
 import { PageHeader } from "@/components/page-header"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { formatMoney } from "@/lib/finance"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { formatMoney, profitTone } from "@/lib/finance"
 import { localizedLabel } from "@/lib/labels"
+import { cn } from "@/lib/utils"
 
-import { listLive, type LiveInstance } from "../api"
+import { getLiveMetrics, listLivePage, type LiveInstance } from "../api"
+
+function LiveReturnRate({ item, load }: { item: LiveInstance; load: boolean }) {
+  const frozen = item.status === "terminated" && item.return_rate !== undefined
+  const query = useQuery({
+    queryKey: ["live-metrics", item.id, item.status],
+    queryFn: () => getLiveMetrics(item.id),
+    enabled: load && !frozen,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const rate = frozen ? item.return_rate : (query.data?.return_rate ?? item.return_rate)
+  const tone = profitTone(rate)
+  if (query.isPending && query.isFetching)
+    return <Skeleton className="h-5 w-16" aria-label="正在加载收益率" />
+  if (query.error)
+    return (
+      <Button variant="link" size="sm" onClick={() => void query.refetch()}>
+        重试收益率
+      </Button>
+    )
+  return (
+    <span
+      className={cn(
+        "tabular-nums",
+        tone === "up" && "text-market-up",
+        tone === "down" && "text-market-down",
+      )}
+    >
+      {rate === null || rate === undefined ? "—" : `${(Number(rate) * 100).toFixed(2)}%`}
+    </span>
+  )
+}
 
 export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {}) {
+  const [page, setPage] = useState(1)
+  const [input, setInput] = useState("")
+  const [search, setSearch] = useState("")
+  const [status, setStatus] = useState("")
   const query = useQuery({
-    queryKey: ["live-instances"],
-    queryFn: listLive,
+    queryKey: ["live-instances", { page, search, status }],
+    queryFn: () => listLivePage(page, search, status),
     enabled: instances === undefined,
-    initialData: instances,
+    placeholderData: keepPreviousData,
   })
-  if (query.isLoading) return <LoadingState label="正在加载实盘实例" />
-  if (query.error) return <ErrorState title="无法加载实盘实例" message={query.error.message} />
+  const local = instances?.filter(
+    (row) => (!status || row.status === status) && (row.name ?? "").includes(search),
+  )
+  const data = local
+    ? { items: local.slice((page - 1) * 20, page * 20), total: local.length, page, page_size: 20 }
+    : query.data
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex min-w-0 flex-col gap-6">
       <PageHeader title="实盘建议跟踪" description="系统只生成建议，不会自动下单。" />
-      {query.data?.length ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {query.data.map((item) => (
-            <div key={item.id} className="flex min-w-0 flex-col gap-2">
-              <Link to={`/live/${item.id}`}>
-                <Card variant="interactive" className="h-full">
-                  <CardHeader>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <CardTitle className="min-w-0 break-all">{item.name ?? item.id}</CardTitle>
-                      <Badge variant={item.status === "active" ? "success" : "secondary"}>
-                        {localizedLabel(item.status)}
-                      </Badge>
-                    </div>
-                    <CardDescription className="break-all">
-                      {item.strategy?.name ?? "策略"} ·{" "}
-                      {item.strategy ? `v${item.strategy.number}` : item.strategy_version_id} ·
-                      初始资金 {formatMoney(item.initial_cash)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    下次决策：{new Date(item.next_decision_at).toLocaleString()}
-                  </CardContent>
-                </Card>
-              </Link>
-              {item.status === "terminated" && (
-                <div>
-                  <DeleteResourceButton
-                    path={`/live-instances/${item.id}`}
-                    label="删除实盘"
-                    description="将删除该实盘的建议、实际操作、账本、调度、任务及通知数据。"
-                  />
-                </div>
-              )}
+      <Card className="min-w-0">
+        <CardHeader>
+          <CardTitle>实盘列表</CardTitle>
+        </CardHeader>
+        <CardContent className="flex min-w-0 flex-col gap-4">
+          <form
+            className="flex flex-wrap gap-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              setSearch(input.trim())
+              setPage(1)
+            }}
+          >
+            <Input
+              aria-label="搜索实盘名称"
+              placeholder="实盘名称"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              className="min-w-0 flex-1 basis-40"
+            />
+            <Select
+              value={status || "all"}
+              onValueChange={(value) => {
+                setStatus(value === "all" ? "" : value)
+                setPage(1)
+              }}
+            >
+              <SelectTrigger aria-label="实盘状态" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="all">全部状态</SelectItem>
+                  <SelectItem value="active">运行中</SelectItem>
+                  <SelectItem value="paused">已暂停</SelectItem>
+                  <SelectItem value="terminated">已终止</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Button type="submit" disabled={query.isFetching}>
+              搜索
+            </Button>
+          </form>
+          {query.error && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {query.error.message}
+                <Button variant="link" onClick={() => void query.refetch()}>
+                  重试
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          {query.isFetching && (
+            <div role="status" aria-label="正在加载实盘列表">
+              <Skeleton className="h-20 w-full" />
             </div>
-          ))}
-        </div>
-      ) : (
-        <EmptyState title="尚未开启实盘跟踪" message="完成一次回测后，可从回测结果创建实盘实例。" />
-      )}
+          )}
+          {data && (
+            <>
+              {!data.items.length ? (
+                <EmptyState
+                  title="暂无匹配实盘"
+                  message="调整名称或状态筛选；完成回测后可创建实盘。"
+                />
+              ) : (
+                <Table aria-label="实盘列表" className="min-w-[650px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>名称</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead>策略</TableHead>
+                      <TableHead>初始资金（元）</TableHead>
+                      <TableHead>当前收益率</TableHead>
+                      <TableHead>下次决策</TableHead>
+                      <TableHead>操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.items.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell>
+                          <Link
+                            className="block max-w-48 truncate underline"
+                            title={item.name || item.id}
+                            to={`/live/${item.id}`}
+                          >
+                            {item.name || item.id}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={item.status === "active" ? "success" : "secondary"}>
+                            {localizedLabel(item.status)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {item.strategy?.name ?? "策略"} ·{" "}
+                          {item.strategy ? `v${item.strategy.number}` : item.strategy_version_id}
+                        </TableCell>
+                        <TableCell>{formatMoney(item.initial_cash)}</TableCell>
+                        <TableCell>
+                          <LiveReturnRate item={item} load={instances === undefined} />
+                        </TableCell>
+                        <TableCell>
+                          {item.status === "active" && item.next_decision_at
+                            ? new Date(item.next_decision_at).toLocaleString("zh-CN", {
+                                timeZone: "Asia/Shanghai",
+                              })
+                            : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <IconLink icon={Eye} label="查看实盘" to={`/live/${item.id}`} />
+                            {item.status === "terminated" && (
+                              <DeleteResourceButton
+                                path={`/live-instances/${item.id}`}
+                                label="删除实盘"
+                                description="将删除该实盘的建议、实际操作、冻结账本及通知数据，此操作不可恢复。"
+                              />
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              <ListPagination
+                label="实盘列表分页"
+                page={data.page}
+                pageSize={data.page_size}
+                total={data.total}
+                busy={query.isFetching}
+                onChange={setPage}
+                numbered
+              />
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

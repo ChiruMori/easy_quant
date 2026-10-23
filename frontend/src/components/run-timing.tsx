@@ -14,6 +14,18 @@ import {
 import { localizedLabel } from "@/lib/labels"
 
 export interface RunTiming {
+  workload?: {
+    history_start?: string
+    start_day?: string
+    end_day?: string
+    history_trading_days?: number
+    warmup_rows?: number
+    runtime_rows?: number
+    snapshot_rows?: number
+    snapshot_bytes?: number
+    snapshot_read_seconds?: number
+    snapshot_encode_seconds?: number
+  }
   total_seconds: number
   stages: Record<string, number>
   hooks: Record<
@@ -49,6 +61,22 @@ export function RunTimingPanel({ timing }: { timing?: RunTiming }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        {timing.workload?.history_start && (
+          <p className="text-sm text-muted-foreground">
+            数据范围：{timing.workload.history_start} 至 {timing.workload.end_day}（含最多{" "}
+            {timing.workload.history_trading_days} 个交易日预热）。预热{" "}
+            {(timing.workload.warmup_rows ?? 0).toLocaleString()} 行，运行{" "}
+            {(timing.workload.runtime_rows ?? 0).toLocaleString()} 行，快照{" "}
+            {(timing.workload.snapshot_rows ?? 0).toLocaleString()} 行 /{" "}
+            {((timing.workload.snapshot_bytes ?? 0) / 1024 / 1024).toFixed(2)} MiB。
+          </p>
+        )}
+        {timing.workload?.snapshot_read_seconds !== undefined && (
+          <p className="text-sm text-muted-foreground">
+            快照读取与行转换 {timing.workload.snapshot_read_seconds.toFixed(3)} 秒 ·
+            编码、摘要及临时写入 {(timing.workload.snapshot_encode_seconds ?? 0).toFixed(3)} 秒。
+          </p>
+        )}
         <dl className="grid gap-2 sm:grid-cols-3">
           {Object.entries(timing.stages).map(([stage, seconds]) => (
             <div key={stage}>

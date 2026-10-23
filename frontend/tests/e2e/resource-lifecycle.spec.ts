@@ -104,7 +104,22 @@ test("360px 日期选择、关联阻止、取消和删除失败恢复", async ({
         : [],
       "/notifications/deliveries": [],
     }
-    return route.fulfill({ json: { data: responses[path] ?? [] } })
+    return route.fulfill({
+      json: {
+        data:
+          (path.startsWith("/notifications/") || path === "/live-instances") &&
+          new URL(route.request().url()).searchParams.has("page")
+            ? {
+                items: responses[path] ?? [],
+                total: Array.isArray(responses[path]) ? responses[path].length : 0,
+                page: 1,
+                page_size: path === "/live-instances" ? 20 : 10,
+              }
+            : path.endsWith("/stock-performance")
+              ? { items: [], total: 0, page: 1, page_size: 20 }
+              : (responses[path] ?? []),
+      },
+    })
   })
   await page.setViewportSize({ width: 360, height: 900 })
   await page.goto("/backtests/new")
@@ -141,7 +156,7 @@ test("360px 日期选择、关联阻止、取消和删除失败恢复", async ({
     true,
   )
   await page.getByRole("button", { name: "确认删除实盘" }).click()
-  await expect(page.getByText("尚未开启实盘跟踪")).toBeVisible()
+  await expect(page.getByText("暂无匹配实盘")).toBeVisible()
 
   await page.goto("/notifications")
   await page.getByRole("button", { name: "删除渠道", exact: true }).click()
