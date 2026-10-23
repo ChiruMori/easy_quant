@@ -14,6 +14,7 @@ export interface LiveInstance {
   backtest_id: string
   strategy_version_id: string
   status: string
+  terminated_at?: string
   next_decision_at: string
   recommendations?: Recommendation[]
   operations?: OperationPage
@@ -123,6 +124,10 @@ export const startLive = (
     }),
   })
 export const listLive = () => apiRequest<LiveInstance[]>("/live-instances")
+export const listLivePage = (page: number, search: string, status: string) =>
+  apiRequest<{ items: LiveInstance[]; total: number; page: number; page_size: number }>(
+    `/live-instances?${new URLSearchParams({ page: String(page), page_size: "20", search, status })}`,
+  )
 export const getLive = (id: string, progressive = false) =>
   apiRequest<LiveInstance>(`/live-instances/${id}${progressive ? "?view=summary" : ""}`)
 export const getLivePortfolio = (id: string) =>

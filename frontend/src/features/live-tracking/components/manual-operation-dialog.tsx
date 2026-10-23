@@ -1,6 +1,8 @@
+import { Plus } from "lucide-react"
 import { useId, useRef, useState } from "react"
 
 import { ConfirmAction } from "@/components/confirm-action"
+import { IconButton } from "@/components/icon-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -49,16 +51,15 @@ export function ManualOperationDialog({
   const sending = useRef(false)
   return (
     <>
-      <Button
+      <IconButton
+        icon={Plus}
+        label="手动添加操作"
         disabled={disabled}
-        variant="outline"
         onClick={() => {
           setError("")
           setOpen(true)
         }}
-      >
-        手动添加操作
-      </Button>
+      />
       <Dialog
         open={open}
         onOpenChange={(value) => {

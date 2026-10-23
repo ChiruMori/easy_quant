@@ -1,10 +1,12 @@
 import Decimal from "decimal.js"
+import { Pause, RefreshCw, Square } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 
 import { EmptyState } from "@/components/app-shell"
 import { CollapsedDescription } from "@/components/collapsed-description"
 import { ConfirmAction } from "@/components/confirm-action"
+import { IconButton } from "@/components/icon-button"
 import { ListPagination } from "@/components/list-pagination"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
@@ -100,7 +102,7 @@ export function LiveDetailPage({
     [current.id, current.portfolio?.curve],
   )
   useEffect(() => {
-    if (!progressive) return
+    if (!progressive || current.status === "terminated") return
     let active = true
     setPortfolioBusy(true)
     setPortfolioError(undefined)
@@ -120,7 +122,7 @@ export function LiveDetailPage({
     return () => {
       active = false
     }
-  }, [instance.id, progressive, revision, portfolioRevision])
+  }, [instance.id, progressive, revision, portfolioRevision, current.status])
   useEffect(() => {
     if (!progressive) return
     let active = true
@@ -214,6 +216,49 @@ export function LiveDetailPage({
       <PageHeader
         title={`实盘实例 ${current.name ?? current.id}`}
         description={`状态：${localizedLabel(current.status)}`}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {current.status === "active" && (
+              <ConfirmAction
+                icon={Pause}
+                label="暂停"
+                title="确认暂停实盘"
+                description="暂停后停止生成新建议，待操作建议的资金和持仓仍锁定，请继续核对实际成交。"
+                destructive={false}
+                disabled={busy || current.status !== "active"}
+                action={() =>
+                  runAction(async () => {
+                    const result = await pauseLive(current.id)
+                    setCurrent((previous) => ({ ...previous, ...result }))
+                  })
+                }
+              />
+            )}
+            {current.status !== "terminated" && (
+              <ConfirmAction
+                icon={Square}
+                label="终止"
+                title="确认终止实盘"
+                description="终止后资金、持仓与账本永久冻结，停止收益跟踪，无法恢复或继续处理建议。请先核对所有实际成交及待操作建议。"
+                disabled={busy || current.status === "terminated"}
+                action={() =>
+                  runAction(async () => {
+                    const result = await terminateLive(current.id)
+                    setCurrent((previous) => ({ ...previous, ...result }))
+                  })
+                }
+              />
+            )}
+            {current.status !== "terminated" && (
+              <IconButton
+                icon={RefreshCw}
+                label="刷新实盘"
+                disabled={busy || pageBusy}
+                onClick={() => void runAction(refresh).catch(() => undefined)}
+              />
+            )}
+          </div>
+        }
       />
       {error && (
         <Alert variant="destructive">
@@ -222,163 +267,155 @@ export function LiveDetailPage({
         </Alert>
       )}
       {busy && <p role="status">正在处理，请稍候…</p>}
-      <div className="flex flex-wrap gap-2">
-        <ConfirmAction
-          label="暂停"
-          title="确认暂停实盘"
-          description="暂停后停止生成新建议，待操作建议的资金和持仓仍锁定，请继续核对实际成交。"
-          destructive={false}
-          disabled={busy || current.status !== "active"}
-          action={() =>
-            runAction(async () => {
-              const result = await pauseLive(current.id)
-              setCurrent((previous) => ({ ...previous, ...result }))
-            })
-          }
-        />
-        <ConfirmAction
-          label="终止"
-          title="确认终止实盘"
-          description="终止后停止实盘分析，已有建议及实际操作保留，请核对未处理成交。"
-          disabled={busy || current.status === "terminated"}
-          action={() =>
-            runAction(async () => {
-              const result = await terminateLive(current.id)
-              setCurrent((previous) => ({ ...previous, ...result }))
-            })
-          }
-        />
-        <ManualOperationDialog
-          instanceId={current.id}
-          disabled={busy || current.status === "terminated"}
-          onSaved={refresh}
-        />
-        <Button
-          variant="outline"
-          disabled={busy || pageBusy}
-          onClick={() => void runAction(refresh).catch(() => undefined)}
-        >
-          刷新实盘
-        </Button>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          label="当前收益"
-          tone={profitTone(current.portfolio?.profit)}
-          value={
-            current.portfolio && current.portfolio.profit !== null
-              ? `${formatMoney(current.portfolio.profit)} 元`
-              : portfolioBusy
-                ? "估值加载中…"
-                : "暂不可估值"
-          }
-        />
-        <MetricCard
-          label="当前收益率"
-          tone={profitTone(current.portfolio?.return_rate)}
-          value={
-            current.portfolio && current.portfolio.return_rate !== null
-              ? `${(Number(current.portfolio.return_rate) * 100).toFixed(2)}%`
-              : "—"
-          }
-        />
-        <MetricCard
-          label="可用资金"
-          value={
-            current.balances || current.portfolio
-              ? `${formatMoney(balances?.available_cash)} 元`
-              : "—"
-          }
-        />
-        <MetricCard
-          label="锁定资金"
-          value={
-            current.balances || current.portfolio
-              ? `${formatMoney(balances?.reserved_cash)} 元`
-              : "—"
-          }
-          description="待操作买入建议预留成交额及预计费用"
-        />
-      </div>
-      <Card className="min-w-0">
-        <CardHeader>
-          <CardTitle>实盘收益曲线</CardTitle>
-        </CardHeader>
-        <CardContent className="flex min-w-0 flex-col gap-4">
-          {portfolioBusy && (
-            <div role="status" aria-label="正在加载收益曲线">
-              {current.portfolio ? <p>正在更新收益估值…</p> : <Skeleton className="h-60 w-full" />}
-            </div>
-          )}
-          {portfolioError && (
-            <Alert variant="destructive">
-              <AlertDescription>
-                {portfolioError}
-                <Button variant="link" onClick={() => setPortfolioRevision((value) => value + 1)}>
-                  重试估值
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
-          <p className="text-sm text-muted-foreground">
-            {current.portfolio?.valuation_note ?? "等待真实行情估值。"}
-          </p>
-          {!!current.portfolio?.missing_symbols.length && (
-            <p role="status">缺少估值行情：{current.portfolio.missing_symbols.join("、")}</p>
-          )}
-          {current.portfolio?.curve.some((point) => point.profit !== null) ? (
-            <PortfolioChart
-              key={current.id}
-              kind="live"
-              resourceId={current.id}
-              amountLabel="累计收益"
-              series={series}
+      {current.status !== "terminated" ? (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard
+              label="当前收益"
+              tone={profitTone(current.portfolio?.profit)}
+              value={
+                current.portfolio && current.portfolio.profit !== null
+                  ? `${formatMoney(current.portfolio.profit)} 元`
+                  : portfolioBusy
+                    ? "估值加载中…"
+                    : "暂不可估值"
+              }
             />
-          ) : !portfolioBusy && !portfolioError ? (
-            <p>暂无可估值的收益曲线</p>
-          ) : null}
-          <p className="text-sm">
-            锁定持仓：
-            {Object.entries(balances?.reserved_positions ?? {})
-              .map(([symbol, quantity]) => `${symbol} ${quantity} 股`)
-              .join("、") || "无"}
-          </p>
-          <p className="text-sm">
-            资金池：{formatMoney(balances?.capital_pool)} 元 · 当前现金：
-            {formatMoney(balances?.cash)} 元
-          </p>
-          {!!Object.keys(balances?.positions ?? {}).length && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>持仓标的</TableHead>
-                  <TableHead>总持仓（股）</TableHead>
-                  <TableHead>锁定（股）</TableHead>
-                  <TableHead>可用（股）</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {Object.entries(balances?.positions ?? {}).map(([symbol, quantity]) => {
-                  const locked = balances?.reserved_positions[symbol] ?? "0"
-                  return (
-                    <TableRow key={symbol}>
-                      <TableCell>{symbol}</TableCell>
-                      <TableCell>{quantity}</TableCell>
-                      <TableCell>{locked}</TableCell>
-                      <TableCell>
-                        {Decimal.max(0, new Decimal(quantity).minus(locked)).toFixed()}
-                      </TableCell>
+            <MetricCard
+              label="当前收益率"
+              tone={profitTone(current.portfolio?.return_rate)}
+              value={
+                current.portfolio && current.portfolio.return_rate !== null
+                  ? `${(Number(current.portfolio.return_rate) * 100).toFixed(2)}%`
+                  : "—"
+              }
+            />
+            <MetricCard
+              label="可用资金"
+              value={
+                current.balances || current.portfolio
+                  ? `${formatMoney(balances?.available_cash)} 元`
+                  : "—"
+              }
+            />
+            <MetricCard
+              label="锁定资金"
+              value={
+                current.balances || current.portfolio
+                  ? `${formatMoney(balances?.reserved_cash)} 元`
+                  : "—"
+              }
+              description="待操作买入建议预留成交额及预计费用"
+            />
+          </div>
+          <Card className="min-w-0">
+            <CardHeader>
+              <CardTitle>实盘收益曲线</CardTitle>
+            </CardHeader>
+            <CardContent className="flex min-w-0 flex-col gap-4">
+              {portfolioBusy && (
+                <div role="status" aria-label="正在加载收益曲线">
+                  {current.portfolio ? (
+                    <p>正在更新收益估值…</p>
+                  ) : (
+                    <Skeleton className="h-60 w-full" />
+                  )}
+                </div>
+              )}
+              {portfolioError && (
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    {portfolioError}
+                    <Button
+                      variant="link"
+                      onClick={() => setPortfolioRevision((value) => value + 1)}
+                    >
+                      重试估值
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
+              <p className="text-sm text-muted-foreground">
+                {current.portfolio?.valuation_note ?? "等待真实行情估值。"}
+              </p>
+              {!!current.portfolio?.missing_symbols.length && (
+                <p role="status">缺少估值行情：{current.portfolio.missing_symbols.join("、")}</p>
+              )}
+              {current.portfolio?.curve.some((point) => point.profit !== null) ? (
+                <PortfolioChart
+                  key={current.id}
+                  kind="live"
+                  resourceId={current.id}
+                  amountLabel="累计收益"
+                  series={series}
+                />
+              ) : !portfolioBusy && !portfolioError ? (
+                <p>暂无可估值的收益曲线</p>
+              ) : null}
+              <p className="text-sm">
+                锁定持仓：
+                {Object.entries(balances?.reserved_positions ?? {})
+                  .map(([symbol, quantity]) => `${symbol} ${quantity} 股`)
+                  .join("、") || "无"}
+              </p>
+              <p className="text-sm">
+                资金池：{formatMoney(balances?.capital_pool)} 元 · 当前现金：
+                {formatMoney(balances?.cash)} 元
+              </p>
+              {!!Object.keys(balances?.positions ?? {}).length && (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>持仓标的</TableHead>
+                      <TableHead>总持仓（股）</TableHead>
+                      <TableHead>锁定（股）</TableHead>
+                      <TableHead>可用（股）</TableHead>
                     </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {Object.entries(balances?.positions ?? {}).map(([symbol, quantity]) => {
+                      const locked = balances?.reserved_positions[symbol] ?? "0"
+                      return (
+                        <TableRow key={symbol}>
+                          <TableCell>{symbol}</TableCell>
+                          <TableCell>{quantity}</TableCell>
+                          <TableCell>{locked}</TableCell>
+                          <TableCell>
+                            {Decimal.max(0, new Decimal(quantity).minus(locked)).toFixed()}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      ) : (
+        <Alert>
+          <AlertTitle>实盘已终止 · 数据已冻结</AlertTitle>
+          <AlertDescription>
+            停止收益跟踪，历史操作只读，无法恢复。
+            <p>
+              冻结现金：{formatMoney(balances?.cash)} 元 · 资金池：
+              {formatMoney(balances?.capital_pool)} 元
+            </p>
+            <p>
+              冻结持仓：
+              {Object.entries(balances?.positions ?? {})
+                .map(([symbol, quantity]) => `${symbol} ${quantity} 股`)
+                .join("、") || "无"}
+            </p>
+          </AlertDescription>
+        </Alert>
+      )}
       <Card className="min-w-0">
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
           <CardTitle>操作列表</CardTitle>
+          {current.status !== "terminated" && (
+            <ManualOperationDialog instanceId={current.id} disabled={busy} onSaved={refresh} />
+          )}
         </CardHeader>
         <CardContent className="flex min-w-0 flex-col gap-4">
           <form
@@ -513,39 +550,44 @@ export function LiveDetailPage({
                   </TableCell>
                   <TableCell>
                     <div className="flex min-w-32 gap-2">
-                      {item.status === "pending" && !item.operation_type?.startsWith("manual_") && (
-                        <RecommendationActions
-                          recommendation={item}
-                          disabled={busy || item.status !== "pending"}
-                          onSubmit={(kind, values = {}) =>
-                            runAction(async () => {
-                              const signature = JSON.stringify([kind, item.version, values])
-                              if (requests.current[item.id]?.signature !== signature)
-                                requests.current[item.id] = { signature, key: crypto.randomUUID() }
-                              const result = await actOnRecommendation(
-                                item.id,
-                                kind,
-                                item.version,
-                                values,
-                                requests.current[item.id].key,
-                              )
-                              setOperations((previous) => ({
-                                ...previous,
-                                items: previous.items.map((row) =>
-                                  row.id === item.id
-                                    ? {
-                                        ...row,
-                                        status: result.recommendation_status,
-                                        version: result.version,
-                                      }
-                                    : row,
-                                ),
-                              }))
-                              await refresh()
-                            })
-                          }
-                        />
-                      )}
+                      {current.status !== "terminated" &&
+                        item.status === "pending" &&
+                        !item.operation_type?.startsWith("manual_") && (
+                          <RecommendationActions
+                            recommendation={item}
+                            disabled={busy || item.status !== "pending"}
+                            onSubmit={(kind, values = {}) =>
+                              runAction(async () => {
+                                const signature = JSON.stringify([kind, item.version, values])
+                                if (requests.current[item.id]?.signature !== signature)
+                                  requests.current[item.id] = {
+                                    signature,
+                                    key: crypto.randomUUID(),
+                                  }
+                                const result = await actOnRecommendation(
+                                  item.id,
+                                  kind,
+                                  item.version,
+                                  values,
+                                  requests.current[item.id].key,
+                                )
+                                setOperations((previous) => ({
+                                  ...previous,
+                                  items: previous.items.map((row) =>
+                                    row.id === item.id
+                                      ? {
+                                          ...row,
+                                          status: result.recommendation_status,
+                                          version: result.version,
+                                        }
+                                      : row,
+                                  ),
+                                }))
+                                await refresh()
+                              })
+                            }
+                          />
+                        )}
                     </div>
                   </TableCell>
                 </TableRow>

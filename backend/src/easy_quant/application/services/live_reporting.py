@@ -108,6 +108,8 @@ def operation_page(
 
 def portfolio_balances(state, instance_id: str):
     instance = state.instances[instance_id]
+    if instance.get("status") == "terminated" and instance.get("frozen_balances"):
+        return dict(instance["frozen_balances"])
     portfolio = actual_portfolio(state, instance_id)
     locked = reservations(state.recommendations.get(instance_id, []))
     return {
@@ -125,6 +127,17 @@ def portfolio_balances(state, instance_id: str):
 
 def portfolio_summary(state, instance_id: str, market_data: Any, now: datetime):
     instance = state.instances[instance_id]
+    if instance.get("status") == "terminated":
+        return {
+            **portfolio_balances(state, instance_id),
+            "at": instance.get("terminated_at"),
+            "profit": None,
+            "return_rate": None,
+            "initial_equity": None,
+            "missing_symbols": [],
+            "curve": [],
+            "valuation_note": "实盘已终止，资金与持仓已冻结，停止收益跟踪。",
+        }
     portfolio = actual_portfolio(state, instance_id)
     entries = ledger_entries(state, instance_id)
     locked = reservations(state.recommendations.get(instance_id, []))

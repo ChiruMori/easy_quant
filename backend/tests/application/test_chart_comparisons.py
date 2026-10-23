@@ -118,3 +118,22 @@ def test_live_comparison_uses_same_profit_scale_and_has_no_backtest_sources():
     result = comparison_series(c, "live", "l", "u", symbol="000001")
     assert Decimal(result["points"][0]["amount"]) == 0
     assert Decimal(result["points"][-1]["amount"]) == 200
+
+
+def test_candidates_use_names_without_dates_and_limit_to_twenty():
+    c = setup()
+    for index in range(30):
+        original = c.backtests.get("other")
+        assert original is not None
+        c.backtests.save(
+            {
+                **original,
+                "id": f"candidate-{index}",
+                "name": "匹配名称" + str(index),
+                "created_at": "2026-10-24T01:00:00Z",
+            },
+            b"[]",
+        )
+    rows = comparison_candidates(c, "main", "u", "匹配名称")
+    assert len(rows) == 20
+    assert all(row["name"].startswith("匹配名称") and "2026-" not in row["name"] for row in rows)

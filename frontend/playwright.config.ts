@@ -23,7 +23,9 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      command: "pnpm dev --host 127.0.0.1 --port 5174 --strictPort",
+      command: process.env.CI
+        ? "pnpm exec vite preview --host 127.0.0.1 --port 5174 --strictPort"
+        : "pnpm dev --host 127.0.0.1 --port 5174 --strictPort",
       env: { EASY_QUANT_API_PROXY_TARGET: "http://127.0.0.1:5100" },
       url: "http://127.0.0.1:5174",
       reuseExistingServer: false,

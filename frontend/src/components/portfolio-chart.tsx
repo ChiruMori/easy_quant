@@ -88,7 +88,13 @@ export const PortfolioChart = memo(function PortfolioChart({
         source === "instrument"
           ? "/chart-comparisons/instruments"
           : `/chart-comparisons/backtest/${resourceId}/candidates`
-      setResults(await apiRequest(`${url}?${new URLSearchParams({ search })}`))
+      setResults(
+        (
+          await apiRequest<Array<{ id: string; name: string }>>(
+            `${url}?${new URLSearchParams({ search })}`,
+          )
+        ).slice(0, 20),
+      )
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "搜索失败，请重试")
     } finally {
@@ -98,10 +104,11 @@ export const PortfolioChart = memo(function PortfolioChart({
   }
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <ToggleGroup
           type="single"
           variant="outline"
+          size="sm"
           value={unit}
           onValueChange={(value) => {
             if (value) setUnit(value)
@@ -122,10 +129,7 @@ export const PortfolioChart = memo(function PortfolioChart({
           }}
         >
           <PopoverTrigger asChild>
-            <Button variant="outline" disabled={extra.length >= 8}>
-              <Plus data-icon="inline-start" />
-              添加对比
-            </Button>
+            <IconButton icon={Plus} label="添加对比" size="icon-sm" disabled={extra.length >= 8} />
           </PopoverTrigger>
           <PopoverContent
             className="flex max-h-[75dvh] w-80 max-w-[calc(100vw-2rem)] flex-col gap-3 overflow-y-auto"
@@ -165,9 +169,7 @@ export const PortfolioChart = memo(function PortfolioChart({
                 value={search}
                 disabled={busy}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder={
-                  source === "instrument" ? "代码或名称，如沪深300" : "回测名称、编号、版本或日期"
-                }
+                placeholder={source === "instrument" ? "代码或名称，如沪深300" : "回测名称或编号"}
               />
               <Button type="submit" disabled={busy}>
                 搜索
@@ -191,7 +193,8 @@ export const PortfolioChart = memo(function PortfolioChart({
             {results.map((result) => (
               <Button
                 key={result.id}
-                className="h-auto justify-start whitespace-normal"
+                className="w-full min-w-0 justify-start"
+                title={result.name || result.id}
                 variant="outline"
                 disabled={busy || curves.some((item) => item.id === `${source}:${result.id}`)}
                 onClick={async () => {
@@ -217,13 +220,19 @@ export const PortfolioChart = memo(function PortfolioChart({
                   }
                 }}
               >
-                {source === "backtest" ? result.name || result.id : `${result.name} · ${result.id}`}
+                <span className="min-w-0 truncate">
+                  {source === "backtest"
+                    ? Array.from(result.name || result.id)
+                        .slice(0, 20)
+                        .join("") + (Array.from(result.name || result.id).length > 20 ? "…" : "")
+                    : `${result.name} · ${result.id}`}
+                </span>
               </Button>
             ))}
           </PopoverContent>
         </Popover>
         {extra.map((item) => (
-          <Badge key={item.id} variant="secondary" className="min-w-0 gap-1">
+          <Badge key={item.id} variant="secondary" className="h-8 min-w-0 gap-1 px-2">
             <span className="max-w-40 truncate">{item.name}</span>
             <IconButton
               icon={X}

@@ -56,7 +56,9 @@ def _coverage_status(first_day: date | None, last_day: date | None, target_day: 
 @blueprint.get("/datasets")
 @require_admin
 def list_datasets():
-    return success(list(get_container().state.datasets))
+    from easy_quant.bootstrap import ensure_dataset_catalog
+
+    return success(ensure_dataset_catalog(get_container().state.datasets))
 
 
 @blueprint.put("/datasets/<dataset_key>/sources")

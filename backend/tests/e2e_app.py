@@ -2,13 +2,14 @@ from threading import Thread
 
 from easy_quant.api.app import create_app
 from easy_quant.application.services.market_data_sync import MarketDataSyncService
+from easy_quant.domain.market_data.indices import is_index
 from easy_quant.infrastructure.core import SystemSleeper
 from easy_quant.worker.handlers.backtests import register_backtest_handlers
 from easy_quant.worker.handlers.market_data import register_market_data_handlers
 from easy_quant.worker.handlers.strategies import register_strategy_handlers
 from easy_quant.worker.registry import JobHandlerRegistry
 from easy_quant.worker.runner import Worker
-from tests.fakes.index_data import FixtureIndexAcquisition
+from tests.fakes.index_data import FixtureCalendarAcquisition, FixtureIndexAcquisition
 from tests.fakes.platform import make_test_container, make_test_settings
 
 
@@ -34,8 +35,23 @@ def create_e2e_app():
             return None
 
     container.notification_channels["ntfy"] = OfflineNotificationChannel()
-    container.data_sync = MarketDataSyncService(
-        {"daily-bars": FixtureIndexAcquisition(container.authentication.clock)},
+
+    class OfflineManagementSyncV1(MarketDataSyncService):
+        """管理旅程验证入队；实际指数同步使用版本化 fixture，其余同步由服务层测试覆盖。"""
+
+        def sync(self, dataset_key, **kwargs):
+            if dataset_key not in {"daily-bars", "trading-calendar"} or (
+                dataset_key == "daily-bars"
+                and any(not is_index(symbol) for symbol in kwargs.get("symbols", []))
+            ):
+                return {"record_count": 0, "attempts": [], "source_key": "offline-management-v1"}
+            return super().sync(dataset_key, **kwargs)
+
+    container.data_sync = OfflineManagementSyncV1(
+        {
+            "daily-bars": FixtureIndexAcquisition(container.authentication.clock),
+            "trading-calendar": FixtureCalendarAcquisition(container.authentication.clock),
+        },
         container.market_data,
     )
     registry = JobHandlerRegistry()

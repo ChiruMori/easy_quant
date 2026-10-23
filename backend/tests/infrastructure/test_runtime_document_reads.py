@@ -43,3 +43,17 @@ def test_delivery_page_filters_and_limits_in_database():
     assert "LIMIT" in str(statement) and "json_extract" in str(statement)
     assert "owner" in statement.params.values()
     assert 20 in statement.params.values()
+
+
+def test_dataset_append_does_not_overwrite_a_numeric_slot_after_deletion():
+    class Documents(dict):
+        namespace = "datasets"
+
+    documents = Documents(
+        {"00000000": {"key": "securities"}, "00000002": {"key": "trading-calendar"}}
+    )
+    store = SqlJsonList(cast(Session, object()), "datasets")
+    store._mapping = cast(Any, documents)
+    store.append({"key": "daily-bars"})
+    assert documents["00000002"] == {"key": "trading-calendar"}
+    assert len(documents) == 3

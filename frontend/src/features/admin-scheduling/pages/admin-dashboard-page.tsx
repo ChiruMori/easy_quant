@@ -1,11 +1,10 @@
-import { CalendarClock, Database, FileClock, KeyRound, Users } from "lucide-react"
+import { CalendarClock, FileClock, KeyRound, Users } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 const entries = [
-  ["/admin/data", "数据管理", "配置数据集来源并启动拉取或导入。", Database],
   ["/admin/users", "用户管理", "查看、启停和调整受控用户。", Users],
   ["/admin/invitations", "邀请码", "签发一次性注册邀请码。", KeyRound],
   ["/admin/schedules", "定时任务", "管理数据与实盘分析调度。", CalendarClock],
@@ -15,7 +14,7 @@ const entries = [
 export function AdminDashboardPage() {
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="系统管理" description="集中管理平台数据、用户与运行任务。" />
+      <PageHeader title="系统管理" description="集中管理平台用户与运行任务。" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {entries.map(([to, title, description, Icon]) => (
           <Link key={to} to={to}>

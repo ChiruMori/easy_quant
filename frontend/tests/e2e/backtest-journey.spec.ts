@@ -58,7 +58,29 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await expect(page.getByRole("heading", { name: /^编辑 .* · v1$/ })).toBeVisible()
   await expect(page.getByText("草稿已保存")).toBeVisible()
   await page.getByLabel("快速测试交易日").fill("2026-01-30")
+  const quickRequest = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/strategies/quick-test") && response.request().method() === "POST",
+  )
   await page.getByRole("button", { name: "运行快速测试" }).click()
+  const quick = (await (await quickRequest).json()).data
+  await expect
+    .poll(
+      async () =>
+        (
+          await (
+            await page.request.get(`/api/v1/strategies/quick-tests/${quick.job_id ?? quick.id}`)
+          ).json()
+        ).data.status,
+      { timeout: 15000 },
+    )
+    .not.toMatch(/queued|running/)
+  const quickResult = (
+    await (
+      await page.request.get(`/api/v1/strategies/quick-tests/${quick.job_id ?? quick.id}`)
+    ).json()
+  ).data
+  expect(quickResult.error, JSON.stringify(quickResult)).toBeFalsy()
   await expect(page.getByText("已成功")).toBeVisible()
   await expect(page.getByText("运行耗时", { exact: true })).toBeVisible()
 

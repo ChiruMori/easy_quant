@@ -30,6 +30,7 @@ describe("回测详情", () => {
               assumptions: { frequency: "daily" },
               timing: {
                 total_seconds: 2,
+                workload: {},
                 stages: { warmup: 0.5, strategy: 1.5 },
                 hooks: {
                   before_market: { count: 1, total_seconds: 1, average_seconds: 1, max_seconds: 1 },

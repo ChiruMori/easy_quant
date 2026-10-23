@@ -21,7 +21,7 @@ from easy_quant.application.services.live_runtime import analyze_live_instance
 from easy_quant.application.services.manual_operations import ManualCommand, ManualOperationService
 from easy_quant.application.services.recommendation_actions import audit_row
 from easy_quant.domain.market_data.indices import is_index
-from easy_quant.domain.shared.errors import NotFoundError, ValidationError
+from easy_quant.domain.shared.errors import NotFoundError, StateConflictError, ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
 
 blueprint = Blueprint("live_tracking", __name__, url_prefix="/api/v1/live-instances")
@@ -150,6 +150,38 @@ def start_live():
 @blueprint.get("")
 @require_user
 def list_live():
+    if any(key in request.args for key in ("page", "page_size", "search", "status")):
+        try:
+            page, size = int(request.args.get("page", 1)), int(request.args.get("page_size", 20))
+        except ValueError as error:
+            raise ValidationError("分页参数必须为整数") from error
+        status, search = request.args.get("status", ""), request.args.get("search", "").strip()
+        if page < 1 or not 1 <= size <= 100 or status not in {"", "active", "paused", "terminated"}:
+            raise ValidationError("分页或状态参数无效")
+        instances = get_container().state.live_instances
+        if hasattr(instances, "page_for_owner"):
+            result = instances.page_for_owner(g.current_user.id, page, size, search, status)
+        else:
+            rows = [
+                row
+                for row in instances.values()
+                if row["owner_id"] == g.current_user.id
+                and search.casefold() in str(row.get("name", "")).casefold()
+                and (not status or row["status"] == status)
+            ]
+            rows.sort(
+                key=lambda row: (str(row.get("started_at", "")), str(row["id"])), reverse=True
+            )
+            total = len(rows)
+            page = min(page, max(1, (total + size - 1) // size))
+            result = {
+                "items": rows[(page - 1) * size : page * size],
+                "page": page,
+                "page_size": size,
+                "total": total,
+            }
+        result["items"] = [_present(row) for row in result["items"]]
+        return success(result)
     return success(
         [
             _present(item)
@@ -372,6 +404,16 @@ def _set_status(instance_id: str, status: str, action: str):
         if item is None or item["owner_id"] != g.current_user.id:
             raise NotFoundError("live_instance")
         previous_status = str(item["status"])
+        if previous_status == "terminated":
+            if status != "terminated":
+                raise StateConflictError("已终止实盘不可恢复或修改")
+            return item
+        if status == "terminated":
+            item = {
+                **item,
+                "terminated_at": container.authentication.clock.now().isoformat(),
+                "frozen_balances": portfolio_balances(state, instance_id),
+            }
         item = {**item, "status": status}
         state.instances[instance_id] = item
         state.audit.append(

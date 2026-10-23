@@ -30,14 +30,30 @@ class FakeDocuments:
         )
 
     def get(self, _model: object, key: tuple[str, str]) -> RuntimeDocumentModel | None:
-        return self.row if key == (self.row.namespace, self.row.key) else None
+        return self.rows.get(key)
+
+    @property
+    def rows(self):
+        if not hasattr(self, "_rows"):
+            self._rows = {(self.row.namespace, self.row.key): self.row}
+        return self._rows
+
+    def merge(self, row):
+        self.rows[row.namespace, row.key] = row
+
+    def commit(self):
+        pass
 
     def scalars(self, statement: Any) -> FakeKeys:
-        assert statement.compile().params["namespace_1"] == self.row.namespace
+        namespace = statement.compile().params["namespace_1"]
+        rows = [row for (ns, _), row in sorted(self.rows.items()) if ns == namespace]
         return FakeKeys(
-            [self.row.payload_json]
-            if statement.selected_columns[0].name == "payload_json"
-            else ["entry"]
+            [
+                row.payload_json
+                if statement.selected_columns[0].name == "payload_json"
+                else row.key
+                for row in rows
+            ]
         )
 
 
@@ -61,6 +77,11 @@ def test_persistent_lists_are_serialized_at_the_api_boundary(endpoint, attribute
     )
     response = client.get(endpoint)
     assert response.status_code == 200
+    if attribute == "datasets":
+        data = response.get_json()["data"]
+        assert data[0] == payload
+        assert {row["key"] for row in data} >= {"daily-bars", "trading-calendar", "securities"}
+        return
     assert response.get_json()["data"] == (
         {"items": [payload], "total": 1, "page": 1, "page_size": 20}
         if attribute == "jobs"

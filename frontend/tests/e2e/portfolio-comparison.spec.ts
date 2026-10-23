@@ -87,13 +87,25 @@ for (const width of [1440, 360]) {
         },
       })
     })
+    const longName = "这是一个超过二十字的回测名称用于验证截断展示与标题提示"
     let failure = true
     await page.route("**/api/v1/chart-comparisons/**", (route) => {
       const url = new URL(route.request().url())
       if (url.pathname.endsWith("/instruments"))
         return route.fulfill({ json: { data: [{ id: "000001", name: "平安银行" }] } })
       if (url.pathname.endsWith("/candidates"))
-        return route.fulfill({ json: { data: [{ id: "other-chart-v1", name: "同期回测" }] } })
+        return route.fulfill({
+          json: {
+            data: [
+              { id: "other-chart-v1", name: "同期回测" },
+              { id: "long-chart", name: longName },
+              ...Array.from({ length: 23 }, (_, index) => ({
+                id: `extra-${index}`,
+                name: `比较对象${index}`,
+              })),
+            ],
+          },
+        })
       if (failure) {
         failure = false
         return route.fulfill({
@@ -136,8 +148,22 @@ for (const width of [1440, 360]) {
     await page.getByRole("option", { name: "相同配置的回测", exact: true }).click()
     await page.getByLabel("搜索对比对象").fill("")
     await page.getByRole("dialog").getByRole("button", { name: "搜索", exact: true }).click()
+    await expect(page.getByTitle(longName, { exact: true })).toHaveText(
+      Array.from(longName).slice(0, 20).join("") + "…",
+    )
+    await expect(page.locator('[data-slot="popover-content"] button[title]')).toHaveCount(20)
     await page.getByRole("button", { name: "同期回测", exact: true }).click()
     await expect(page.getByRole("button", { name: "移除对比 同期回测", exact: true })).toBeVisible()
+    const unitBox = await page.getByRole("radio", { name: "金额（元）" }).boundingBox()
+    const addBox = await page.getByRole("button", { name: "添加对比", exact: true }).boundingBox()
+    const tagBox = await page
+      .getByRole("button", { name: "移除对比 同期回测", exact: true })
+      .locator("..")
+      .boundingBox()
+    expect(unitBox?.height).toBe(32)
+    expect(addBox?.height).toBe(unitBox?.height)
+    expect(tagBox?.height).toBe(unitBox?.height)
+
     await page.getByRole("radio", { name: "金额（元）", exact: true }).click()
     const paths = page.locator(".recharts-line-curve")
     await expect(paths).toHaveCount(3)

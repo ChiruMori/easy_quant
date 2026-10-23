@@ -86,6 +86,20 @@ async function prepare(page: Page) {
     "/notifications/subscriptions": [
       { id: "subscription-audit-v1", channel: "ntfy", destination: longId, enabled: true },
     ],
+    [`/live-instances/${longId}/portfolio`]: {
+      cash: "100000",
+      available_cash: "100000",
+      reserved_cash: "0",
+      positions: {},
+      reserved_positions: {},
+      capital_pool: "100000",
+      profit: null,
+      return_rate: null,
+      missing_symbols: [],
+      curve: [],
+      valuation_note: "暂无估值",
+    },
+    [`/live-instances/${longId}/deliveries`]: { items: [], total: 0, page: 1, page_size: 20 },
     "/admin/invitations": [{ id: longId, expires_at: "2026-10-07T00:00:00Z" }],
   }
   await page.route("**/api/v1/**", (route) => {
@@ -94,9 +108,14 @@ async function prepare(page: Page) {
       return route.fulfill({
         json: {
           data:
-            path === "/notifications/subscriptions" &&
+            ["/notifications/subscriptions", "/live-instances"].includes(path) &&
             new URL(route.request().url()).searchParams.has("page")
-              ? { items: fixtures[path], total: 1, page: 1, page_size: 10 }
+              ? {
+                  items: fixtures[path],
+                  total: 1,
+                  page: 1,
+                  page_size: path === "/live-instances" ? 20 : 10,
+                }
               : fixtures[path],
         },
       })
@@ -213,7 +232,7 @@ test("因子无搜索结果与实盘空态、加载失败后可恢复", async ({
   await page.getByLabel("搜索因子").fill("no-such-factor-ui-v1")
   await expect(page.getByText("没有匹配的因子", { exact: true })).toBeVisible()
   let failed = true
-  await page.route("**/api/v1/live-instances/retry-ui-v1", (route) =>
+  await page.route("**/api/v1/live-instances/retry-ui-v1?view=summary", (route) =>
     failed
       ? route.fulfill({
           status: 503,

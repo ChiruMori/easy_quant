@@ -69,6 +69,43 @@ class SqlJsonDict(MutableMapping[str, dict[str, Any]]):
     def values(self) -> ValuesView[dict[str, Any]]:
         return dict(self.items()).values()
 
+    def page_for_owner(self, owner_id: str, page: int, size: int, search: str, status: str):
+        def field(name):
+            return func.json_unquote(
+                func.json_extract(RuntimeDocumentModel.payload_json, f"$.{name}")
+            )
+
+        conditions = [
+            RuntimeDocumentModel.namespace == self.namespace,
+            field("owner_id") == owner_id,
+        ]
+        if search:
+            conditions.append(
+                func.lower(field("name")).contains(search.casefold(), autoescape=True)
+            )
+        if status:
+            conditions.append(field("status") == status)
+        total = (
+            self.session.scalar(
+                select(func.count()).select_from(RuntimeDocumentModel).where(*conditions)
+            )
+            or 0
+        )
+        page = min(page, max(1, (total + size - 1) // size))
+        rows = self.session.scalars(
+            select(RuntimeDocumentModel.payload_json)
+            .where(*conditions)
+            .order_by(field("started_at").desc(), RuntimeDocumentModel.key.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        return {
+            "items": [json.loads(row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": size,
+        }
+
 
 class SqlJsonList:
     """小规模受限部署使用的持久 JSON 列表。"""
@@ -87,6 +124,8 @@ class SqlJsonList:
             .order_by(RuntimeDocumentModel.key)
             .execution_options(yield_per=500)
         )
+        if self._mapping.namespace == "datasets":
+            rows = rows.all()
         return (json.loads(row) for row in rows)
 
     def page_for_live(
@@ -146,4 +185,7 @@ class SqlJsonList:
         self._mapping[key] = value
 
     def append(self, value: dict[str, Any]) -> None:
+        if self._mapping.namespace == "datasets":
+            self._mapping[str(value["key"])] = value
+            return
         self.insert(len(self), value)
