@@ -114,7 +114,7 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   const confirmed = await confirmation
   expect(confirmed.ok()).toBeTruthy()
   await expect(page.getByRole("cell", { name: "已操作", exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "接受建议", exact: true })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "接受建议", exact: true })).toHaveCount(0)
   const retry = await page.request.post(`/api/v1/recommendations/${recommendation.id}/confirm`, {
     headers,
     data: confirmed.request().postDataJSON(),
@@ -129,7 +129,7 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   expect(portfolio.ledger).toHaveLength(1)
   await page.reload()
   await expect(page.getByRole("cell", { name: "已操作", exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "接受建议", exact: true })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "接受建议", exact: true })).toHaveCount(0)
 
   const live = (await (await page.request.get(`/api/v1/live-instances/${liveId}`)).json()).data
   const limitedResponse = await page.request.post("/api/v1/live-instances", {

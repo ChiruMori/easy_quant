@@ -126,6 +126,8 @@ def after_market(context, parameters):
     ]
     assert [trade["action"] for trade in run["trades"]] == ["buy", "sell", "buy", "sell"]
     assert run["periods"][-1]["cash"] == "101.96"
+    assert run["symbol_performance"][0]["profit"] == "1.96"
+    assert run["symbol_performance"][0]["quantity"] == "0"
     assert run["assumptions"]["strategy_context_protocol"] == "strategy-library-v2"
 
 

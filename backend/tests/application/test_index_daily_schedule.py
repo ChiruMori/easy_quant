@@ -50,7 +50,7 @@ def test_index_schedule_uses_publish_boundary_all_indices_and_existing_coverage(
     assert result is not None and result["record_count"] == 14
     assert [kwargs["symbols"][0] for _, kwargs in calls] == list(INDEX_CATALOG)
     assert all(
-        dataset == "daily-bars" and kwargs["end_day"] == date(2026, 9, 28)
+        dataset == "daily-bars" and kwargs["end_day"] == date(2026, 9, 29)
         for dataset, kwargs in calls
     )
     assert next(kwargs for _, kwargs in calls if kwargs["symbols"] == ["sh000300"])[
@@ -112,3 +112,22 @@ def test_invalid_index_configuration_has_no_side_effect(payload):
             )
         )
     assert not calls and not container.state.acquisitions
+
+
+@pytest.mark.parametrize(
+    "hour,expected", [(14, "2026-09-28"), (15, "2026-09-29"), (21, "2026-09-29")]
+)
+def test_index_close_boundary_independent_of_stock_publication(hour, expected):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from tests.fakes.core import FixedClock
+
+    container, calls, handler = setup_sync()
+    container.authentication.clock = FixedClock(
+        datetime(2026, 9, 29, hour, tzinfo=ZoneInfo("Asia/Shanghai"))
+    )
+    handler(
+        Job("boundary", "index-daily-update", "boundary", {}, container.authentication.clock.now())
+    )
+    assert all(kwargs["end_day"].isoformat() == expected for _, kwargs in calls)

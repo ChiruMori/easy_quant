@@ -71,6 +71,7 @@ function mount(path = "/strategies") {
         <Routes>
           <Route path="/strategies" element={<StrategiesPage />} />
           <Route path="/strategies/new" element={<StrategyEditPage />} />
+          <Route path="/backtests/new" element={<p>回测配置入口</p>} />
           <Route
             path="/strategies/:strategyId/versions/:versionId"
             element={<StrategyDetailPage />}
@@ -110,6 +111,68 @@ beforeEach(() => {
 })
 
 describe("策略工作台", () => {
+  it("编辑后回测先保存当前内容、阻止重复点击，失败保留编辑器", async () => {
+    controls.saveStrategyDraft.mockRejectedValueOnce(new Error("保存失败"))
+    mount("/strategies/s/versions/v1/edit")
+    fireEvent.change(await screen.findByLabelText("策略代码编辑器"), {
+      target: { value: "# changed" },
+    })
+    expect(screen.getByRole("button", { name: "保存草稿" })).toHaveAttribute(
+      "data-variant",
+      "default",
+    )
+    fireEvent.click(screen.getByRole("button", { name: "保存并回测" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("保存失败")
+    expect(screen.queryByText("回测配置入口")).not.toBeInTheDocument()
+    expect(screen.getByLabelText("策略代码编辑器")).toHaveValue("# changed")
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存并回测" })).toBeEnabled())
+    let finish: (value: typeof draft) => void = () => undefined
+    controls.saveStrategyDraft.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    fireEvent.click(screen.getByRole("button", { name: "保存并回测" }))
+    fireEvent.click(screen.getByRole("button", { name: "保存并回测" }))
+    await waitFor(() => expect(controls.saveStrategyDraft).toHaveBeenCalledTimes(2))
+    finish({ ...draft, revision: 1 })
+    expect(await screen.findByText("回测配置入口")).toBeInTheDocument()
+    expect(controls.saveStrategyDraft).toHaveBeenLastCalledWith(
+      "s",
+      "v1",
+      expect.objectContaining({ source_code: "# changed", expected_revision: 0 }),
+    )
+  })
+
+  it("新策略保存并回测只创建一次并直接进入配置", async () => {
+    controls.createStrategy.mockResolvedValue({ id: "s", current_version_id: "v1" })
+    mount("/strategies/new")
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "新草稿" } })
+    fireEvent.click(screen.getByRole("button", { name: "保存并回测" }))
+    expect(await screen.findByText("回测配置入口")).toBeInTheDocument()
+    expect(controls.createStrategy).toHaveBeenCalledTimes(1)
+    expect(controls.saveStrategyDraft).not.toHaveBeenCalled()
+  })
+
+  it("新策略已创建但读取失败时重试复用已创建草稿", async () => {
+    controls.createStrategy.mockResolvedValue({ id: "s", current_version_id: "v1" })
+    controls.getStrategyVersion.mockRejectedValueOnce(new Error("读取暂不可用"))
+    controls.saveStrategyDraft.mockResolvedValue({ ...draft, revision: 1 })
+    mount("/strategies/new")
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "新策略" } })
+    fireEvent.click(screen.getByRole("button", { name: "保存并回测" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("读取暂不可用")
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存并回测" })).toBeEnabled())
+    fireEvent.click(screen.getByRole("button", { name: "保存并回测" }))
+    expect(await screen.findByText("回测配置入口")).toBeInTheDocument()
+    expect(controls.createStrategy).toHaveBeenCalledTimes(1)
+    expect(controls.saveStrategyDraft).toHaveBeenCalledWith(
+      "s",
+      "v1",
+      expect.objectContaining({ expected_revision: 0 }),
+    )
+  })
   it("默认列表无编辑器，按版本分页并提供图标 CRUD", async () => {
     mount()
     expect(await screen.findByText("草稿策略")).toBeInTheDocument()

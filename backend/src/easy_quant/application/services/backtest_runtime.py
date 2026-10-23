@@ -12,6 +12,7 @@ from itertools import groupby
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.backtest_reporting import performance_rows
 from easy_quant.application.services.instrument_eligibility import delisted_symbols
 from easy_quant.application.services.run_profile import RunProfile
 from easy_quant.application.services.strategy_validation import (
@@ -243,6 +244,7 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
     sequence = 0
     row_count = 0
     day_count = 0
+    final_prices: dict[str, Decimal] = {}
     started = clock.monotonic()
     profile.enter("warmup")
     report("warmup", 10, force=True)
@@ -406,6 +408,7 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
                 ]
 
             backtest_session.advance(trading_day, day_bars, strategy)
+            final_prices = {bar.symbol: bar.close for bar in day_bars}
             report(
                 "loading_data",
                 15 + int(70 * min(day_count, len(expected_days)) / len(expected_days)),
@@ -482,6 +485,20 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
                 }
                 for item in trades
             ],
+            "symbol_performance": performance_rows(
+                [
+                    {
+                        "trading_day": item.trading_day.isoformat(),
+                        "symbol": item.symbol,
+                        "action": item.action,
+                        "quantity": str(item.quantity),
+                        "price": str(item.price),
+                        "fee": str(item.fee),
+                    }
+                    for item in trades
+                ],
+                final_prices,
+            ),
             "assumptions": {
                 "frequency": "daily",
                 "strategy_context_protocol": "strategy-library-v2",

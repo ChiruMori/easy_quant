@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowLeft, ChevronDown, Eye, FileCode2, Save } from "lucide-react"
-import { useState } from "react"
+import { ArrowLeft, ChartNoAxesCombined, ChevronDown, Eye, FileCode2, Save } from "lucide-react"
+import { useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
@@ -73,8 +73,10 @@ function StrategyDraftForm({ strategy }: { strategy?: WorkspaceStrategy }) {
   const [revision, setRevision] = useState(strategy?.revision ?? 0)
   const [message, setMessage] = useState(params.has("saved") ? "草稿已保存" : "")
   const [template, setTemplate] = useState<StrategyTemplate>()
+  const saving = useRef(false)
+  const createdDraft = useRef<{ id: string; versionId: string } | undefined>(undefined)
   const templates = useQuery({ queryKey: ["strategy-templates"], queryFn: listStrategyTemplates })
-  const save = useMutation({
+  const save = useMutation<WorkspaceStrategy, Error, boolean>({
     mutationFn: async () => {
       if (strategy)
         return saveStrategyDraft(strategy.id, strategy.version_id, {
@@ -83,19 +85,42 @@ function StrategyDraftForm({ strategy }: { strategy?: WorkspaceStrategy }) {
           source_code: source,
           expected_revision: revision,
         })
+      if (createdDraft.current) {
+        const created = createdDraft.current
+        const saved = await getStrategyVersion(created.id, created.versionId)
+        return saveStrategyDraft(created.id, created.versionId, {
+          name: name.trim(),
+          description,
+          source_code: source,
+          expected_revision: saved.revision,
+        })
+      }
       const created = await createStrategy({ name: name.trim(), description, source_code: source })
+      createdDraft.current = { id: created.id, versionId: created.current_version_id }
       return getStrategyVersion(created.id, created.current_version_id)
     },
-    onSuccess: async (updated) => {
+    onSuccess: async (updated, goToBacktest) => {
       setRevision(updated.revision)
       setName(updated.name)
       setMessage("草稿已保存")
       client.setQueryData(["strategy-version", updated.id, updated.version_id], updated)
       await client.invalidateQueries({ queryKey: ["strategies"] })
-      if (!strategy)
+      if (goToBacktest) navigate(`/backtests/new?version=${updated.version_id}`)
+      else if (!strategy)
         navigate(`${versionPath(updated.id, updated.version_id)}/edit?saved=1`, { replace: true })
     },
   })
+  async function submit(goToBacktest = false) {
+    if (saving.current || !name.trim()) return
+    saving.current = true
+    try {
+      await save.mutateAsync(goToBacktest)
+    } catch {
+      // useMutation 保留保存错误；留在编辑页重试。
+    } finally {
+      saving.current = false
+    }
+  }
   const availableTemplates = [
     { key: "blank", name: "空白模板", source_code: BLANK_STRATEGY },
     ...(templates.data ?? []),
@@ -117,10 +142,17 @@ function StrategyDraftForm({ strategy }: { strategy?: WorkspaceStrategy }) {
             )}
             <IconButton
               icon={Save}
+              variant="default"
               label={strategy ? "保存草稿" : "创建策略"}
               type="submit"
               form="strategy-draft-form"
               disabled={save.isPending || !name.trim()}
+            />
+            <IconButton
+              icon={ChartNoAxesCombined}
+              label="保存并回测"
+              disabled={save.isPending || !name.trim()}
+              onClick={() => void submit(true)}
             />
           </>
         }
@@ -139,7 +171,7 @@ function StrategyDraftForm({ strategy }: { strategy?: WorkspaceStrategy }) {
                 id="strategy-draft-form"
                 onSubmit={(event) => {
                   event.preventDefault()
-                  if (name.trim()) save.mutate()
+                  void submit()
                 }}
               >
                 <FieldGroup className="sm:grid sm:grid-cols-2">

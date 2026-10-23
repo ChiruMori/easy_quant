@@ -37,6 +37,7 @@ from easy_quant.infrastructure.persistence.repositories.jobs import SqlAlchemyJo
 from easy_quant.infrastructure.persistence.repositories.strategies import (
     SqlAlchemyStrategyRepository,
 )
+from easy_quant.infrastructure.persistence.snapshot_prices import snapshot_prices
 from easy_quant.infrastructure.persistence.snapshot_spool import SnapshotSpool
 
 
@@ -765,9 +766,21 @@ class SqlAlchemyMarketDataStore:
 class InMemoryBacktestStore:
     def __init__(self, rows: dict[str, dict[str, Any]]) -> None:
         self.rows = rows
+        self.snapshots: dict[str, bytes] = {}
 
     def save(self, run: dict[str, Any], snapshot_payload: bytes | SnapshotSpool) -> None:
         self.rows[str(run["id"])] = run
+        self.snapshots[str(run.get("snapshot_id", ""))] = (
+            b"".join(snapshot_payload.chunks())
+            if isinstance(snapshot_payload, SnapshotSpool)
+            else snapshot_payload
+        )
+
+    def snapshot_prices(self, snapshot_id: str, day: str, symbols: set[str]):
+        payload = self.snapshots.get(snapshot_id)
+        return (
+            snapshot_prices([gzip.compress(payload)], snapshot_id, day, symbols) if payload else {}
+        )
 
     def create_with_job(
         self, run: dict[str, Any], job: Job, jobs: Any, strategies: Any = None
@@ -808,6 +821,15 @@ class SqlAlchemyBacktestStore:
     ) -> None:
         self.session = session
         self.status_sessions = status_sessions
+
+    def snapshot_prices(self, snapshot_id: str, day: str, symbols: set[str]):
+        chunks = self.session.scalars(
+            select(DataSnapshotChunkModel.payload)
+            .where(DataSnapshotChunkModel.snapshot_id == snapshot_id)
+            .order_by(DataSnapshotChunkModel.sequence)
+            .execution_options(yield_per=100)
+        )
+        return snapshot_prices(chunks, snapshot_id, day, symbols)
 
     def create_with_job(
         self, run: dict[str, Any], job: Job, _jobs: Any, strategies: Any = None

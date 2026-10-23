@@ -14,6 +14,7 @@ import {
 
 import { IconButton } from "@/components/icon-button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -103,10 +104,10 @@ export function PortfolioChart({
           aria-label="图表显示单位"
         >
           <ToggleGroupItem value="amount" aria-label="金额（元）">
-            金额（元）
+            ￥
           </ToggleGroupItem>
           <ToggleGroupItem value="return_rate" aria-label="收益率（%）">
-            收益率（%）
+            %
           </ToggleGroupItem>
         </ToggleGroup>
         <Popover
@@ -217,15 +218,17 @@ export function PortfolioChart({
           </PopoverContent>
         </Popover>
         {extra.map((item) => (
-          <div key={item.id} className="flex min-w-0 items-center gap-1 text-sm">
+          <Badge key={item.id} variant="secondary" className="min-w-0 gap-1">
             <span className="max-w-40 truncate">{item.name}</span>
             <IconButton
               icon={X}
               label={`移除对比 ${item.name}`}
               size="icon"
+              variant="ghost"
+              className="size-5 rounded-full"
               onClick={() => setExtra((previous) => previous.filter((row) => row.id !== item.id))}
             />
-          </div>
+          </Badge>
         ))}
       </div>
       <div

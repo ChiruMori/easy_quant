@@ -22,6 +22,7 @@ import { StrategyPreview } from "@/features/strategies/components/strategy-previ
 import { localizedLabel } from "@/lib/labels"
 
 import type { Backtest } from "../api"
+import { StockPerformanceTable } from "../components/stock-performance-table"
 import { backtestStatusLabel, formatMetric, metricLabel } from "../format"
 
 export function BacktestDetailPage({ run }: { run: Backtest }) {
@@ -56,7 +57,7 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="回测详情"
+        title={run.name ? `回测详情 · ${run.name}` : "回测详情"}
         description={`状态：${backtestStatusLabel(run.status)}（${run.progress}%）`}
         actions={
           <Button
@@ -191,6 +192,7 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
         </Card>
       )}
       <RunTimingPanel timing={run.timing} />
+      {run.status === "succeeded" && <StockPerformanceTable key={run.id} runId={run.id} />}
       <Card>
         <CardHeader>
           <CardTitle>交易与假设披露</CardTitle>

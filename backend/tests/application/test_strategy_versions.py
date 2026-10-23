@@ -42,3 +42,24 @@ def test_strategy_history_window_requires_bounded_literal() -> None:
     ):
         with pytest.raises(ValidationError, match="HISTORY_TRADING_DAYS"):
             extract_history_trading_days(source)
+
+
+def test_create_returns_version_pointer_with_detached_repository(fixed_now):
+    from copy import deepcopy
+
+    class DetachedRepository(InMemoryStrategyRepository):
+        def get_definition(self, strategy_id):
+            return deepcopy(super().get_definition(strategy_id))
+
+    repository = DetachedRepository()
+    service = StrategyService(
+        repository, PythonStrategyValidator(), FixedClock(fixed_now), SequentialIdGenerator()
+    )
+    strategy, version = service.create(
+        "user",
+        "demo",
+        "def before_market(c,p): return []\n"
+        "def on_market(c,p): return []\n"
+        "def after_market(c,p): return []",
+    )
+    assert strategy.current_version_id == version.id

@@ -1,20 +1,25 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus, Save, Send } from "lucide-react"
-import { useState } from "react"
+import { Eye, EyeOff, Pencil, Plus, Send } from "lucide-react"
+import { useRef, useState } from "react"
 
-import { ErrorState, LoadingState } from "@/components/app-shell"
+import { EmptyState } from "@/components/app-shell"
 import { DeleteResourceButton } from "@/components/delete-resource-button"
 import { IconButton } from "@/components/icon-button"
+import { ListPagination } from "@/components/list-pagination"
 import { PageHeader } from "@/components/page-header"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -25,82 +30,394 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { localizedLabel } from "@/lib/labels"
 
 import {
   addSubscription,
+  getSubscription,
   listDeliveries,
-  listSubscriptions,
+  listSubscriptionsPage,
+  type Subscription,
   testSubscription,
   updateSubscription,
 } from "../api"
 
 export function NotificationSettingsPage() {
   const client = useQueryClient()
+  const [channelPage, setChannelPage] = useState(1)
+  const [deliveryPage, setDeliveryPage] = useState(1)
   const subscriptions = useQuery({
-    queryKey: ["notifications", "subscriptions"],
-    queryFn: listSubscriptions,
+    queryKey: ["notifications", "subscriptions", channelPage],
+    queryFn: () => listSubscriptionsPage(channelPage),
   })
   const deliveries = useQuery({
-    queryKey: ["notifications", "deliveries"],
-    queryFn: listDeliveries,
+    queryKey: ["notifications", "deliveries", deliveryPage],
+    queryFn: () => listDeliveries(deliveryPage),
   })
   const [message, setMessage] = useState("")
+  const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
+  const sending = useRef(false)
+  const [editing, setEditing] = useState<Subscription | "new" | null>(null)
+  const [name, setName] = useState("")
   const [channel, setChannel] = useState("ntfy")
-  if (subscriptions.isLoading || deliveries.isLoading)
-    return <LoadingState label="正在加载通知设置" />
-  if (subscriptions.error || deliveries.error)
-    return (
-      <ErrorState
-        title="无法加载通知设置"
-        message={(subscriptions.error ?? deliveries.error)?.message ?? "未知错误"}
-      />
-    )
+  const [destination, setDestination] = useState("")
+  const [visible, setVisible] = useState(false)
+  const [targets, setTargets] = useState<Record<string, string>>({})
+  const [formError, setFormError] = useState("")
+  async function perform(action: () => Promise<void>, report = setError) {
+    if (sending.current) return
+    sending.current = true
+    setBusy(true)
+    report("")
+    setMessage("")
+    try {
+      await action()
+    } catch (caught) {
+      report(caught instanceof Error ? caught.message : "操作失败，请重试")
+    } finally {
+      sending.current = false
+      setBusy(false)
+    }
+  }
+  function closeEditor() {
+    setEditing(null)
+    setDestination("")
+    setVisible(false)
+    setFormError("")
+  }
+  async function edit(item?: Subscription) {
+    if (sending.current) return
+    setEditing(item ?? "new")
+    setName(item?.name ?? "")
+    setChannel(item?.channel ?? "ntfy")
+    setDestination("")
+    setVisible(false)
+    setFormError("")
+    if (item)
+      await perform(
+        async () => {
+          setDestination((await getSubscription(item.id)).destination)
+        },
+        (message) => setFormError(message ? "原目标无法读取，请重新填写后保存。" : ""),
+      )
+  }
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex min-w-0 flex-col gap-5">
       <PageHeader
         title="通知设置"
-        description="实盘产生建议时可通过一个或多个渠道通知；平台不会自动下单。"
+        description="实盘信号按轮汇总发送；可配置多个渠道，平台不会自动下单。"
+        actions={
+          <Button disabled={busy} onClick={() => void edit()}>
+            <Plus data-icon="inline-start" />
+            添加渠道
+          </Button>
+        }
       />
-      <Card className="max-w-2xl">
+      {message && <p role="status">{message}</p>}
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      <Card className="min-w-0">
         <CardHeader>
-          <CardTitle>添加通知渠道</CardTitle>
-          <CardDescription>邮件填写收件地址；ntfy 填写主题名称或完整主题地址。</CardDescription>
+          <CardTitle>已配置渠道</CardTitle>
+          <CardDescription>
+            停用后仍可编辑。目标默认隐藏，查看时仅向本人读取；保存时始终加密。
+          </CardDescription>
         </CardHeader>
-        <form
-          className="flex min-w-0 flex-col gap-5"
-          onSubmit={async (event) => {
-            event.preventDefault()
-            const form = event.currentTarget
-            const data = new FormData(form)
-            setBusy(true)
-            setMessage("")
-            try {
-              await addSubscription(
-                channel,
-                String(data.get("destination")),
-                String(data.get("name")),
-              )
-              form.reset()
-              await client.invalidateQueries({ queryKey: ["notifications"] })
-            } catch (error) {
-              setMessage(error instanceof Error ? error.message : "添加失败")
-            } finally {
-              setBusy(false)
-            }
-          }}
-        >
-          <CardContent>
+        <CardContent className="flex min-w-0 flex-col gap-4">
+          {subscriptions.isFetching && <p role="status">正在加载通知渠道…</p>}
+          {subscriptions.error && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {subscriptions.error.message}
+                <Button variant="link" onClick={() => void subscriptions.refetch()}>
+                  重试渠道列表
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          {subscriptions.data && (
+            <>
+              {!subscriptions.data.items.length && (
+                <EmptyState title="尚无通知渠道" message="添加邮件或 ntfy 渠道以接收操作建议。" />
+              )}
+              {!!subscriptions.data.items.length && (
+                <Table aria-label="已配置渠道" className="min-w-[680px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>名称</TableHead>
+                      <TableHead>渠道</TableHead>
+                      <TableHead>通知目标</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead>操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {subscriptions.data.items.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="max-w-48 truncate" title={item.name}>
+                          {item.name || localizedLabel(item.channel)}
+                        </TableCell>
+                        <TableCell>{localizedLabel(item.channel)}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <span className="max-w-56 truncate" title={targets[item.id]}>
+                              {targets[item.id] ?? "••••••"}
+                            </span>
+                            <IconButton
+                              icon={targets[item.id] ? EyeOff : Eye}
+                              label={`${targets[item.id] ? "隐藏" : "显示"}通知目标 ${item.name || item.id}`}
+                              disabled={busy}
+                              variant="ghost"
+                              onClick={() =>
+                                void perform(async () => {
+                                  if (targets[item.id])
+                                    setTargets((previous) => {
+                                      const next = { ...previous }
+                                      delete next[item.id]
+                                      return next
+                                    })
+                                  else {
+                                    const value = await getSubscription(item.id)
+                                    setTargets((previous) => ({
+                                      ...previous,
+                                      [item.id]: value.destination,
+                                    }))
+                                  }
+                                })
+                              }
+                            />
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Switch
+                              aria-label={`启用 ${item.name || item.channel}`}
+                              checked={item.enabled}
+                              disabled={busy}
+                              onCheckedChange={(enabled) =>
+                                void perform(async () => {
+                                  await updateSubscription(item.id, enabled)
+                                  await client.invalidateQueries({
+                                    queryKey: ["notifications", "subscriptions"],
+                                  })
+                                })
+                              }
+                            />
+                            <Badge variant={item.enabled ? "success" : "secondary"}>
+                              {item.enabled ? "已启用" : "已停用"}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <IconButton
+                              icon={Pencil}
+                              label={`编辑渠道 ${item.name || item.id}`}
+                              disabled={busy}
+                              onClick={() => void edit(item)}
+                            />
+                            {item.enabled && (
+                              <IconButton
+                                icon={Send}
+                                label={`测试连通性 ${item.name || item.id}`}
+                                disabled={busy}
+                                onClick={() =>
+                                  void perform(async () => {
+                                    const result = await testSubscription(item.id)
+                                    await client.invalidateQueries({
+                                      queryKey: ["notifications", "deliveries"],
+                                    })
+                                    setMessage(result.message)
+                                  })
+                                }
+                              />
+                            )}
+                            {!item.enabled && (
+                              <DeleteResourceButton
+                                path={`/notifications/subscriptions/${item.id}`}
+                                label="删除渠道"
+                                description="将删除通知渠道及其投递记录。被实盘引用的渠道不可删除。"
+                                disabled={busy}
+                                onDeleted={() => {
+                                  setTargets({})
+                                  if (subscriptions.data.items.length === 1 && channelPage > 1)
+                                    setChannelPage(channelPage - 1)
+                                }}
+                              />
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              <ListPagination
+                label="通知渠道分页"
+                page={channelPage}
+                pageSize={subscriptions.data.page_size}
+                total={subscriptions.data.total}
+                busy={busy || subscriptions.isFetching}
+                onChange={(page) => {
+                  setTargets({})
+                  setChannelPage(page)
+                }}
+              />
+            </>
+          )}
+        </CardContent>
+      </Card>
+      <Card className="min-w-0">
+        <CardHeader>
+          <CardTitle>最近投递</CardTitle>
+          <CardDescription>
+            按投递创建时间从新到旧排列。渠道已接收表示服务接受请求，不代表终端已收到。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex min-w-0 flex-col gap-4">
+          {deliveries.isFetching && <p role="status">正在加载投递记录…</p>}
+          {deliveries.error && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {deliveries.error.message}
+                <Button variant="link" onClick={() => void deliveries.refetch()}>
+                  重试投递列表
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          {deliveries.data && (
+            <>
+              {!deliveries.data.items.length && (
+                <EmptyState
+                  title="尚无投递记录"
+                  message="渠道测试和实盘信号会在这里保留投递结果。"
+                />
+              )}
+              {!!deliveries.data.items.length && (
+                <Table aria-label="最近投递" className="min-w-[680px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>创建时间</TableHead>
+                      <TableHead>渠道</TableHead>
+                      <TableHead>投递状态</TableHead>
+                      <TableHead>尝试次数</TableHead>
+                      <TableHead>诊断</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {deliveries.data.items.map((delivery) => (
+                      <TableRow key={delivery.id}>
+                        <TableCell>
+                          {delivery.created_at || delivery.updated_at
+                            ? new Date(delivery.created_at || delivery.updated_at!).toLocaleString(
+                                "zh-CN",
+                                { timeZone: "Asia/Shanghai" },
+                              )
+                            : "未记录"}
+                        </TableCell>
+                        <TableCell>
+                          {delivery.channel === "none"
+                            ? "未选择有效渠道"
+                            : localizedLabel(delivery.channel)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              delivery.status === "delivered"
+                                ? "success"
+                                : delivery.status === "failed"
+                                  ? "destructive"
+                                  : "secondary"
+                            }
+                          >
+                            {delivery.status === "delivered"
+                              ? "渠道已接收"
+                              : localizedLabel(delivery.status)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{delivery.attempts ?? "—"}</TableCell>
+                        <TableCell className="max-w-80 break-words whitespace-normal">
+                          {delivery.error || "—"}
+                          {delivery.error_code && `（${delivery.error_code}）`}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              <ListPagination
+                label="投递记录分页"
+                page={deliveryPage}
+                pageSize={deliveries.data.page_size}
+                total={deliveries.data.total}
+                busy={deliveries.isFetching}
+                onChange={setDeliveryPage}
+              />
+            </>
+          )}
+        </CardContent>
+      </Card>
+      <Dialog
+        open={editing !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) closeEditor()
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing === "new" ? "添加通知渠道" : "编辑通知渠道"}</DialogTitle>
+            <DialogDescription>
+              邮件填写收件地址；ntfy 填写主题或完整地址。目标加密保存，编辑不会更改启用状态。
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="flex min-w-0 flex-col gap-5"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void perform(async () => {
+                if (editing === "new") await addSubscription(channel, destination, name)
+                else if (editing)
+                  await updateSubscription(editing.id, editing.enabled, name, destination)
+                setTargets({})
+                closeEditor()
+                await client.invalidateQueries({ queryKey: ["notifications", "subscriptions"] })
+                setMessage("渠道已保存")
+              }, setFormError)
+            }}
+          >
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="channel-name">渠道名称</FieldLabel>
-                <Input id="channel-name" name="name" required maxLength={160} />
+                <Input
+                  id="channel-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                  maxLength={160}
+                  disabled={busy}
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="notification-channel">渠道</FieldLabel>
-                <Select value={channel} onValueChange={setChannel}>
-                  <SelectTrigger id="notification-channel" className="w-full">
+                <Select
+                  value={channel}
+                  onValueChange={setChannel}
+                  disabled={busy || editing !== "new"}
+                >
+                  <SelectTrigger id="notification-channel">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -113,120 +430,44 @@ export function NotificationSettingsPage() {
               </Field>
               <Field>
                 <FieldLabel htmlFor="destination">通知目标</FieldLabel>
-                <Input id="destination" name="destination" required />
+                <div className="flex min-w-0 items-center gap-2">
+                  <Input
+                    id="destination"
+                    type={visible ? "text" : "password"}
+                    autoComplete="off"
+                    value={destination}
+                    onChange={(event) => setDestination(event.target.value)}
+                    required
+                    maxLength={4096}
+                    disabled={busy}
+                  />
+                  <IconButton
+                    icon={visible ? EyeOff : Eye}
+                    label={visible ? "隐藏通知目标" : "显示通知目标"}
+                    disabled={busy}
+                    onClick={() => setVisible((value) => !value)}
+                  />
+                </div>
+                <FieldDescription>目标仅在当前编辑窗口读取，关闭后清除。</FieldDescription>
               </Field>
             </FieldGroup>
-          </CardContent>
-          <CardFooter>
-            <IconButton type="submit" icon={Plus} label="添加渠道" disabled={busy} />
-          </CardFooter>
-        </form>
-      </Card>
-      {message && <p role="status">{message}</p>}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">已配置渠道</h2>
-        {subscriptions.data?.map((item) => (
-          <Field
-            orientation="horizontal"
-            className="max-w-2xl flex-wrap rounded-md border p-4"
-            key={item.id}
-          >
-            <div className="min-w-0 flex-1 basis-full sm:basis-64">
-              <p className="font-medium break-words">
-                {item.name ?? localizedLabel(item.channel)} · {localizedLabel(item.channel)}
-              </p>
-              <form
-                className="flex gap-2"
-                onSubmit={async (event) => {
-                  event.preventDefault()
-                  const data = new FormData(event.currentTarget)
-                  setBusy(true)
-                  try {
-                    await updateSubscription(item.id, item.enabled, String(data.get("name")))
-                    await client.invalidateQueries({ queryKey: ["notifications"] })
-                    setMessage("名称已保存")
-                  } catch (error) {
-                    setMessage(error instanceof Error ? error.message : "保存失败")
-                  } finally {
-                    setBusy(false)
-                  }
-                }}
-              >
-                <Input
-                  aria-label={`渠道名称 ${item.name ?? item.channel}`}
-                  name="name"
-                  defaultValue={item.name ?? item.channel}
-                  required
-                  maxLength={160}
-                />
-                <IconButton type="submit" icon={Save} label="保存名称" disabled={busy} />
-              </form>
-              <p className="text-sm text-muted-foreground">{item.destination}</p>
-            </div>
-            <IconButton
-              icon={Send}
-              label="测试连通性"
-              variant="outline"
-              disabled={busy || !item.enabled}
-              onClick={async () => {
-                setBusy(true)
-                setMessage("")
-                try {
-                  setMessage((await testSubscription(item.id)).message)
-                  await client.invalidateQueries({ queryKey: ["notifications", "deliveries"] })
-                } catch (error) {
-                  setMessage(error instanceof Error ? error.message : "测试失败")
-                } finally {
-                  setBusy(false)
-                }
-              }}
-            />
-            {!item.enabled && (
-              <DeleteResourceButton
-                path={`/notifications/subscriptions/${item.id}`}
-                label="删除渠道"
-                description="将删除通知渠道及其投递记录。被实盘引用的渠道不可删除。"
-                disabled={busy}
-              />
+            {formError && (
+              <Alert variant="destructive">
+                <AlertDescription>{formError}</AlertDescription>
+              </Alert>
             )}
-            <Switch
-              aria-label={`启用 ${item.name ?? item.channel}`}
-              checked={item.enabled}
-              onCheckedChange={async (enabled) => {
-                try {
-                  await updateSubscription(item.id, enabled)
-                  await client.invalidateQueries({ queryKey: ["notifications", "subscriptions"] })
-                } catch (error) {
-                  setMessage(error instanceof Error ? error.message : "更新失败")
-                }
-              }}
-            />
-          </Field>
-        ))}
-      </section>
-      <section>
-        <h2 className="text-lg font-semibold">最近投递</h2>
-        {deliveries.data?.length ? (
-          <div className="mt-2 flex flex-col gap-2">
-            {deliveries.data.map((delivery) => (
-              <div
-                className="flex max-w-2xl items-center justify-between rounded-md border p-3"
-                key={delivery.id}
-              >
-                <span>{localizedLabel(delivery.channel)}</span>
-                <span className="text-sm text-muted-foreground">
-                  {delivery.status === "delivered" ? "渠道已接收" : localizedLabel(delivery.status)}
-                  {delivery.attempts !== undefined && ` · ${delivery.attempts} 次`}
-                  {delivery.error && ` · ${delivery.error}`}
-                  {delivery.error_code && `（${delivery.error_code}）`}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-muted-foreground">尚无投递记录</p>
-        )}
-      </section>
+            {busy && <p role="status">正在处理…</p>}
+            <DialogFooter>
+              <Button variant="outline" type="button" disabled={busy} onClick={closeEditor}>
+                取消
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {editing === "new" ? "添加渠道" : "保存渠道"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

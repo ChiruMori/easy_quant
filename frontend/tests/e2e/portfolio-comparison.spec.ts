@@ -67,7 +67,11 @@ for (const width of [1440, 360]) {
     await page.route("**/api/v1/backtests**", (route) =>
       route.fulfill({
         json: {
-          data: new URL(route.request().url()).pathname.endsWith("/backtests") ? [run] : run,
+          data: new URL(route.request().url()).pathname.endsWith("/stock-performance")
+            ? { items: [], total: 0, page: 1, page_size: 20 }
+            : new URL(route.request().url()).pathname.endsWith("/backtests")
+              ? [run]
+              : run,
         },
       }),
     )

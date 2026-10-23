@@ -36,9 +36,9 @@ export function BacktestTable({ runs }: { runs: Backtest[] }) {
               <Link
                 className="block max-w-48 truncate font-medium text-primary underline-offset-4 hover:underline"
                 to={`/backtests/${run.id}`}
-                title={run.id}
+                title={run.name || run.id}
               >
-                {run.id}
+                {run.name || run.id}
               </Link>
               <p
                 className="mt-1 max-w-48 truncate text-xs text-muted-foreground"

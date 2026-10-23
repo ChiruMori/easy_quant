@@ -104,7 +104,22 @@ test("360px 日期选择、关联阻止、取消和删除失败恢复", async ({
         : [],
       "/notifications/deliveries": [],
     }
-    return route.fulfill({ json: { data: responses[path] ?? [] } })
+    return route.fulfill({
+      json: {
+        data:
+          path.startsWith("/notifications/") &&
+          new URL(route.request().url()).searchParams.has("page")
+            ? {
+                items: responses[path] ?? [],
+                total: Array.isArray(responses[path]) ? responses[path].length : 0,
+                page: 1,
+                page_size: 10,
+              }
+            : path.endsWith("/stock-performance")
+              ? { items: [], total: 0, page: 1, page_size: 20 }
+              : (responses[path] ?? []),
+      },
+    })
   })
   await page.setViewportSize({ width: 360, height: 900 })
   await page.goto("/backtests/new")

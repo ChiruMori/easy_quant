@@ -12,6 +12,30 @@ from easy_quant.infrastructure.core import UuidGenerator
 blueprint = Blueprint("notifications", __name__, url_prefix="/api/v1/notifications")
 
 
+def _page(rows):
+    if "page" not in request.args and "page_size" not in request.args:
+        return rows
+    try:
+        page = int(request.args.get("page", 1))
+        size = int(request.args.get("page_size", 10))
+    except ValueError as error:
+        raise ValidationError("分页参数必须为整数") from error
+    if page < 1 or not 1 <= size <= 100:
+        raise ValidationError("页码必须为正数，每页 1–100 条")
+    return {
+        "items": rows[(page - 1) * size : page * size],
+        "total": len(rows),
+        "page": page,
+        "page_size": size,
+    }
+
+
+def _public_subscription(item):
+    return {key: item.get(key) for key in ("id", "name", "channel", "enabled")} | {
+        "destination": "***"
+    }
+
+
 @blueprint.get("/subscriptions/<subscription_id>/deletion-preview")
 @require_user
 def deletion_preview(subscription_id: str):
@@ -28,15 +52,39 @@ def delete_subscription(subscription_id: str):
 @require_user
 def subscriptions():
     return success(
-        [
-            {
-                **{key: value for key, value in item.items() if key != "destination_encrypted"},
-                "destination": "***",
-            }
-            for item in get_container().state.subscriptions
-            if item["owner_id"] == g.current_user.id
-        ]
+        _page(
+            [
+                _public_subscription(item)
+                for item in get_container().state.subscriptions
+                if item["owner_id"] == g.current_user.id
+            ]
+        )
     )
+
+
+@blueprint.get("/subscriptions/<subscription_id>")
+@require_user
+def subscription_detail(subscription_id: str):
+    item = next(
+        (
+            row
+            for row in get_container().state.subscriptions
+            if row["id"] == subscription_id and row["owner_id"] == g.current_user.id
+        ),
+        None,
+    )
+    if item is None:
+        return success(None, status=404)
+    try:
+        box = get_container().secret_box
+        if box is None:
+            raise ValueError("unavailable")
+        destination = box.decrypt(item["destination_encrypted"])
+    except Exception:
+        raise ValidationError("通知目标无法读取，请重新填写并保存") from None
+    response, status = success(_public_subscription(item) | {"destination": destination})
+    response.headers["Cache-Control"] = "no-store"
+    return response, status
 
 
 @blueprint.post("/subscriptions")
@@ -69,19 +117,37 @@ def add_subscription():
         resource_id=str(item["id"]),
         after={"channel": str(item["channel"]), "enabled": True},
     )
-    return success({**item, "destination_encrypted": None, "destination": "***"}, status=201)
+    return success(_public_subscription(item), status=201)
 
 
 @blueprint.get("/deliveries")
 @require_user
 def deliveries():
-    return success(
-        [
-            item
-            for item in get_container().state.deliveries
-            if item.get("owner_id") == g.current_user.id
-        ]
+    rows = [
+        {
+            key: item.get(key)
+            for key in (
+                "id",
+                "event_id",
+                "channel",
+                "status",
+                "attempts",
+                "created_at",
+                "updated_at",
+                "last_attempt_at",
+                "delivered_at",
+                "error",
+                "error_code",
+            )
+        }
+        for item in get_container().state.deliveries
+        if item.get("owner_id") == g.current_user.id
+    ]
+    rows.sort(
+        key=lambda row: (str(row.get("created_at") or row.get("updated_at") or ""), str(row["id"])),
+        reverse=True,
     )
+    return success(_page(rows))
 
 
 @blueprint.patch("/subscriptions/<subscription_id>")
@@ -98,6 +164,7 @@ def update_subscription(subscription_id: str):
     )
     if item is None:
         return success(None, status=404)
+    item = dict(item)
     payload = request.get_json() or {}
     if "name" in payload:
         name = str(payload["name"]).strip()
@@ -105,7 +172,17 @@ def update_subscription(subscription_id: str):
             raise ValidationError("请填写渠道名称（最多 160 字）")
         item["name"] = name
     if "enabled" in payload:
-        item["enabled"] = bool(payload["enabled"])
+        if not isinstance(payload["enabled"], bool):
+            raise ValidationError("启用状态必须为布尔值")
+        item["enabled"] = payload["enabled"]
+    if "destination" in payload:
+        destination = payload["destination"]
+        if not isinstance(destination, str) or not destination.strip() or len(destination) > 4096:
+            raise ValidationError("请填写有效通知目标（最多 4096 字）")
+        box = get_container().secret_box
+        if box is None:
+            raise ValidationError("通知凭据加密器未配置")
+        item["destination_encrypted"] = box.encrypt(destination.strip())
     subscriptions = get_container().state.subscriptions
     index = next(index for index, row in enumerate(subscriptions) if row["id"] == subscription_id)
     subscriptions[index] = item
@@ -117,12 +194,7 @@ def update_subscription(subscription_id: str):
         resource_id=subscription_id,
         after={"enabled": bool(item["enabled"])},
     )
-    return success(
-        {
-            **{key: value for key, value in item.items() if key != "destination_encrypted"},
-            "destination": "***",
-        }
-    )
+    return success(_public_subscription(item))
 
 
 @blueprint.post("/subscriptions/<subscription_id>/test")

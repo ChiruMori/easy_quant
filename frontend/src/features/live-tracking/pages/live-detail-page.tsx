@@ -36,7 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { StrategyPreview } from "@/features/strategies/components/strategy-preview"
-import { formatMoney } from "@/lib/finance"
+import { formatMoney, profitTone } from "@/lib/finance"
 import { localizedLabel } from "@/lib/labels"
 
 import type { LiveInstance } from "../api"
@@ -165,6 +165,7 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="当前收益"
+          tone={profitTone(current.portfolio?.profit)}
           value={
             current.portfolio && current.portfolio.profit !== null
               ? `${formatMoney(current.portfolio.profit)} 元`
@@ -173,6 +174,7 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
         />
         <MetricCard
           label="当前收益率"
+          tone={profitTone(current.portfolio?.return_rate)}
           value={
             current.portfolio && current.portfolio.return_rate !== null
               ? `${(Number(current.portfolio.return_rate) * 100).toFixed(2)}%`
@@ -399,7 +401,7 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
                   </TableCell>
                   <TableCell>
                     <div className="flex min-w-32 gap-2">
-                      {!item.operation_type?.startsWith("manual_") && (
+                      {item.status === "pending" && !item.operation_type?.startsWith("manual_") && (
                         <RecommendationActions
                           recommendation={item}
                           disabled={busy || item.status !== "pending"}
