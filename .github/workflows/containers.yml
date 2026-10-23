@@ -45,8 +45,11 @@ jobs:
           pnpm --dir frontend install --frozen-lockfile
       - name: 项目离线门禁
         run: pnpm check
-      - name: 安装验收浏览器
-        run: pnpm --dir frontend exec playwright install --with-deps chrome
+      - name: 准备验收浏览器
+        run: |
+          if ! pnpm --dir frontend exec node -e "require('@playwright/test').chromium.launch({channel:'chrome'}).then(browser => browser.close()).catch(error => { console.error(error.message); process.exit(1); })"; then
+            pnpm --dir frontend exec playwright install --with-deps chrome
+          fi
       - name: 离线浏览器验收
         run: pnpm test:e2e
       - name: 校验三服务部署配置
