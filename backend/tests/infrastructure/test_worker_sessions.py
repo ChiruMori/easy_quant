@@ -28,7 +28,7 @@ def test_run_committed_during_schedule_poll_is_visible_after_independent_claim(
             if self.snapshot is None:
                 self.snapshot = dict(committed)
             payload = self.snapshot.get(key)
-            return SimpleNamespace(payload_json=payload) if payload is not None else None
+            return SimpleNamespace(payload_json=payload, name=None) if payload is not None else None
 
         def remove(self):
             self.snapshot = None

@@ -25,6 +25,10 @@ for (const width of [1440, 360]) {
     }
     await page.route("**/api/v1/backtests/named-run**", (route) => {
       const url = new URL(route.request().url())
+      if (route.request().method() === "PATCH") {
+        run.name = route.request().postDataJSON().name
+        return route.fulfill({ json: { data: { id: run.id, name: run.name } } })
+      }
       if (url.pathname.endsWith("stock-performance")) {
         const current = Number(url.searchParams.get("page") || 1)
         return route.fulfill({
@@ -52,6 +56,10 @@ for (const width of [1440, 360]) {
     })
     await page.goto("/backtests/named-run")
     await expect(page.getByRole("heading", { name: "回测详情 · 十月策略验证" })).toBeVisible()
+    await page.getByRole("button", { name: "修改回测名称" }).click()
+    await page.getByLabel("回测名称", { exact: true }).fill("历史回测重命名")
+    await page.getByRole("button", { name: "保存名称", exact: true }).click()
+    await expect(page.getByRole("heading", { name: "回测详情 · 历史回测重命名" })).toBeVisible()
     await expect(page.getByRole("radio", { name: "金额（元）" })).toHaveText("￥")
     await expect(page.getByRole("radio", { name: "收益率（%）" })).toHaveText("%")
     await expect(page.getByRole("table", { name: "股票收益明细" })).toContainText("300.00")

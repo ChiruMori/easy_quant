@@ -13,6 +13,7 @@ class RunProfile:
         self.stage = "validation"
         self.stages: dict[str, float] = {}
         self.hooks: list[dict[str, Any]] = []
+        self.workload: dict[str, Any] = {}
 
     def enter(self, stage: str) -> None:
         now = self.timer()
@@ -43,4 +44,5 @@ class RunProfile:
             "hooks": summary,
             "daily_hooks": list(self.hooks),
             "measurement": "host-wall-time-including-ipc-v1",
+            "workload": dict(self.workload),
         }

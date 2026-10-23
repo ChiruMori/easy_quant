@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   check:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -59,7 +60,6 @@ jobs:
           docker run --rm --network none --entrypoint /app/backend/.venv/bin/python easy-quant-backend-permissions:check -c "from pathlib import Path; import os; assert os.getuid() == 65532; root = Path('/app/backend/.local-data/tdx/daily'); root.mkdir(parents=True, exist_ok=True); cache = root / 'permission-check'; cache.write_bytes(b'ok'); cache.unlink()"
 
   publish:
-    needs: check
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 30

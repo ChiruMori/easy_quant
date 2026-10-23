@@ -1,5 +1,5 @@
 import { Plus, X } from "lucide-react"
-import { useId, useRef, useState } from "react"
+import { memo, useId, useMemo, useRef, useState } from "react"
 import {
   Area,
   CartesianGrid,
@@ -34,7 +34,7 @@ export interface PortfolioSeries {
   name: string
   points: Array<{ day: string; amount: string | null; return_rate: string | null }>
 }
-export function PortfolioChart({
+export const PortfolioChart = memo(function PortfolioChart({
   kind,
   resourceId,
   series,
@@ -55,23 +55,28 @@ export function PortfolioChart({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const sending = useRef(false)
-  const curves = [...series, ...extra]
-  const days = [...new Set(series.flatMap((item) => item.points.map((point) => point.day)))].sort()
-  const indexed = curves.map((item) => new Map(item.points.map((point) => [point.day, point])))
-  const data = days.map((day) =>
-    Object.fromEntries([
-      ["day", day],
-      ...curves.map((_, index) => {
-        const value = indexed[index].get(day)?.[unit === "amount" ? "amount" : "return_rate"]
-        return [
-          `line${index}`,
-          value === null || value === undefined
-            ? null
-            : Number(value) * (unit === "amount" ? 1 : 100),
-        ]
-      }),
-    ]),
-  )
+  const { curves, days, data } = useMemo(() => {
+    const curves = [...series, ...extra]
+    const days = [
+      ...new Set(series.flatMap((item) => item.points.map((point) => point.day))),
+    ].sort()
+    const indexed = curves.map((item) => new Map(item.points.map((point) => [point.day, point])))
+    const data = days.map((day) =>
+      Object.fromEntries([
+        ["day", day],
+        ...curves.map((_, index) => {
+          const value = indexed[index].get(day)?.[unit === "amount" ? "amount" : "return_rate"]
+          return [
+            `line${index}`,
+            value === null || value === undefined
+              ? null
+              : Number(value) * (unit === "amount" ? 1 : 100),
+          ]
+        }),
+      ]),
+    )
+    return { curves, days, data }
+  }, [series, extra, unit])
   async function find() {
     if (sending.current) return
     sending.current = true
@@ -161,7 +166,7 @@ export function PortfolioChart({
                 disabled={busy}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder={
-                  source === "instrument" ? "代码或名称，如沪深300" : "回测编号、版本或日期"
+                  source === "instrument" ? "代码或名称，如沪深300" : "回测名称、编号、版本或日期"
                 }
               />
               <Button type="submit" disabled={busy}>
@@ -212,7 +217,7 @@ export function PortfolioChart({
                   }
                 }}
               >
-                {result.name} · {result.id}
+                {source === "backtest" ? result.name || result.id : `${result.name} · ${result.id}`}
               </Button>
             ))}
           </PopoverContent>
@@ -313,4 +318,4 @@ export function PortfolioChart({
       </div>
     </div>
   )
-}
+})

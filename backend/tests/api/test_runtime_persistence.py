@@ -13,8 +13,14 @@ from tests.fakes.platform import make_test_container
 
 
 class FakeKeys:
+    def __init__(self, values=None):
+        self.values = values if values is not None else ["entry"]
+
     def all(self) -> list[str]:
-        return ["entry"]
+        return self.values
+
+    def __iter__(self):
+        return iter(self.values)
 
 
 class FakeDocuments:
@@ -28,7 +34,11 @@ class FakeDocuments:
 
     def scalars(self, statement: Any) -> FakeKeys:
         assert statement.compile().params["namespace_1"] == self.row.namespace
-        return FakeKeys()
+        return FakeKeys(
+            [self.row.payload_json]
+            if statement.selected_columns[0].name == "payload_json"
+            else ["entry"]
+        )
 
 
 @pytest.mark.parametrize(

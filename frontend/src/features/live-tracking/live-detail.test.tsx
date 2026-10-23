@@ -2,12 +2,21 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { actOnRecommendation, getLive, listOperations, pauseLive } from "./api"
+import {
+  actOnRecommendation,
+  getLive,
+  getLiveDeliveries,
+  getLivePortfolio,
+  listOperations,
+  pauseLive,
+} from "./api"
 import { LiveDetailPage } from "./pages/live-detail-page"
 
 vi.mock("./api", () => ({
   actOnRecommendation: vi.fn(),
   getLive: vi.fn(),
+  getLivePortfolio: vi.fn(),
+  getLiveDeliveries: vi.fn(),
   pauseLive: vi.fn(),
   terminateLive: vi.fn(),
   listOperations: vi.fn(),
@@ -176,4 +185,36 @@ it("显示实盘名称、独立资金和历史策略代码及链接", () => {
     "/strategies/s/versions/v1",
   )
   expect(screen.getByText("# immutable v1")).toBeInTheDocument()
+})
+
+it("慢估值不阻塞建议与资金，投递独立失败并可重试", async () => {
+  vi.mocked(getLivePortfolio).mockReturnValue(new Promise(() => {}))
+  vi.mocked(getLiveDeliveries)
+    .mockRejectedValueOnce(new Error("投递读取失败"))
+    .mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 20 })
+  render(
+    <MemoryRouter>
+      <LiveDetailPage
+        progressive
+        instance={{
+          ...instance,
+          balances: {
+            cash: "100",
+            available_cash: "80",
+            reserved_cash: "20",
+            positions: {},
+            reserved_positions: {},
+            capital_pool: "100",
+          },
+        }}
+      />
+    </MemoryRouter>,
+  )
+  expect(screen.getByRole("button", { name: "接受建议" })).toBeInTheDocument()
+  expect(screen.getByText("80.00 元")).toBeInTheDocument()
+  expect(screen.getByRole("status", { name: "正在加载收益曲线" })).toBeInTheDocument()
+  await screen.findByText("投递读取失败")
+  fireEvent.click(screen.getByRole("button", { name: "重试投递记录" }))
+  await waitFor(() => expect(getLiveDeliveries).toHaveBeenCalledTimes(2))
+  expect(getLivePortfolio).toHaveBeenCalledTimes(1)
 })

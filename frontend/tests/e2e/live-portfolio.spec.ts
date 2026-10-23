@@ -53,6 +53,10 @@ for (const width of [1440, 360]) {
     let recommendationWrites = 0
     await page.route("**/api/v1/live-instances/live-ui-v1**", async (route) => {
       const url = new URL(route.request().url())
+      if (url.pathname.endsWith("/portfolio"))
+        return route.fulfill({ json: { data: snapshot.portfolio } })
+      if (url.pathname.endsWith("/deliveries"))
+        return route.fulfill({ json: { data: { items: [], page: 1, page_size: 20, total: 0 } } })
       if (url.pathname.endsWith("/operations")) {
         const search = url.searchParams.get("search") ?? ""
         const status = url.searchParams.get("status") ?? ""
@@ -129,7 +133,10 @@ for (const width of [1440, 360]) {
     await expect(page.getByText("操作列表", { exact: true })).toBeVisible()
     await expect(page.getByRole("table").getByRole("row")).toHaveCount(21)
     await expect(page.getByText("12.50 元", { exact: true })).toBeVisible()
-    await page.getByRole("button", { name: "下一页", exact: true }).click()
+    await page
+      .getByRole("navigation", { name: "实盘操作分页" })
+      .getByRole("button", { name: "下一页", exact: true })
+      .click()
     await expect(page.getByRole("table").getByRole("row")).toHaveCount(6)
     await page.getByLabel("搜索操作").fill("000000")
     await page.getByRole("button", { name: "搜索", exact: true }).click()

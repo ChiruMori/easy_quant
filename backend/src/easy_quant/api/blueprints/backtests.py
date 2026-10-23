@@ -18,6 +18,21 @@ from easy_quant.infrastructure.core import UuidGenerator
 blueprint = Blueprint("backtests", __name__, url_prefix="/api/v1/backtests")
 
 
+@blueprint.patch("/<run_id>")
+@require_user
+def rename_backtest(run_id: str):
+    container = get_container()
+    run = container.backtests.get(run_id)
+    if run is None or run["owner_id"] != g.current_user.id:
+        return success(None, status=404)
+    payload = request.get_json() or {}
+    name = payload.get("name") if isinstance(payload, dict) else None
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 160:
+        raise ValidationError("回测名称须为 1–160 字")
+    container.backtests.rename(run_id, name.strip())
+    return success({"id": run_id, "name": name.strip()})
+
+
 def _with_job_failure(run):
     # 兼容旧 worker 曾未能保存回测失败状态的记录；读取时不改写历史。
     if run.get("status") not in {"queued", "running"} or not run.get("job_id"):

@@ -1,10 +1,11 @@
 import Decimal from "decimal.js"
-import { useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 
 import { EmptyState } from "@/components/app-shell"
 import { CollapsedDescription } from "@/components/collapsed-description"
 import { ConfirmAction } from "@/components/confirm-action"
+import { ListPagination } from "@/components/list-pagination"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
 import { PortfolioChart } from "@/components/portfolio-chart"
@@ -27,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -40,12 +42,107 @@ import { formatMoney, profitTone } from "@/lib/finance"
 import { localizedLabel } from "@/lib/labels"
 
 import type { LiveInstance } from "../api"
-import { actOnRecommendation, getLive, listOperations, pauseLive, terminateLive } from "../api"
+import {
+  actOnRecommendation,
+  getLive,
+  getLiveDeliveries,
+  getLivePortfolio,
+  listOperations,
+  pauseLive,
+  terminateLive,
+} from "../api"
 import { ManualOperationDialog } from "../components/manual-operation-dialog"
 import { RecommendationActions } from "../components/recommendation-actions"
 
-export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
+export function LiveDetailPage({
+  instance,
+  progressive = false,
+}: {
+  instance: LiveInstance
+  progressive?: boolean
+}) {
+  const [revision, setRevision] = useState(0)
+  const [portfolioRevision, setPortfolioRevision] = useState(0)
+  const [deliveryRevision, setDeliveryRevision] = useState(0)
+  const [portfolioBusy, setPortfolioBusy] = useState(progressive)
+  const [portfolioError, setPortfolioError] = useState<string>()
+  const [deliveryPage, setDeliveryPage] = useState(1)
+  const [deliveries, setDeliveries] = useState({
+    items: instance.notification_deliveries ?? [],
+    total: instance.notification_deliveries?.length ?? 0,
+    page: 1,
+    page_size: 20,
+  })
+  const [deliveryBusy, setDeliveryBusy] = useState(progressive)
+  const [deliveryError, setDeliveryError] = useState<string>()
   const [current, setCurrent] = useState(instance)
+  const portfolioRequest = useRef<{
+    key: string
+    result: ReturnType<typeof getLivePortfolio>
+  } | null>(null)
+  const deliveryRequest = useRef<{
+    key: string
+    result: ReturnType<typeof getLiveDeliveries>
+  } | null>(null)
+  const balances = current.balances ?? current.portfolio
+  const series = useMemo(
+    () => [
+      {
+        id: `live:${current.id}`,
+        name: "累计收益",
+        points: (current.portfolio?.curve ?? []).map((point) => ({
+          day: new Date(point.at).toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" }),
+          amount: point.profit,
+          return_rate: point.return_rate,
+        })),
+      },
+    ],
+    [current.id, current.portfolio?.curve],
+  )
+  useEffect(() => {
+    if (!progressive) return
+    let active = true
+    setPortfolioBusy(true)
+    setPortfolioError(undefined)
+    const key = `${instance.id}:${revision}:${portfolioRevision}`
+    if (portfolioRequest.current?.key !== key)
+      portfolioRequest.current = { key, result: getLivePortfolio(instance.id) }
+    portfolioRequest.current.result
+      .then((portfolio) => {
+        if (active) setCurrent((previous) => ({ ...previous, portfolio }))
+      })
+      .catch((error: unknown) => {
+        if (active) setPortfolioError(error instanceof Error ? error.message : "估值加载失败")
+      })
+      .finally(() => {
+        if (active) setPortfolioBusy(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [instance.id, progressive, revision, portfolioRevision])
+  useEffect(() => {
+    if (!progressive) return
+    let active = true
+    setDeliveryBusy(true)
+    setDeliveryError(undefined)
+    const key = `${instance.id}:${revision}:${deliveryPage}:${deliveryRevision}`
+    if (deliveryRequest.current?.key !== key)
+      deliveryRequest.current = { key, result: getLiveDeliveries(instance.id, deliveryPage) }
+    deliveryRequest.current.result
+      .then((result) => {
+        if (active) setDeliveries(result)
+      })
+      .catch((error: unknown) => {
+        if (active) setDeliveryError(error instanceof Error ? error.message : "投递记录加载失败")
+      })
+      .finally(() => {
+        if (active) setDeliveryBusy(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [instance.id, progressive, revision, deliveryPage, deliveryRevision])
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [operations, setOperations] = useState(
@@ -81,9 +178,10 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
     }
   }
   async function refresh() {
-    const latest = await getLive(current.id)
+    const latest = await getLive(current.id, progressive)
     if (latest) {
-      setCurrent(latest)
+      setCurrent((previous) => ({ ...latest, portfolio: latest.portfolio ?? previous.portfolio }))
+      setRevision((value) => value + 1)
       if (latest.operations) await loadPage(operations.page)
     }
   }
@@ -98,9 +196,10 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
     try {
       await action()
     } catch (caught) {
-      const latest = await getLive(current.id).catch(() => undefined)
+      const latest = await getLive(current.id, progressive).catch(() => undefined)
       if (latest) {
-        setCurrent(latest)
+        setCurrent((previous) => ({ ...latest, portfolio: latest.portfolio ?? previous.portfolio }))
+        setRevision((value) => value + 1)
         if (latest.operations) await loadPage(operations.page)
       }
       setError(caught instanceof Error ? caught.message : "处理失败，请重试")
@@ -169,7 +268,9 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
           value={
             current.portfolio && current.portfolio.profit !== null
               ? `${formatMoney(current.portfolio.profit)} 元`
-              : "暂不可估值"
+              : portfolioBusy
+                ? "估值加载中…"
+                : "暂不可估值"
           }
         />
         <MetricCard
@@ -183,11 +284,19 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
         />
         <MetricCard
           label="可用资金"
-          value={current.portfolio ? `${formatMoney(current.portfolio.available_cash)} 元` : "—"}
+          value={
+            current.balances || current.portfolio
+              ? `${formatMoney(balances?.available_cash)} 元`
+              : "—"
+          }
         />
         <MetricCard
           label="锁定资金"
-          value={current.portfolio ? `${formatMoney(current.portfolio.reserved_cash)} 元` : "—"}
+          value={
+            current.balances || current.portfolio
+              ? `${formatMoney(balances?.reserved_cash)} 元`
+              : "—"
+          }
           description="待操作买入建议预留成交额及预计费用"
         />
       </div>
@@ -196,6 +305,21 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
           <CardTitle>实盘收益曲线</CardTitle>
         </CardHeader>
         <CardContent className="flex min-w-0 flex-col gap-4">
+          {portfolioBusy && (
+            <div role="status" aria-label="正在加载收益曲线">
+              {current.portfolio ? <p>正在更新收益估值…</p> : <Skeleton className="h-60 w-full" />}
+            </div>
+          )}
+          {portfolioError && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {portfolioError}
+                <Button variant="link" onClick={() => setPortfolioRevision((value) => value + 1)}>
+                  重试估值
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
           <p className="text-sm text-muted-foreground">
             {current.portfolio?.valuation_note ?? "等待真实行情估值。"}
           </p>
@@ -208,34 +332,22 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
               kind="live"
               resourceId={current.id}
               amountLabel="累计收益"
-              series={[
-                {
-                  id: `live:${current.id}`,
-                  name: "累计收益",
-                  points: current.portfolio.curve.map((point) => ({
-                    day: new Date(point.at).toLocaleDateString("sv-SE", {
-                      timeZone: "Asia/Shanghai",
-                    }),
-                    amount: point.profit,
-                    return_rate: point.return_rate,
-                  })),
-                },
-              ]}
+              series={series}
             />
-          ) : (
+          ) : !portfolioBusy && !portfolioError ? (
             <p>暂无可估值的收益曲线</p>
-          )}
+          ) : null}
           <p className="text-sm">
             锁定持仓：
-            {Object.entries(current.portfolio?.reserved_positions ?? {})
+            {Object.entries(balances?.reserved_positions ?? {})
               .map(([symbol, quantity]) => `${symbol} ${quantity} 股`)
               .join("、") || "无"}
           </p>
           <p className="text-sm">
-            资金池：{formatMoney(current.portfolio?.capital_pool)} 元 · 当前现金：
-            {formatMoney(current.portfolio?.cash)} 元
+            资金池：{formatMoney(balances?.capital_pool)} 元 · 当前现金：
+            {formatMoney(balances?.cash)} 元
           </p>
-          {!!Object.keys(current.portfolio?.positions ?? {}).length && (
+          {!!Object.keys(balances?.positions ?? {}).length && (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -246,8 +358,8 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {Object.entries(current.portfolio?.positions ?? {}).map(([symbol, quantity]) => {
-                  const locked = current.portfolio?.reserved_positions[symbol] ?? "0"
+                {Object.entries(balances?.positions ?? {}).map(([symbol, quantity]) => {
+                  const locked = balances?.reserved_positions[symbol] ?? "0"
                   return (
                     <TableRow key={symbol}>
                       <TableCell>{symbol}</TableCell>
@@ -440,27 +552,14 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
               ))}
             </TableBody>
           </Table>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              disabled={pageBusy || operations.page <= 1}
-              onClick={() => void loadPage(operations.page - 1)}
-            >
-              上一页
-            </Button>
-            <p>
-              第 {operations.page} /{" "}
-              {Math.max(1, Math.ceil(operations.total / operations.page_size))} 页 · 共{" "}
-              {operations.total} 条
-            </p>
-            <Button
-              variant="outline"
-              disabled={pageBusy || operations.page * operations.page_size >= operations.total}
-              onClick={() => void loadPage(operations.page + 1)}
-            >
-              下一页
-            </Button>
-          </div>
+          <ListPagination
+            label="实盘操作分页"
+            page={operations.page}
+            total={operations.total}
+            pageSize={operations.page_size}
+            busy={pageBusy}
+            onChange={(page) => void loadPage(page)}
+          />
         </CardContent>
       </Card>
       <Card className="min-w-0">
@@ -469,13 +568,28 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
         </CardHeader>
         <CardContent className="flex min-w-0 flex-col gap-3">
           <p className="text-sm text-muted-foreground">
-            渠道已接收表示通知服务接受请求，不保证终端已收到。每轮信号汇总发送，最近 20
-            条记录持久保存，可在日志丢失后核查。
+            渠道已接收表示通知服务接受请求，不保证终端已收到。每轮信号汇总发送，投递
+            记录持久保存并分页展示，可在日志丢失后核查。
           </p>
           <Link to="/notifications" className="text-sm underline">
             检查通知渠道及测试连通性
           </Link>
-          {!current.notification_deliveries?.length ? (
+          {deliveryBusy && (
+            <div role="status" aria-label="正在加载投递记录">
+              <Skeleton className="h-28 w-full" />
+            </div>
+          )}
+          {deliveryError && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {deliveryError}
+                <Button variant="link" onClick={() => setDeliveryRevision((value) => value + 1)}>
+                  重试投递记录
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          {!deliveryBusy && !deliveryError && !deliveries.items.length ? (
             <p className="text-sm text-muted-foreground">
               暂无此实例的投递记录，历史终端接收结果无法追溯。
             </p>
@@ -491,7 +605,7 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {current.notification_deliveries.map((delivery) => (
+                {deliveries.items.map((delivery) => (
                   <TableRow key={delivery.id}>
                     <TableCell>
                       {delivery.channel === "none"
@@ -526,6 +640,14 @@ export function LiveDetailPage({ instance }: { instance: LiveInstance }) {
               </TableBody>
             </Table>
           )}
+          <ListPagination
+            label="实盘投递分页"
+            page={deliveries.page}
+            total={deliveries.total}
+            pageSize={deliveries.page_size}
+            busy={deliveryBusy}
+            onChange={setDeliveryPage}
+          />
         </CardContent>
       </Card>
       <Accordion type="single" collapsible>

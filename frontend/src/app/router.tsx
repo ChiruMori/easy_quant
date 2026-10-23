@@ -36,7 +36,7 @@ function LiveDetailRoute() {
   const { instanceId = "" } = useParams()
   const query = useQuery({
     queryKey: ["live-instance", instanceId],
-    queryFn: () => getLive(instanceId),
+    queryFn: () => getLive(instanceId, true),
     staleTime: 0,
     gcTime: 0,
   })
@@ -50,7 +50,7 @@ function LiveDetailRoute() {
       </div>
     )
   return query.data ? (
-    <LiveDetailPage key={instanceId} instance={query.data} />
+    <LiveDetailPage key={instanceId} instance={query.data} progressive />
   ) : (
     <LoadingState label="正在加载实盘实例" />
   )

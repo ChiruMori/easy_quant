@@ -42,6 +42,11 @@ export const createBacktest = (payload: Record<string, unknown>) =>
   apiRequest<Backtest>("/backtests", { method: "POST", body: JSON.stringify(payload) })
 export const getBacktest = (id: string) => apiRequest<Backtest>(`/backtests/${id}`)
 export const listBacktests = () => apiRequest<Backtest[]>("/backtests")
+export const renameBacktest = (id: string, name: string) =>
+  apiRequest<{ id: string; name: string }>(`/backtests/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  })
 
 export interface StockPerformance {
   symbol: string

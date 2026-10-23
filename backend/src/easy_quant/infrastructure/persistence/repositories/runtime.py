@@ -66,7 +66,8 @@ def _single_bar_adjustment(symbol: str, adjustments: set[str]) -> str | None:
     return next(iter(adjustments), None)
 
 
-RUNTIME_SYMBOL_BATCH = 500
+# 低于 MariaDB/MySQL 常见的等值范围估算阈值，避免大 IN 列表跳过索引探测。
+RUNTIME_SYMBOL_BATCH = 100
 
 
 def runtime_symbols_statement(start_day: date, end_day: date, Bar: Any = DailyBarModel):
@@ -545,7 +546,25 @@ class SqlAlchemyMarketDataStore:
             )
         )
         statements = (
-            select(Bar)
+            select(
+                *(
+                    getattr(Bar, name)
+                    for name in (
+                        "symbol",
+                        "trading_day",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                        "available_at",
+                        "amount",
+                        "source",
+                        "adjustment",
+                        "archive_sha256",
+                    )
+                )
+            )
             .with_hint(self.storage.table, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
             .where(
                 Bar.symbol.in_(symbols[offset : offset + RUNTIME_SYMBOL_BATCH]),
@@ -557,7 +576,8 @@ class SqlAlchemyMarketDataStore:
             for offset in range(0, len(symbols), RUNTIME_SYMBOL_BATCH)
         )
         for statement in statements:
-            for row in self.session.scalars(statement):
+            # 标量行不构造 ORM 实例，不维护百万行身份映射，也不读取无关元数据列。
+            for row in self.session.execute(statement):
                 yield self._snapshot_row(row)
 
     @staticmethod
@@ -769,6 +789,9 @@ class InMemoryBacktestStore:
         self.snapshots: dict[str, bytes] = {}
 
     def save(self, run: dict[str, Any], snapshot_payload: bytes | SnapshotSpool) -> None:
+        current = self.rows.get(str(run["id"]))
+        if current and current.get("name") is not None and current["name"] != run.get("name"):
+            run = {**run, "name": current["name"]}
         self.rows[str(run["id"])] = run
         self.snapshots[str(run.get("snapshot_id", ""))] = (
             b"".join(snapshot_payload.chunks())
@@ -807,6 +830,9 @@ class InMemoryBacktestStore:
 
     def update_status(self, run_id: str, updates: dict[str, Any]) -> None:
         self.rows[run_id].update(updates)
+
+    def rename(self, run_id: str, name: str) -> None:
+        self.rows[run_id] = {**self.rows[run_id], "name": name}
 
     def list_for_owner(self, owner_id: str) -> list[dict[str, Any]]:
         return [row for row in self.rows.values() if row["owner_id"] == owner_id]
@@ -898,6 +924,7 @@ class SqlAlchemyBacktestStore:
             row = BacktestRunModel(
                 id=str(run["id"]),
                 owner_id=str(run["owner_id"]),
+                name=run.get("name"),
                 strategy_version_id=str(run["strategy_version_id"]),
                 snapshot_id=snapshot_id,
                 status=str(run["status"]),
@@ -975,7 +1002,24 @@ class SqlAlchemyBacktestStore:
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         row = self.session.get(BacktestRunModel, run_id)
-        return None if row is None else json.loads(row.payload_json)
+        return None if row is None else self._present(row)
+
+    @staticmethod
+    def _present(row: BacktestRunModel) -> dict[str, Any]:
+        payload = json.loads(row.payload_json)
+        if row.name is not None:
+            payload["name"] = row.name
+        return payload
+
+    def rename(self, run_id: str, name: str) -> None:
+        from sqlalchemy import update
+
+        scope = self.status_sessions() if self.status_sessions else nullcontext(self.session)
+        with scope as session:
+            session.execute(
+                update(BacktestRunModel).where(BacktestRunModel.id == run_id).values(name=name)
+            )
+            session.commit()
 
     def list_for_owner(self, owner_id: str) -> list[dict[str, Any]]:
         rows = self.session.scalars(
@@ -983,4 +1027,4 @@ class SqlAlchemyBacktestStore:
             .where(BacktestRunModel.owner_id == owner_id)
             .order_by(BacktestRunModel.created_at.desc())
         )
-        return [json.loads(row.payload_json) for row in rows]
+        return [self._present(row) for row in rows]

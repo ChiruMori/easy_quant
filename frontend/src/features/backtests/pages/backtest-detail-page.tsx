@@ -22,11 +22,14 @@ import { StrategyPreview } from "@/features/strategies/components/strategy-previ
 import { localizedLabel } from "@/lib/labels"
 
 import type { Backtest } from "../api"
+import { RenameBacktest } from "../components/rename-backtest"
 import { StockPerformanceTable } from "../components/stock-performance-table"
 import { backtestStatusLabel, formatMetric, metricLabel } from "../format"
 
 export function BacktestDetailPage({ run }: { run: Backtest }) {
   const [configureLive, setConfigureLive] = useState(false)
+  const [renamed, setRenamed] = useState<string>()
+  const name = renamed ?? run.name
   const initial = new Decimal(run.config?.initial_cash ?? run.periods[0]?.equity ?? "1")
   const series: PortfolioSeries[] = [
     {
@@ -57,15 +60,18 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title={run.name ? `回测详情 · ${run.name}` : "回测详情"}
+        title={name ? `回测详情 · ${name}` : "回测详情"}
         description={`状态：${backtestStatusLabel(run.status)}（${run.progress}%）`}
         actions={
-          <Button
-            disabled={run.status !== "succeeded"}
-            onClick={() => setConfigureLive((value) => !value)}
-          >
-            开启实盘跟踪
-          </Button>
+          <>
+            <RenameBacktest id={run.id} name={name} onSaved={setRenamed} />
+            <Button
+              disabled={run.status !== "succeeded"}
+              onClick={() => setConfigureLive((value) => !value)}
+            >
+              开启实盘跟踪
+            </Button>
+          </>
         }
       />
       <StrategyPreview strategy={run.strategy} versionId={run.strategy_version_id} />

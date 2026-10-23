@@ -25,6 +25,9 @@ class Values:
     def all(self):
         return self.values
 
+    def __iter__(self):
+        return iter(self.values)
+
 
 class DocumentDatabase:
     def __init__(self, container):
@@ -68,6 +71,9 @@ class DocumentSession:
     def execute(self, statement):
         compiled = statement.compile(dialect=mysql.dialect())
         self.db.statements.append(str(compiled))
+        if str(compiled).startswith("SELECT"):
+            namespace = compiled.params["namespace_1"]
+            return [(key, payload) for (ns, key), payload in self.rows.items() if ns == namespace]
         assert str(compiled).startswith("INSERT INTO runtime_documents")
         self.rows["live_action_mutex", "singleton"] = "{}"
 
@@ -95,7 +101,13 @@ class DocumentSession:
 
     def scalars(self, statement):
         namespace = statement.compile().params["namespace_1"]
-        return Values([key for ns, key in self.rows if ns == namespace])
+        return Values(
+            [
+                payload if statement.selected_columns[0].name == "payload_json" else key
+                for (ns, key), payload in self.rows.items()
+                if ns == namespace
+            ]
+        )
 
     def commit(self):
         raise AssertionError("JSON adapters must not commit inside the unit of work")

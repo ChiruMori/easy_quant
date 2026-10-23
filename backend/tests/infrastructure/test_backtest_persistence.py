@@ -81,6 +81,19 @@ def backtest_run(*, completed: bool = False) -> dict[str, Any]:
     }
 
 
+def test_worker_result_save_keeps_separate_renamed_metadata():
+    session = ForeignKeySession()
+    store = SqlAlchemyBacktestStore(cast(Session, session))
+    run = backtest_run()
+    store.save(run, b"[]")
+    row = session.rows["backtest_runs", (run["id"],)]
+    row.name = "用户新名称"
+    store.save({**run, "name": "worker旧名称"}, b"[]")
+    result = store.get(run["id"])
+    assert result is not None and result["name"] == "用户新名称"
+    assert json.loads(row.payload_json)["name"] == "worker旧名称"
+
+
 @pytest.mark.parametrize("completed", [False, True])
 @pytest.mark.parametrize("streamed", [False, True])
 def test_save_flushes_parents_before_snapshot_and_result_children(completed, streamed) -> None:

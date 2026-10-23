@@ -106,6 +106,23 @@ def operation_page(
     }
 
 
+def portfolio_balances(state, instance_id: str):
+    instance = state.instances[instance_id]
+    portfolio = actual_portfolio(state, instance_id)
+    locked = reservations(state.recommendations.get(instance_id, []))
+    return {
+        "cash": str(portfolio.cash),
+        "available_cash": str(max(Decimal(0), portfolio.cash - locked.cash)),
+        "reserved_cash": str(locked.cash),
+        "positions": {key: str(value) for key, value in portfolio.positions.items()},
+        "reserved_positions": {key: str(value) for key, value in locked.positions.items()},
+        "capital_pool": str(
+            Decimal(str(instance.get("initial_cash", "100000")))
+            + Decimal(str(instance.get("capital_added", 0)))
+        ),
+    }
+
+
 def portfolio_summary(state, instance_id: str, market_data: Any, now: datetime):
     instance = state.instances[instance_id]
     portfolio = actual_portfolio(state, instance_id)

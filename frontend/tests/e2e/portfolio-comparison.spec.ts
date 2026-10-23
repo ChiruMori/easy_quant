@@ -75,9 +75,18 @@ for (const width of [1440, 360]) {
         },
       }),
     )
-    await page.route("**/api/v1/live-instances/chart-live-v1", (route) =>
-      route.fulfill({ json: { data: live } }),
-    )
+    await page.route("**/api/v1/live-instances/chart-live-v1**", (route) => {
+      const path = new URL(route.request().url()).pathname
+      return route.fulfill({
+        json: {
+          data: path.endsWith("/portfolio")
+            ? live.portfolio
+            : path.endsWith("/deliveries")
+              ? { items: live.notification_deliveries, page: 1, page_size: 20, total: 1 }
+              : live,
+        },
+      })
+    })
     let failure = true
     await page.route("**/api/v1/chart-comparisons/**", (route) => {
       const url = new URL(route.request().url())
@@ -127,7 +136,7 @@ for (const width of [1440, 360]) {
     await page.getByRole("option", { name: "相同配置的回测", exact: true }).click()
     await page.getByLabel("搜索对比对象").fill("")
     await page.getByRole("dialog").getByRole("button", { name: "搜索", exact: true }).click()
-    await page.getByRole("button", { name: "同期回测 · other-chart-v1", exact: true }).click()
+    await page.getByRole("button", { name: "同期回测", exact: true }).click()
     await expect(page.getByRole("button", { name: "移除对比 同期回测", exact: true })).toBeVisible()
     await page.getByRole("radio", { name: "金额（元）", exact: true }).click()
     const paths = page.locator(".recharts-line-curve")

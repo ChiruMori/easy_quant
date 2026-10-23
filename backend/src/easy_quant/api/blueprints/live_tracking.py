@@ -13,6 +13,7 @@ from easy_quant.api.strategy_context import strategy_context
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.live_reporting import (
     operation_page,
+    portfolio_balances,
     portfolio_summary,
     reporting_snapshot,
 )
@@ -170,6 +171,14 @@ def live_detail(instance_id: str):
             raise NotFoundError("live_instance")
         operations = operation_page(state, instance_id, 1, 20)
         snapshot = reporting_snapshot(state, instance_id)
+        if request.args.get("view") == "summary":
+            return success(
+                {
+                    **_present(item),
+                    "operations": operations,
+                    "balances": portfolio_balances(snapshot, instance_id),
+                }
+            )
         recommendation_ids = {row["id"] for row in state.recommendations.get(instance_id, [])}
         deliveries = [
             {
@@ -218,6 +227,78 @@ def live_detail(instance_id: str):
             "portfolio": portfolio,
         }
     )
+
+
+@blueprint.get("/<instance_id>/portfolio")
+@require_user
+def live_portfolio(instance_id: str):
+    container = get_container()
+    with container.live_tracking.transaction() as state:
+        item = state.instances.get(instance_id)
+        if item is None or item["owner_id"] != g.current_user.id:
+            raise NotFoundError("live_instance")
+        snapshot = reporting_snapshot(state, instance_id)
+    return success(
+        portfolio_summary(
+            snapshot, instance_id, container.market_data, container.authentication.clock.now()
+        )
+    )
+
+
+@blueprint.get("/<instance_id>/deliveries")
+@require_user
+def live_deliveries(instance_id: str):
+    try:
+        page = int(request.args.get("page", "1"))
+        size = int(request.args.get("page_size", "20"))
+    except ValueError as error:
+        raise ValidationError("分页参数必须为整数") from error
+    if page < 1 or not 1 <= size <= 100:
+        raise ValidationError("页码必须为正数，每页 1–100 条")
+    container = get_container()
+    item = container.state.live_instances.get(instance_id)
+    if item is None or item["owner_id"] != g.current_user.id:
+        raise NotFoundError("live_instance")
+    recommendation_ids = {row["id"] for row in container.state.recommendations.get(instance_id, [])}
+    deliveries = container.state.deliveries
+    if hasattr(deliveries, "page_for_live"):
+        result = deliveries.page_for_live(
+            g.current_user.id, instance_id, recommendation_ids, page, size
+        )
+    else:
+        rows = [
+            row
+            for row in deliveries
+            if row.get("owner_id") == g.current_user.id
+            and (
+                row.get("live_instance_id") == instance_id
+                or row.get("event_id") in recommendation_ids
+                or str(row.get("event_id", "")).startswith(f"{instance_id}:")
+            )
+        ]
+        rows.sort(key=lambda row: (str(row.get("created_at") or ""), str(row["id"])), reverse=True)
+        total = len(rows)
+        page = min(page, max(1, (total + size - 1) // size))
+        result = {
+            "items": rows[(page - 1) * size : page * size],
+            "total": total,
+            "page": page,
+            "page_size": size,
+        }
+    fields = {
+        "id",
+        "channel",
+        "status",
+        "attempts",
+        "created_at",
+        "updated_at",
+        "error",
+        "error_code",
+    }
+    result["items"] = [
+        {key: value for key, value in row.items() if key in fields} for row in result["items"]
+    ]
+    return success(result)
 
 
 @blueprint.get("/<instance_id>/operations")

@@ -8,7 +8,7 @@ import time as clock
 from collections import deque
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from itertools import groupby
+from itertools import groupby, islice
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -239,6 +239,13 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
         day for day in container.market_data.list_trading_days() if day < start_day
     )[-history_window:]
     history_start = warmup_days[0] if warmup_days else start_day
+    profile.workload.update(
+        history_start=history_start.isoformat(),
+        start_day=start_day.isoformat(),
+        end_day=end_day.isoformat(),
+        history_trading_days=history_window,
+        warmup_rows=0,
+    )
     recent_days.extend(warmup_days)
     pending: list[tuple[datetime, int, dict[str, object]]] = []
     sequence = 0
@@ -252,6 +259,7 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
         history_start, start_day - timedelta(days=1)
     ):
         if str(row["symbol"]) not in excluded:
+            profile.workload["warmup_rows"] += 1
             available_at = datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
             heapq.heappush(pending, (available_at, sequence, row))
             sequence += 1
@@ -442,12 +450,31 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
     with SnapshotSpool() as snapshot:
         profile.enter("snapshot")
         report("snapshot", 90, force=True)
-        for row in container.market_data.iter_snapshot_bars(history_start, end_day):
-            if str(row["symbol"]) not in excluded:
-                snapshot.append(row)
-                if snapshot.record_count % 1000 == 0:
-                    report("snapshot", 90)
+        source = iter(container.market_data.iter_snapshot_bars(history_start, end_day))
+        read_seconds = encode_seconds = 0.0
+        while True:
+            batch_started = clock.monotonic()
+            batch = list(islice(source, 1000))
+            read_seconds += clock.monotonic() - batch_started
+            if not batch:
+                break
+            batch_started = clock.monotonic()
+            for row in batch:
+                if str(row["symbol"]) not in excluded:
+                    snapshot.append(row)
+            encode_seconds += clock.monotonic() - batch_started
+            profile.workload.update(
+                snapshot_read_seconds=round(read_seconds, 3),
+                snapshot_encode_seconds=round(encode_seconds, 3),
+            )
+            report("snapshot", 90)
         snapshot_id = snapshot.finish()
+        profile.workload.update(
+            snapshot_rows=snapshot.record_count,
+            snapshot_bytes=snapshot.byte_count,
+            runtime_rows=row_count,
+        )
+        logger.info("回测输入规模 run_id=%s workload=%s", run_id, profile.workload)
         completed = {
             **run,
             "snapshot_id": snapshot_id,
