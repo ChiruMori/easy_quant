@@ -10,7 +10,7 @@ def test_light_detail_skips_valuation_and_delivery_scan(monkeypatch):
     def slow(*_args):
         raise AssertionError("首屏不得运行慢估值")
 
-    monkeypatch.setattr("easy_quant.api.blueprints.live_tracking.portfolio_summary", slow)
+    monkeypatch.setattr("easy_quant.application.services.live_reporting.portfolio_summary", slow)
     response = client.get(f"/api/v1/live-instances/{live['id']}?view=summary")
     assert response.status_code == 200
     data = response.get_json()["data"]

@@ -10,6 +10,7 @@ from easy_quant.application.ports.live_tracking import LiveTrackingState
 from easy_quant.application.services.recommendation_actions import actual_portfolio, ledger_entries
 from easy_quant.domain.live_tracking.ledger import rebuild_portfolio
 from easy_quant.domain.live_tracking.reservations import reservations
+from easy_quant.domain.shared.errors import NotFoundError, StateConflictError
 
 
 def reporting_snapshot(state: LiveTrackingState, instance_id: str) -> LiveTrackingState:
@@ -125,9 +126,80 @@ def portfolio_balances(state, instance_id: str):
     }
 
 
-def portfolio_summary(state, instance_id: str, market_data: Any, now: datetime):
+def read_portfolio(container, instance_id: str, owner_id: str, *, include_curve=True):
+    """读取当前估值；历史终止实例仅在固定终止时点重建一次。"""
+    with container.live_tracking.transaction() as state:
+        instance = state.instances.get(instance_id)
+        if instance is None or instance["owner_id"] != owner_id:
+            raise NotFoundError("live_instance")
+        snapshot = reporting_snapshot(state, instance_id)
+        ended = instance.get("terminated_at")
+        if instance.get("status") == "terminated" and not ended:
+            ended = next(
+                (
+                    row["occurred_at"]
+                    for row in state.audit
+                    if row.get("action") == "terminate"
+                    and row.get("resource_id") == instance_id
+                    and row.get("occurred_at")
+                ),
+                None,
+            )
+    if instance.get("status") == "terminated" and not instance.get("frozen_portfolio") and ended:
+        snapshot.instances[instance_id]["status"] = "paused"
+        frozen = portfolio_summary(
+            snapshot, instance_id, container.market_data, datetime.fromisoformat(str(ended))
+        )
+        frozen["valuation_note"] += " 数据冻结于终止时点，后续不再更新。"
+        with container.live_tracking.transaction() as state:
+            latest = state.instances.get(instance_id)
+            if latest is None or latest["owner_id"] != owner_id:
+                raise NotFoundError("live_instance")
+            if not latest.get("frozen_portfolio"):
+                state.instances[instance_id] = {
+                    **latest,
+                    "terminated_at": ended,
+                    "frozen_portfolio": frozen,
+                }
+            snapshot = reporting_snapshot(state, instance_id)
+    return portfolio_summary(
+        snapshot,
+        instance_id,
+        container.market_data,
+        container.authentication.clock.now(),
+        include_curve=include_curve,
+    )
+
+
+def termination_snapshot(container, instance_id: str, owner_id: str):
+    with container.live_tracking.transaction() as state:
+        instance = state.instances.get(instance_id)
+        if instance is None or instance["owner_id"] != owner_id:
+            raise NotFoundError("live_instance")
+        snapshot = reporting_snapshot(state, instance_id)
+    if instance.get("status") == "terminated":
+        return snapshot, None
+    now = container.authentication.clock.now()
+    frozen = portfolio_summary(snapshot, instance_id, container.market_data, now)
+    frozen["valuation_note"] += " 数据冻结于终止时点，后续不再更新。"
+    return snapshot, frozen
+
+
+def validate_termination_snapshot(state, instance_id, snapshot):
+    if reporting_snapshot(state, instance_id) != snapshot:
+        raise StateConflictError("估值期间实盘数据已变化，请重新确认终止")
+
+
+def portfolio_summary(
+    state, instance_id: str, market_data: Any, now: datetime, *, include_curve=True
+):
     instance = state.instances[instance_id]
     if instance.get("status") == "terminated":
+        if instance.get("frozen_portfolio"):
+            frozen = deepcopy(instance["frozen_portfolio"])
+            if not include_curve:
+                frozen["curve"] = []
+            return frozen
         return {
             **portfolio_balances(state, instance_id),
             "at": instance.get("terminated_at"),
@@ -136,7 +208,7 @@ def portfolio_summary(state, instance_id: str, market_data: Any, now: datetime):
             "initial_equity": None,
             "missing_symbols": [],
             "curve": [],
-            "valuation_note": "实盘已终止，资金与持仓已冻结，停止收益跟踪。",
+            "valuation_note": "缺少历史终止时间与收益快照，无法恢复收益；资金持仓保持只读。",
         }
     portfolio = actual_portfolio(state, instance_id)
     entries = ledger_entries(state, instance_id)
@@ -204,11 +276,12 @@ def portfolio_summary(state, instance_id: str, market_data: Any, now: datetime):
 
     # 每个已发布行情日保留一个收盘点，并补启动及当前点。
     zone = ZoneInfo("Asia/Shanghai")
-    times = {started, now}
-    for row in bars:
-        at = datetime.fromisoformat(str(row["available_at"]))
-        if started < at < now:
-            times.add(at.astimezone(zone).replace(hour=23, minute=59, second=59, microsecond=0))
+    times = {started, now} if include_curve else set()
+    if include_curve:
+        for row in bars:
+            at = datetime.fromisoformat(str(row["available_at"]))
+            if started < at < now:
+                times.add(at.astimezone(zone).replace(hour=23, minute=59, second=59, microsecond=0))
     curve = [point(at) for at in sorted(times) if at <= now]
     current = point(now)
     return {

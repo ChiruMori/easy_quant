@@ -102,11 +102,11 @@ export function LiveDetailPage({
     [current.id, current.portfolio?.curve],
   )
   useEffect(() => {
-    if (!progressive || current.status === "terminated") return
+    if (!progressive) return
     let active = true
     setPortfolioBusy(true)
     setPortfolioError(undefined)
-    const key = `${instance.id}:${revision}:${portfolioRevision}`
+    const key = `${instance.id}:${revision}:${portfolioRevision}:${current.status}`
     if (portfolioRequest.current?.key !== key)
       portfolioRequest.current = { key, result: getLivePortfolio(instance.id) }
     portfolioRequest.current.result
@@ -239,12 +239,16 @@ export function LiveDetailPage({
                 icon={Square}
                 label="终止"
                 title="确认终止实盘"
-                description="终止后资金、持仓与账本永久冻结，停止收益跟踪，无法恢复或继续处理建议。请先核对所有实际成交及待操作建议。"
+                description="终止后资金、持仓、账本及收益数据永久冻结，保留终止时指标与曲线，停止每日运行，无法恢复或继续处理建议。请先核对所有实际成交及待操作建议。"
                 disabled={busy || current.status === "terminated"}
                 action={() =>
                   runAction(async () => {
                     const result = await terminateLive(current.id)
-                    setCurrent((previous) => ({ ...previous, ...result }))
+                    setCurrent((previous) => ({
+                      ...previous,
+                      ...result,
+                      portfolio: result.frozen_portfolio,
+                    }))
                   })
                 }
               />
@@ -267,149 +271,136 @@ export function LiveDetailPage({
         </Alert>
       )}
       {busy && <p role="status">正在处理，请稍候…</p>}
-      {current.status !== "terminated" ? (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard
-              label="当前收益"
-              tone={profitTone(current.portfolio?.profit)}
-              value={
-                current.portfolio && current.portfolio.profit !== null
-                  ? `${formatMoney(current.portfolio.profit)} 元`
-                  : portfolioBusy
-                    ? "估值加载中…"
-                    : "暂不可估值"
-              }
-            />
-            <MetricCard
-              label="当前收益率"
-              tone={profitTone(current.portfolio?.return_rate)}
-              value={
-                current.portfolio && current.portfolio.return_rate !== null
-                  ? `${(Number(current.portfolio.return_rate) * 100).toFixed(2)}%`
-                  : "—"
-              }
-            />
-            <MetricCard
-              label="可用资金"
-              value={
-                current.balances || current.portfolio
-                  ? `${formatMoney(balances?.available_cash)} 元`
-                  : "—"
-              }
-            />
-            <MetricCard
-              label="锁定资金"
-              value={
-                current.balances || current.portfolio
-                  ? `${formatMoney(balances?.reserved_cash)} 元`
-                  : "—"
-              }
-              description="待操作买入建议预留成交额及预计费用"
-            />
-          </div>
-          <Card className="min-w-0">
-            <CardHeader>
-              <CardTitle>实盘收益曲线</CardTitle>
-            </CardHeader>
-            <CardContent className="flex min-w-0 flex-col gap-4">
-              {portfolioBusy && (
-                <div role="status" aria-label="正在加载收益曲线">
-                  {current.portfolio ? (
-                    <p>正在更新收益估值…</p>
-                  ) : (
-                    <Skeleton className="h-60 w-full" />
-                  )}
-                </div>
-              )}
-              {portfolioError && (
-                <Alert variant="destructive">
-                  <AlertDescription>
-                    {portfolioError}
-                    <Button
-                      variant="link"
-                      onClick={() => setPortfolioRevision((value) => value + 1)}
-                    >
-                      重试估值
-                    </Button>
-                  </AlertDescription>
-                </Alert>
-              )}
-              <p className="text-sm text-muted-foreground">
-                {current.portfolio?.valuation_note ?? "等待真实行情估值。"}
-              </p>
-              {!!current.portfolio?.missing_symbols.length && (
-                <p role="status">缺少估值行情：{current.portfolio.missing_symbols.join("、")}</p>
-              )}
-              {current.portfolio?.curve.some((point) => point.profit !== null) ? (
-                <PortfolioChart
-                  key={current.id}
-                  kind="live"
-                  resourceId={current.id}
-                  amountLabel="累计收益"
-                  series={series}
-                />
-              ) : !portfolioBusy && !portfolioError ? (
-                <p>暂无可估值的收益曲线</p>
-              ) : null}
-              <p className="text-sm">
-                锁定持仓：
-                {Object.entries(balances?.reserved_positions ?? {})
-                  .map(([symbol, quantity]) => `${symbol} ${quantity} 股`)
-                  .join("、") || "无"}
-              </p>
-              <p className="text-sm">
-                资金池：{formatMoney(balances?.capital_pool)} 元 · 当前现金：
-                {formatMoney(balances?.cash)} 元
-              </p>
-              {!!Object.keys(balances?.positions ?? {}).length && (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>持仓标的</TableHead>
-                      <TableHead>总持仓（股）</TableHead>
-                      <TableHead>锁定（股）</TableHead>
-                      <TableHead>可用（股）</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {Object.entries(balances?.positions ?? {}).map(([symbol, quantity]) => {
-                      const locked = balances?.reserved_positions[symbol] ?? "0"
-                      return (
-                        <TableRow key={symbol}>
-                          <TableCell>{symbol}</TableCell>
-                          <TableCell>{quantity}</TableCell>
-                          <TableCell>{locked}</TableCell>
-                          <TableCell>
-                            {Decimal.max(0, new Decimal(quantity).minus(locked)).toFixed()}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </>
-      ) : (
+      {current.status === "terminated" && (
         <Alert>
           <AlertTitle>实盘已终止 · 数据已冻结</AlertTitle>
           <AlertDescription>
-            停止收益跟踪，历史操作只读，无法恢复。
-            <p>
-              冻结现金：{formatMoney(balances?.cash)} 元 · 资金池：
-              {formatMoney(balances?.capital_pool)} 元
-            </p>
-            <p>
-              冻结持仓：
-              {Object.entries(balances?.positions ?? {})
-                .map(([symbol, quantity]) => `${symbol} ${quantity} 股`)
-                .join("、") || "无"}
-            </p>
+            收益指标与曲线保留至终止时点，停止每日运行及后续估值，历史操作只读。
           </AlertDescription>
         </Alert>
       )}
+      <>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            label="当前收益"
+            tone={profitTone(current.portfolio?.profit)}
+            value={
+              current.portfolio && current.portfolio.profit !== null
+                ? `${formatMoney(current.portfolio.profit)} 元`
+                : portfolioBusy
+                  ? "估值加载中…"
+                  : "暂不可估值"
+            }
+          />
+          <MetricCard
+            label="当前收益率"
+            tone={profitTone(current.portfolio?.return_rate)}
+            value={
+              current.portfolio && current.portfolio.return_rate !== null
+                ? `${(Number(current.portfolio.return_rate) * 100).toFixed(2)}%`
+                : "—"
+            }
+          />
+          <MetricCard
+            label="可用资金"
+            value={
+              current.balances || current.portfolio
+                ? `${formatMoney(balances?.available_cash)} 元`
+                : "—"
+            }
+          />
+          <MetricCard
+            label="锁定资金"
+            value={
+              current.balances || current.portfolio
+                ? `${formatMoney(balances?.reserved_cash)} 元`
+                : "—"
+            }
+            description="待操作买入建议预留成交额及预计费用"
+          />
+        </div>
+        <Card className="min-w-0">
+          <CardHeader>
+            <CardTitle>实盘收益曲线</CardTitle>
+          </CardHeader>
+          <CardContent className="flex min-w-0 flex-col gap-4">
+            {portfolioBusy && (
+              <div role="status" aria-label="正在加载收益曲线">
+                {current.portfolio ? (
+                  <p>正在更新收益估值…</p>
+                ) : (
+                  <Skeleton className="h-60 w-full" />
+                )}
+              </div>
+            )}
+            {portfolioError && (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  {portfolioError}
+                  <Button variant="link" onClick={() => setPortfolioRevision((value) => value + 1)}>
+                    重试估值
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+            <p className="text-sm text-muted-foreground">
+              {current.portfolio?.valuation_note ?? "等待真实行情估值。"}
+            </p>
+            {!!current.portfolio?.missing_symbols.length && (
+              <p role="status">缺少估值行情：{current.portfolio.missing_symbols.join("、")}</p>
+            )}
+            {current.portfolio?.curve.some((point) => point.profit !== null) ? (
+              <PortfolioChart
+                key={current.id}
+                kind="live"
+                resourceId={current.id}
+                amountLabel="累计收益"
+                comparisonsEnabled={current.status !== "terminated"}
+                series={series}
+              />
+            ) : !portfolioBusy && !portfolioError ? (
+              <p>暂无可估值的收益曲线</p>
+            ) : null}
+            <p className="text-sm">
+              锁定持仓：
+              {Object.entries(balances?.reserved_positions ?? {})
+                .map(([symbol, quantity]) => `${symbol} ${quantity} 股`)
+                .join("、") || "无"}
+            </p>
+            <p className="text-sm">
+              资金池：{formatMoney(balances?.capital_pool)} 元 · 当前现金：
+              {formatMoney(balances?.cash)} 元
+            </p>
+            {!!Object.keys(balances?.positions ?? {}).length && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>持仓标的</TableHead>
+                    <TableHead>总持仓（股）</TableHead>
+                    <TableHead>锁定（股）</TableHead>
+                    <TableHead>可用（股）</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Object.entries(balances?.positions ?? {}).map(([symbol, quantity]) => {
+                    const locked = balances?.reserved_positions[symbol] ?? "0"
+                    return (
+                      <TableRow key={symbol}>
+                        <TableCell>{symbol}</TableCell>
+                        <TableCell>{quantity}</TableCell>
+                        <TableCell>{locked}</TableCell>
+                        <TableCell>
+                          {Decimal.max(0, new Decimal(quantity).minus(locked)).toFixed()}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </>
       <Card className="min-w-0">
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
           <CardTitle>操作列表</CardTitle>

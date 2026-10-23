@@ -14,8 +14,10 @@ from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.live_reporting import (
     operation_page,
     portfolio_balances,
-    portfolio_summary,
+    read_portfolio,
     reporting_snapshot,
+    termination_snapshot,
+    validate_termination_snapshot,
 )
 from easy_quant.application.services.live_runtime import analyze_live_instance
 from easy_quant.application.services.manual_operations import ManualCommand, ManualOperationService
@@ -240,12 +242,7 @@ def live_detail(instance_id: str):
         deliveries.sort(
             key=lambda row: (str(row.get("created_at") or ""), str(row["id"])), reverse=True
         )
-    portfolio = portfolio_summary(
-        snapshot,
-        instance_id,
-        get_container().market_data,
-        get_container().authentication.clock.now(),
-    )
+    portfolio = read_portfolio(get_container(), instance_id, g.current_user.id)
     return success(
         {
             **_present(item),
@@ -264,16 +261,12 @@ def live_detail(instance_id: str):
 @blueprint.get("/<instance_id>/portfolio")
 @require_user
 def live_portfolio(instance_id: str):
-    container = get_container()
-    with container.live_tracking.transaction() as state:
-        item = state.instances.get(instance_id)
-        if item is None or item["owner_id"] != g.current_user.id:
-            raise NotFoundError("live_instance")
-        snapshot = reporting_snapshot(state, instance_id)
+    metrics_only = request.args.get("view") == "metrics"
+    result = read_portfolio(
+        get_container(), instance_id, g.current_user.id, include_curve=not metrics_only
+    )
     return success(
-        portfolio_summary(
-            snapshot, instance_id, container.market_data, container.authentication.clock.now()
-        )
+        {key: result[key] for key in ("at", "profit", "return_rate")} if metrics_only else result
     )
 
 
@@ -399,6 +392,11 @@ def pause_live(instance_id: str):
 
 def _set_status(instance_id: str, status: str, action: str):
     container = get_container()
+    snapshot, frozen = (
+        termination_snapshot(container, instance_id, g.current_user.id)
+        if status == "terminated"
+        else (None, None)
+    )
     with container.live_tracking.transaction() as state:
         item = state.instances.get(instance_id)
         if item is None or item["owner_id"] != g.current_user.id:
@@ -409,10 +407,13 @@ def _set_status(instance_id: str, status: str, action: str):
                 raise StateConflictError("已终止实盘不可恢复或修改")
             return item
         if status == "terminated":
+            validate_termination_snapshot(state, instance_id, snapshot)
+            assert frozen is not None
             item = {
                 **item,
-                "terminated_at": container.authentication.clock.now().isoformat(),
+                "terminated_at": frozen["at"],
                 "frozen_balances": portfolio_balances(state, instance_id),
+                "frozen_portfolio": frozen,
             }
         item = {**item, "status": status}
         state.instances[instance_id] = item
@@ -469,7 +470,12 @@ def analyze_live(instance_id: str, phase: str):
 
 def _present(item):
     return {
-        **item,
+        **{key: value for key, value in item.items() if key != "frozen_portfolio"},
+        **(
+            {"return_rate": item["frozen_portfolio"]["return_rate"]}
+            if item.get("frozen_portfolio")
+            else {}
+        ),
         "strategy": strategy_context(
             get_container(), str(item["owner_id"]), str(item["strategy_version_id"])
         ),

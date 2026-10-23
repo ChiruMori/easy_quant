@@ -30,10 +30,43 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatMoney } from "@/lib/finance"
+import { formatMoney, profitTone } from "@/lib/finance"
 import { localizedLabel } from "@/lib/labels"
+import { cn } from "@/lib/utils"
 
-import { listLivePage, type LiveInstance } from "../api"
+import { getLiveMetrics, listLivePage, type LiveInstance } from "../api"
+
+function LiveReturnRate({ item, load }: { item: LiveInstance; load: boolean }) {
+  const frozen = item.status === "terminated" && item.return_rate !== undefined
+  const query = useQuery({
+    queryKey: ["live-metrics", item.id, item.status],
+    queryFn: () => getLiveMetrics(item.id),
+    enabled: load && !frozen,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const rate = frozen ? item.return_rate : (query.data?.return_rate ?? item.return_rate)
+  const tone = profitTone(rate)
+  if (query.isPending && query.isFetching)
+    return <Skeleton className="h-5 w-16" aria-label="正在加载收益率" />
+  if (query.error)
+    return (
+      <Button variant="link" size="sm" onClick={() => void query.refetch()}>
+        重试收益率
+      </Button>
+    )
+  return (
+    <span
+      className={cn(
+        "tabular-nums",
+        tone === "up" && "text-market-up",
+        tone === "down" && "text-market-down",
+      )}
+    >
+      {rate === null || rate === undefined ? "—" : `${(Number(rate) * 100).toFixed(2)}%`}
+    </span>
+  )
+}
 
 export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {}) {
   const [page, setPage] = useState(1)
@@ -128,6 +161,7 @@ export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {})
                       <TableHead>状态</TableHead>
                       <TableHead>策略</TableHead>
                       <TableHead>初始资金（元）</TableHead>
+                      <TableHead>当前收益率</TableHead>
                       <TableHead>下次决策</TableHead>
                       <TableHead>操作</TableHead>
                     </TableRow>
@@ -154,6 +188,9 @@ export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {})
                           {item.strategy ? `v${item.strategy.number}` : item.strategy_version_id}
                         </TableCell>
                         <TableCell>{formatMoney(item.initial_cash)}</TableCell>
+                        <TableCell>
+                          <LiveReturnRate item={item} load={instances === undefined} />
+                        </TableCell>
                         <TableCell>
                           {item.status === "active" && item.next_decision_at
                             ? new Date(item.next_decision_at).toLocaleString("zh-CN", {

@@ -14,11 +14,13 @@ export interface LiveInstance {
   backtest_id: string
   strategy_version_id: string
   status: string
+  return_rate?: string | null
   terminated_at?: string
   next_decision_at: string
   recommendations?: Recommendation[]
   operations?: OperationPage
   portfolio?: LivePortfolio
+  frozen_portfolio?: LivePortfolio
   balances?: Pick<
     LivePortfolio,
     | "cash"
@@ -156,3 +158,8 @@ export const actOnRecommendation = (
       ...values,
     }),
   })
+
+export const getLiveMetrics = (id: string) =>
+  apiRequest<{ at: string | null; profit: string | null; return_rate: string | null }>(
+    `/live-instances/${id}/portfolio?view=metrics`,
+  )
