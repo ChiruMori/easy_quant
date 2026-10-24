@@ -1,4 +1,5 @@
 import Decimal from "decimal.js"
+import { ArrowUpRight } from "lucide-react"
 import { Pause, Play, RefreshCw, Square } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
@@ -356,7 +357,10 @@ export function LiveDetailPage({
               <Alert variant="destructive">
                 <AlertDescription>
                   {portfolioError}
-                  <Button variant="link" onClick={() => setPortfolioRevision((value) => value + 1)}>
+                  <Button
+                    variant="outline"
+                    onClick={() => setPortfolioRevision((value) => value + 1)}
+                  >
                     重试估值
                   </Button>
                 </AlertDescription>
@@ -622,9 +626,12 @@ export function LiveDetailPage({
             渠道已接收表示通知服务接受请求，不保证终端已收到。每轮信号汇总发送，投递
             记录持久保存并分页展示，可在日志丢失后核查。
           </p>
-          <Link to="/notifications" className="text-sm underline">
-            检查通知渠道及测试连通性
-          </Link>
+          <Button variant="outline" size="sm" className="w-fit max-w-full" asChild>
+            <Link to="/notifications">
+              <ArrowUpRight />
+              检查通知渠道及测试连通性
+            </Link>
+          </Button>
           {deliveryBusy && (
             <div role="status" aria-label="正在加载投递记录">
               <Skeleton className="h-28 w-full" />
@@ -634,7 +641,7 @@ export function LiveDetailPage({
             <Alert variant="destructive">
               <AlertDescription>
                 {deliveryError}
-                <Button variant="link" onClick={() => setDeliveryRevision((value) => value + 1)}>
+                <Button variant="outline" onClick={() => setDeliveryRevision((value) => value + 1)}>
                   重试投递记录
                 </Button>
               </AlertDescription>
@@ -722,9 +729,12 @@ export function LiveDetailPage({
                       ?.map((item) => `${item.name}${item.enabled ? "" : "（已停用）"}`)
                       .join("、") || "历史配置"}
                   </p>
-                  <Link className="underline" to={`/backtests/${current.backtest_id}`}>
-                    查看来源回测
-                  </Link>
+                  <Button variant="outline" size="sm" className="w-fit max-w-full" asChild>
+                    <Link to={`/backtests/${current.backtest_id}`}>
+                      <ArrowUpRight />
+                      查看来源回测
+                    </Link>
+                  </Button>
                   <pre className="overflow-auto">
                     策略参数：{JSON.stringify(current.parameters ?? {}, null, 2)}
                   </pre>

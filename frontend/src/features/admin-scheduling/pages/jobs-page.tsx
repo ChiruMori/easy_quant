@@ -61,7 +61,7 @@ export function JobsPage() {
                   {localizedLabel(job.job_type)}
                   {job.live_instance && (
                     <Link
-                      className="block max-w-48 truncate underline"
+                      className="block max-w-48 truncate font-medium text-primary hover:opacity-80"
                       title={`${job.live_instance.name} · ${job.live_instance.id}`}
                       to={`/live/${job.live_instance.id}`}
                     >

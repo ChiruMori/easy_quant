@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { ArrowUpRight } from "lucide-react"
 import { Pencil, Plus, Save, Trash2, X } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
@@ -70,10 +71,13 @@ export function SchedulesPage() {
       <Alert>
         <AlertTitle>系统级计划</AlertTitle>
         <AlertDescription>
-          这里只管理数据维护计划。实盘分析计划随实例启停自动更新，并在终止后清除，请前往{" "}
-          <Link className="underline" to="/live">
-            实盘列表
-          </Link>{" "}
+          这里只管理数据维护计划。实盘分析计划随实例启停自动更新，终止后停用并保留配置，请前往{" "}
+          <Button variant="outline" size="sm" className="w-fit max-w-full" asChild>
+            <Link to="/live">
+              <ArrowUpRight />
+              实盘列表
+            </Link>
+          </Button>{" "}
           查看各实例计划。
         </AlertDescription>
       </Alert>

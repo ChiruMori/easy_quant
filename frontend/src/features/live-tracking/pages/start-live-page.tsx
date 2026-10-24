@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { ArrowUpRight } from "lucide-react"
 import { useRef, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 
@@ -132,9 +133,12 @@ export function StartLivePage({
                     </FieldLabel>
                   </Field>
                 ))}
-              <Link className="underline" to="/notifications">
-                配置和测试通知渠道
-              </Link>
+              <Button variant="outline" size="sm" className="w-fit max-w-full" asChild>
+                <Link to="/notifications">
+                  <ArrowUpRight />
+                  配置和测试通知渠道
+                </Link>
+              </Button>
             </FieldSet>
             <Field orientation="horizontal">
               <input id="live-reminder" type="checkbox" name="after_market_enabled" />

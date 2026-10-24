@@ -88,6 +88,21 @@ for (const width of [1440, 360]) {
           },
         })
       }
+      if (path.endsWith("/schedules"))
+        return route.fulfill({
+          json: {
+            data: [
+              {
+                id: "historic",
+                task_type: "live-analysis",
+                configuration: { instance_id: "freeze-22", phase: "on_market" },
+                enabled: false,
+                schedule_expression: "30 10 * * 1-5",
+                timezone: "Asia/Shanghai",
+              },
+            ],
+          },
+        })
       if (path.endsWith("/deliveries"))
         return route.fulfill({ json: { data: { items: [], total: 0, page: 1, page_size: 20 } } })
       if (path === "/chart-comparisons/instruments")
@@ -140,10 +155,10 @@ for (const width of [1440, 360]) {
       "-10.00%",
     )
     await expect(page.getByText("实盘收益曲线", { exact: true })).toBeVisible()
-    await page.getByRole("radio", { name: "收益率（%）", exact: true }).click()
-    await expect(page.getByRole("radio", { name: "收益率（%）", exact: true })).toHaveAttribute(
+    await page.getByRole("tab", { name: "收益率（%）", exact: true }).click()
+    await expect(page.getByRole("tab", { name: "收益率（%）", exact: true })).toHaveAttribute(
       "data-state",
-      "on",
+      "active",
     )
     expect(frozenReads).toBe(1)
     await page.getByRole("button", { name: "添加对比", exact: true }).click()
@@ -152,7 +167,13 @@ for (const width of [1440, 360]) {
     await page.getByRole("button", { name: "沪深300 · sh000300", exact: true }).click()
     await expect(page.getByRole("button", { name: "移除对比 沪深300", exact: true })).toBeVisible()
     await page.getByRole("button", { name: "实盘运行计划", exact: true }).click()
-    await expect(page.getByText("实盘已终止，专属计划已自动清除。", { exact: true })).toBeVisible()
+    await expect(
+      page.getByText("已停止触发，保留终止时的计划配置。", { exact: true }),
+    ).toBeVisible()
+    await expect(page.getByRole("table", { name: "实盘计划列表" })).toContainText("30 10 * * 1-5")
+    await expect(page.getByRole("table", { name: "实盘计划列表" }).getByRole("button")).toHaveCount(
+      0,
+    )
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       width,
     )

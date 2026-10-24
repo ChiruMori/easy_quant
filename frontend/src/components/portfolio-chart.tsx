@@ -26,7 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { apiRequest } from "@/lib/api/client"
 
 export interface PortfolioSeries {
@@ -107,23 +107,16 @@ export const PortfolioChart = memo(function PortfolioChart({
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          size="sm"
-          value={unit}
-          onValueChange={(value) => {
-            if (value) setUnit(value)
-          }}
-          aria-label="图表显示单位"
-        >
-          <ToggleGroupItem value="amount" aria-label="金额（元）">
-            ￥
-          </ToggleGroupItem>
-          <ToggleGroupItem value="return_rate" aria-label="收益率（%）">
-            %
-          </ToggleGroupItem>
-        </ToggleGroup>
+        <Tabs value={unit} onValueChange={setUnit}>
+          <TabsList size="sm" aria-label="图表显示单位">
+            <TabsTrigger value="amount" aria-label="金额（元）">
+              ￥
+            </TabsTrigger>
+            <TabsTrigger value="return_rate" aria-label="收益率（%）">
+              %
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
         {comparisonsEnabled && (
           <Popover
             open={open}

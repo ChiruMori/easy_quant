@@ -40,7 +40,7 @@ export function StockPerformanceTable({ runId }: { runId: string }) {
           <Alert variant="destructive">
             <AlertDescription>
               {query.error.message}
-              <Button variant="link" onClick={() => void query.refetch()}>
+              <Button variant="outline" onClick={() => void query.refetch()}>
                 重试
               </Button>
             </AlertDescription>

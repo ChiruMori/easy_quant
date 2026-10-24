@@ -157,7 +157,7 @@ describe("实盘建议处理反馈", () => {
   })
 })
 
-it("显示实盘名称、独立资金和历史策略代码及链接", () => {
+it("显示实盘名称、独立资金和历史策略代码及链接", async () => {
   render(
     <TestRouter>
       <LiveDetailPage
@@ -187,7 +187,8 @@ it("显示实盘名称、独立资金和历史策略代码及链接", () => {
     "href",
     "/strategies/s/versions/v1",
   )
-  expect(screen.getByText("# immutable v1")).toBeInTheDocument()
+  fireEvent.click(screen.getByRole("button", { name: "预览策略代码" }))
+  expect(await screen.findByRole("textbox", { name: "策略代码预览" })).toHaveValue("# immutable v1")
 })
 
 it("慢估值不阻塞建议与资金，投递独立失败并可重试", async () => {

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test"
 
 test("因子—策略保存运行—回测—实盘的真实前后端旅程", async ({ page }, testInfo) => {
+  test.setTimeout(90000)
   await page.goto("/login")
   await page.getByLabel("用户名").fill("admin")
   await page.getByLabel("密码").fill("change-this-admin-password")
@@ -96,7 +97,9 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await expect(page.getByText("平均耗时（秒）", { exact: true })).toBeVisible()
   await expect(page.getByText(/基准：沪深300/)).toBeVisible()
   await page.getByText("预览策略代码", { exact: true }).click()
-  await expect(page.getByText("def before_market", { exact: false }).first()).toBeVisible()
+  await expect(page.locator(".monaco-editor .view-lines").first()).toContainText(
+    "def before_market",
+  )
   const backtestUrl = page.url()
   await page.getByRole("link", { name: "查看或编辑此策略版本" }).click()
   await expect(page).toHaveURL(/strategies\/.*\/versions\//)

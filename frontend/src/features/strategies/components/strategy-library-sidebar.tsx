@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { ArrowUpRight } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
 
@@ -9,6 +10,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { apiRequest } from "@/lib/api/client"
@@ -33,13 +35,13 @@ export function StrategyLibrarySidebar() {
           <CardTitle>
             <h2>策略公共库</h2>
           </CardTitle>
-          <CardDescription>
-            快测、回测、实盘共用接口。指标见{" "}
-            <Link to="/factors" className="underline">
+          <CardDescription>快测、回测、实盘共用接口。</CardDescription>
+          <Button variant="outline" size="sm" className="w-fit" asChild>
+            <Link to="/factors">
+              <ArrowUpRight />
               因子目录
             </Link>
-            。
-          </CardDescription>
+          </Button>
           <Input
             aria-label="搜索库函数"
             placeholder="搜索名称、签名或描述"

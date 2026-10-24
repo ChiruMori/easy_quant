@@ -131,7 +131,7 @@ for (const width of [1440, 360]) {
     await expect(page.getByRole("columnheader", { name: "创建时间" })).toBeVisible()
     await expect(page.getByRole("cell", { name: "2026/10/21 10:00:00" })).toBeVisible()
     await page.goto("/backtests/chart-v1")
-    await page.getByRole("radio", { name: "收益率（%）", exact: true }).click()
+    await page.getByRole("tab", { name: "收益率（%）", exact: true }).click()
     await expect(page.getByRole("img", { name: /组合权益曲线/ })).toHaveAttribute(
       "aria-label",
       /单位为%/,
@@ -154,7 +154,7 @@ for (const width of [1440, 360]) {
     await expect(page.locator('[data-slot="popover-content"] button[title]')).toHaveCount(20)
     await page.getByRole("button", { name: "同期回测", exact: true }).click()
     await expect(page.getByRole("button", { name: "移除对比 同期回测", exact: true })).toBeVisible()
-    const unitBox = await page.getByRole("radio", { name: "金额（元）" }).boundingBox()
+    const unitBox = await page.getByRole("tablist", { name: "图表显示单位" }).boundingBox()
     const addBox = await page.getByRole("button", { name: "添加对比", exact: true }).boundingBox()
     const tagBox = await page
       .getByRole("button", { name: "移除对比 同期回测", exact: true })
@@ -164,7 +164,7 @@ for (const width of [1440, 360]) {
     expect(addBox?.height).toBe(unitBox?.height)
     expect(tagBox?.height).toBe(unitBox?.height)
 
-    await page.getByRole("radio", { name: "金额（元）", exact: true }).click()
+    await page.getByRole("tab", { name: "金额（元）", exact: true }).click()
     const paths = page.locator(".recharts-line-curve")
     await expect(paths).toHaveCount(3)
     for (const path of await paths.all())
@@ -183,7 +183,7 @@ for (const width of [1440, 360]) {
       "12.44 元",
     )
     await expect(page.getByRole("cell", { name: /ntfy_transport/ })).toBeVisible()
-    await page.getByRole("radio", { name: "收益率（%）", exact: true }).click()
+    await page.getByRole("tab", { name: "收益率（%）", exact: true }).click()
     await expect(page.getByRole("img", { name: /累计收益曲线/ })).toHaveAttribute(
       "aria-label",
       /单位为%/,

@@ -60,8 +60,8 @@ for (const width of [1440, 360]) {
     await page.getByLabel("回测名称", { exact: true }).fill("历史回测重命名")
     await page.getByRole("button", { name: "保存名称", exact: true }).click()
     await expect(page.getByRole("heading", { name: "回测详情 · 历史回测重命名" })).toBeVisible()
-    await expect(page.getByRole("radio", { name: "金额（元）" })).toHaveText("￥")
-    await expect(page.getByRole("radio", { name: "收益率（%）" })).toHaveText("%")
+    await expect(page.getByRole("tab", { name: "金额（元）" })).toHaveText("￥")
+    await expect(page.getByRole("tab", { name: "收益率（%）" })).toHaveText("%")
     await expect(page.getByRole("table", { name: "股票收益明细" })).toContainText("300.00")
     await page
       .getByRole("navigation", { name: "股票收益分页" })

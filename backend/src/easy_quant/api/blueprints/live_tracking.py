@@ -475,8 +475,6 @@ def live_schedules(instance_id: str):
     item = container.state.live_instances.get(instance_id)
     if item is None or item["owner_id"] != g.current_user.id:
         raise NotFoundError("live_instance")
-    if item["status"] == "terminated":
-        return success([])
     return success(
         [
             row
@@ -485,3 +483,63 @@ def live_schedules(instance_id: str):
             and row.get("configuration", {}).get("instance_id") == instance_id
         ]
     )
+
+
+@blueprint.patch("/<instance_id>/schedules/<schedule_id>")
+@require_user
+@resource_mutation
+def update_live_schedule(instance_id: str, schedule_id: str):
+    from easy_quant.application.services.scheduled_tasks import next_run
+    from easy_quant.domain.scheduling.entities import ScheduledTask, ScheduleKind
+
+    container = get_container()
+    instance = container.state.live_instances.get(instance_id)
+    row = container.state.schedules.get(schedule_id)
+    if (
+        instance is None
+        or instance["owner_id"] != g.current_user.id
+        or row is None
+        or not is_live_schedule(row)
+        or row.get("configuration", {}).get("instance_id") != instance_id
+    ):
+        raise NotFoundError("live_schedule")
+    if instance["status"] != "paused":
+        raise StateConflictError("仅暂停的实盘可修改运行时间")
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or set(payload) != {"schedule_expression"}:
+        raise ValidationError("仅允许修改时间表达式")
+    expression = payload["schedule_expression"]
+    if not isinstance(expression, str) or not expression.strip() or len(expression) > 120:
+        raise ValidationError("请输入有效的五段 Cron 表达式")
+    now = container.authentication.clock.now()
+    following = next_run(
+        ScheduledTask(
+            schedule_id,
+            "live-analysis",
+            ScheduleKind.CRON,
+            expression.strip(),
+            str(row.get("timezone", "Asia/Shanghai")),
+            dict(row["configuration"]),
+            now,
+        ),
+        now,
+    )
+    updated = {
+        **row,
+        "schedule_kind": "cron",
+        "schedule_expression": expression.strip(),
+        "custom_expression": True,
+        "next_run_at": following.isoformat(),
+        "enabled": False,
+    }
+    container.state.schedules[schedule_id] = updated
+    record_audit(
+        container,
+        actor_user_id=g.current_user.id,
+        action="update",
+        resource_type="live_schedule",
+        resource_id=schedule_id,
+        before={"schedule_expression": row["schedule_expression"]},
+        after={"instance_id": instance_id, "schedule_expression": expression.strip()},
+    )
+    return success(updated)

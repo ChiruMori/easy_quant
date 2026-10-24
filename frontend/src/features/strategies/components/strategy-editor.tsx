@@ -1,6 +1,9 @@
-import { python } from "@codemirror/lang-python"
-import { basicSetup, EditorView } from "codemirror"
-import { useEffect, useRef } from "react"
+import { useQuery } from "@tanstack/react-query"
+
+import { CodeWorkspace } from "@/components/code-workspace"
+import { apiRequest } from "@/lib/api/client"
+
+import type { LibraryEntry } from "../types"
 
 export function StrategyEditor({
   value,
@@ -9,46 +12,11 @@ export function StrategyEditor({
   value: string
   onChange: (value: string) => void
 }) {
-  const host = useRef<HTMLDivElement>(null)
-  const initialValue = useRef(value)
-  const viewRef = useRef<EditorView | null>(null)
-  const onChangeRef = useRef(onChange)
-  onChangeRef.current = onChange
-  useEffect(() => {
-    if (!host.current) return
-    const view = new EditorView({
-      parent: host.current,
-      doc: initialValue.current,
-      extensions: [
-        basicSetup,
-        EditorView.contentAttributes.of({ "aria-label": "策略代码" }),
-        EditorView.theme({
-          "&": { maxHeight: "32rem" },
-          ".cm-scroller": { overflow: "auto" },
-        }),
-        python(),
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged) onChangeRef.current(update.state.doc.toString())
-        }),
-      ],
-    })
-    viewRef.current = view
-    return () => {
-      viewRef.current = null
-      view.destroy()
-    }
-  }, [])
-  useEffect(() => {
-    const view = viewRef.current
-    if (view && view.state.doc.toString() !== value) {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
-    }
-  }, [value])
+  const library = useQuery({
+    queryKey: ["strategy-library"],
+    queryFn: () => apiRequest<LibraryEntry[]>("/strategy-library"),
+  })
   return (
-    <div
-      aria-label="策略代码编辑器"
-      className="min-w-0 overflow-hidden rounded-md border"
-      ref={host}
-    />
+    <CodeWorkspace value={value} onChange={onChange} readOnly={false} completions={library.data} />
   )
 }

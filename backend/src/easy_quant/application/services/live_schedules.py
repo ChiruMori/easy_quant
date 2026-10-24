@@ -15,10 +15,15 @@ def sync_live_schedules(container, instance_id: str, *, create=False):
         for key, row in schedules.items()
         if is_live_schedule(row) and row.get("configuration", {}).get("instance_id") == instance_id
     ]
-    if instance is None or instance.get("status") == "terminated":
+    if instance is None:
         for key, _ in linked:
             del schedules[key]
         return []
+    if instance.get("status") == "terminated":
+        for key, row in linked:
+            if row.get("enabled", True):
+                schedules[key] = {**row, "enabled": False}
+        return [dict(row, enabled=False) for _, row in linked]
     hour, minute = container.settings.intraday_run_time.split(":")[:2]
     phases = {"before_market": "0 9 * * 1-5", "on_market": f"{int(minute)} {int(hour)} * * 1-5"}
     if instance.get("after_market_enabled", False):
@@ -40,7 +45,7 @@ def sync_live_schedules(container, instance_id: str, *, create=False):
                         key,
                         "live-analysis",
                         ScheduleKind.CRON,
-                        phases[phase],
+                        str(row.get("schedule_expression") or phases[phase]),
                         "Asia/Shanghai",
                         row["configuration"],
                         now,

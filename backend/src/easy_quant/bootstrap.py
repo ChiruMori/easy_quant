@@ -529,7 +529,7 @@ def build_worker():
             if job_type == "live-analysis" and payload.get("phase") == "on_market":
                 run_time = time.fromisoformat(container.settings.intraday_run_time)
                 expression = f"{run_time.minute} {run_time.hour} * * 1-5"
-                if (
+                if not schedule.get("custom_expression") and (
                     schedule.get("schedule_kind") != "cron"
                     or schedule.get("schedule_expression") != expression
                 ):
@@ -554,7 +554,7 @@ def build_worker():
             local_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
             if job_type == "live-analysis":
                 phase = payload.get("phase")
-                if phase == "on_market":
+                if phase == "on_market" and not schedule.get("custom_expression"):
                     run_time = time.fromisoformat(container.settings.intraday_run_time)
                     schedule["schedule_kind"] = "cron"
                     schedule["schedule_expression"] = f"{run_time.minute} {run_time.hour} * * 1-5"

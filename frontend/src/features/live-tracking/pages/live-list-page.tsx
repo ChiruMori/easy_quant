@@ -51,7 +51,7 @@ function LiveReturnRate({ item, load }: { item: LiveInstance; load: boolean }) {
     return <Skeleton className="h-5 w-16" aria-label="正在加载收益率" />
   if (query.error)
     return (
-      <Button variant="link" size="sm" onClick={() => void query.refetch()}>
+      <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
         重试收益率
       </Button>
     )
@@ -135,7 +135,7 @@ export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {})
             <Alert variant="destructive">
               <AlertDescription>
                 {query.error.message}
-                <Button variant="link" onClick={() => void query.refetch()}>
+                <Button variant="outline" onClick={() => void query.refetch()}>
                   重试
                 </Button>
               </AlertDescription>
@@ -171,7 +171,7 @@ export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {})
                       <TableRow key={item.id}>
                         <TableCell>
                           <Link
-                            className="block max-w-48 truncate underline"
+                            className="block max-w-48 truncate font-medium text-primary hover:opacity-80"
                             title={item.name || item.id}
                             to={`/live/${item.id}`}
                           >
