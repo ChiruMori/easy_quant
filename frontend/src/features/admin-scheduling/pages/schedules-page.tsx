@@ -237,7 +237,7 @@ export function SchedulesPage() {
         </TableHeader>
         <TableBody>
           {query.data?.map((item) => (
-            <TableRow key={item.id}>
+            <TableRow key={item.id} data-testid={`schedule-${item.id}`}>
               <TableCell>{localizedLabel(item.task_type)}</TableCell>
               <TableCell>{item.schedule_expression}</TableCell>
               <TableCell>{item.timezone}</TableCell>

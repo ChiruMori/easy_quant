@@ -16,7 +16,8 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix --max-warnings 0",
     "fix": "pnpm format && pnpm lint:fix",
-    "check": "pnpm format:check && pnpm lint && pnpm test && pnpm build"
+    "check": "pnpm format:check && pnpm lint && pnpm test && pnpm build",
+    "test:e2e:smoke": "playwright test tests/e2e/backtest-journey.spec.ts tests/e2e/code-workspace.spec.ts tests/e2e/live-owned-plans.spec.ts tests/e2e/live-freeze-layout.spec.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

@@ -1,0 +1,48 @@
+name: 手动完整浏览器回归
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: 安装冻结依赖
+        run: |
+          uv sync --project backend --frozen
+          pnpm --dir frontend install --frozen-lockfile
+      - name: 构建浏览器验收产物
+        run: pnpm --dir frontend build
+      - name: 准备验收浏览器
+        run: |
+          if ! pnpm --dir frontend exec node -e "require('@playwright/test').chromium.launch({channel:'chrome'}).then(browser => browser.close()).catch(error => { console.error(error.message); process.exit(1); })"; then
+            pnpm --dir frontend exec playwright install --with-deps chrome
+          fi
+      - name: 完整离线浏览器回归
+        run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-${{ github.sha }}
+          path: frontend/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
