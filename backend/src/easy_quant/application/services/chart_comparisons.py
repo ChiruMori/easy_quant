@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from easy_quant.application.services.live_reporting import portfolio_summary, reporting_snapshot
+from easy_quant.application.services.live_reporting import read_portfolio
 from easy_quant.domain.market_data.indices import INDEX_CATALOG, index_instruments
 from easy_quant.domain.shared.errors import NotFoundError, StateConflictError, ValidationError
 
@@ -126,14 +126,7 @@ def comparison_series(
     elif kind == "live":
         if other_run_id:
             raise ValidationError("实盘仅支持添加指数或股票比较")
-        with container.live_tracking.transaction() as state:
-            instance = state.instances.get(identifier)
-            if instance is None or instance["owner_id"] != owner_id:
-                raise NotFoundError("live_instance")
-            if instance.get("status") == "terminated":
-                raise StateConflictError("实盘已终止，停止收益跟踪与行情比较")
-            snapshot = reporting_snapshot(state, identifier)
-        summary = portfolio_summary(snapshot, identifier, container.market_data, now)
+        summary = read_portfolio(container, identifier, owner_id)
         if summary["initial_equity"] is None:
             raise StateConflictError("缺少启动持仓估值，暂不能归一比较曲线")
         base = Decimal(str(summary["initial_equity"]))
@@ -145,6 +138,7 @@ def comparison_series(
             for point in summary["curve"]
         ]
         baseline_at = points[0][1]
+        now = min(now, datetime.fromisoformat(summary["at"]))
     else:
         raise NotFoundError("comparison")
     if base <= 0 or not points:
@@ -160,6 +154,21 @@ def comparison_series(
         ),
         key=lambda row: (str(row["trading_day"]), str(row["available_at"])),
     )
+    if kind == "live":
+        # 比较覆盖整个存续区间，包括暂停和空仓期间，终止后不得延长。
+        end = points[-1][1]
+        by_day = dict(points)
+        for row in bars:
+            available = datetime.fromisoformat(str(row["available_at"]))
+            if baseline_at <= available <= min(end, now):
+                at = min(
+                    end,
+                    datetime.combine(date.fromisoformat(str(row["trading_day"])), time.max, ZONE),
+                )
+                day = at.astimezone(ZONE).date().isoformat()
+                if baseline_at <= at <= end:
+                    by_day.setdefault(day, at)
+        points = sorted(by_day.items())
 
     def known_price(at):
         found = [

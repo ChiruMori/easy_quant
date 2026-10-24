@@ -88,8 +88,38 @@ for (const width of [1440, 360]) {
           },
         })
       }
+      if (path.endsWith("/schedules"))
+        return route.fulfill({
+          json: {
+            data: [
+              {
+                id: "historic",
+                task_type: "live-analysis",
+                configuration: { instance_id: "freeze-22", phase: "on_market" },
+                enabled: false,
+                schedule_expression: "30 10 * * 1-5",
+                timezone: "Asia/Shanghai",
+              },
+            ],
+          },
+        })
       if (path.endsWith("/deliveries"))
         return route.fulfill({ json: { data: { items: [], total: 0, page: 1, page_size: 20 } } })
+      if (path === "/chart-comparisons/instruments")
+        return route.fulfill({ json: { data: [{ id: "sh000300", name: "沪深300" }] } })
+      if (path.startsWith("/chart-comparisons/live/"))
+        return route.fulfill({
+          json: {
+            data: {
+              id: "instrument:sh000300",
+              name: "沪深300",
+              points: [
+                { day: "2026-10-22", amount: "0", return_rate: "0" },
+                { day: "2026-10-23", amount: "20", return_rate: "0.02" },
+              ],
+            },
+          },
+        })
       if (path.startsWith("/live-instances/"))
         return route.fulfill({ json: { data: rows.find((row) => path.endsWith(row.id)) } })
       return route.fulfill({ json: { data: [] } })
@@ -125,12 +155,25 @@ for (const width of [1440, 360]) {
       "-10.00%",
     )
     await expect(page.getByText("实盘收益曲线", { exact: true })).toBeVisible()
-    await page.getByRole("radio", { name: "收益率（%）", exact: true }).click()
-    await expect(page.getByRole("radio", { name: "收益率（%）", exact: true })).toHaveAttribute(
+    await page.getByRole("tab", { name: "收益率（%）", exact: true }).click()
+    await expect(page.getByRole("tab", { name: "收益率（%）", exact: true })).toHaveAttribute(
       "data-state",
-      "on",
+      "active",
     )
     expect(frozenReads).toBe(1)
+    await page.getByRole("button", { name: "添加对比", exact: true }).click()
+    await page.getByLabel("搜索对比对象").fill("沪深300")
+    await page.getByRole("dialog").getByRole("button", { name: "搜索", exact: true }).click()
+    await page.getByRole("button", { name: "沪深300 · sh000300", exact: true }).click()
+    await expect(page.getByRole("button", { name: "移除对比 沪深300", exact: true })).toBeVisible()
+    await page.getByRole("button", { name: "实盘运行计划", exact: true }).click()
+    await expect(
+      page.getByText("已停止触发，保留终止时的计划配置。", { exact: true }),
+    ).toBeVisible()
+    await expect(page.getByRole("table", { name: "实盘计划列表" })).toContainText("30 10 * * 1-5")
+    await expect(page.getByRole("table", { name: "实盘计划列表" }).getByRole("button")).toHaveCount(
+      0,
+    )
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       width,
     )

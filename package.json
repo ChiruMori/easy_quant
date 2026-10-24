@@ -26,7 +26,8 @@
     "test:e2e": "pnpm --dir frontend test:e2e",
     "build": "pnpm --dir frontend build",
     "migrate": "uv run --project backend alembic -c backend/alembic.ini upgrade head",
-    "health": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/health.ps1"
+    "health": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/health.ps1",
+    "test:e2e:smoke": "pnpm --dir frontend test:e2e:smoke"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

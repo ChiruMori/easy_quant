@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -8,7 +9,9 @@ from easy_quant.application.services.chart_comparisons import (
     comparison_series,
     search_instruments,
 )
+from easy_quant.application.services.live_reporting import portfolio_summary
 from easy_quant.domain.shared.errors import NotFoundError, StateConflictError, ValidationError
+from tests.fakes.core import FixedClock
 from tests.fakes.live_tracking import action_container
 
 
@@ -137,3 +140,37 @@ def test_candidates_use_names_without_dates_and_limit_to_twenty():
     rows = comparison_candidates(c, "main", "u", "匹配名称")
     assert len(rows) == 20
     assert all(row["name"].startswith("匹配名称") and "2026-" not in row["name"] for row in rows)
+
+
+def test_terminated_comparison_covers_pauses_but_never_extends_frozen_period():
+    c = setup()
+    c.state.live_instances["l"]["started_at"] = "2026-09-28T08:00:00+00:00"
+    c.state.live_instances["l"]["status"] = "paused"
+    end = c.authentication.clock.now()
+    with c.live_tracking.transaction() as state:
+        frozen = portfolio_summary(state, "l", c.market_data, end)
+    c.state.live_instances["l"].update(
+        status="terminated", terminated_at=end.isoformat(), frozen_portfolio=frozen
+    )
+    assert isinstance(c.authentication.clock, FixedClock)
+    c.authentication.clock.advance(timedelta(days=7))
+    c.market_data.upsert_bars(
+        [
+            {
+                "symbol": "000001",
+                "trading_day": "2026-09-30",
+                "available_at": "2026-09-30T15:00:00+08:00",
+                "open": "99",
+                "high": "99",
+                "low": "99",
+                "close": "99",
+                "volume": "1",
+            }
+        ]
+    )
+    result = comparison_series(c, "live", "l", "u", symbol="000001")
+    assert [row["day"] for row in result["points"]] == ["2026-09-28", "2026-09-29"]
+    assert Decimal(result["points"][-1]["return_rate"]) == Decimal(".2")
+    assert c.state.live_instances["l"]["frozen_portfolio"] == frozen
+    with pytest.raises(NotFoundError):
+        comparison_series(c, "live", "l", "other", symbol="000001")

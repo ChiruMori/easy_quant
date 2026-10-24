@@ -105,7 +105,7 @@ export function BacktestCreatePage() {
                 <AlertTitle>尚无可用策略版本</AlertTitle>
                 <AlertDescription>
                   请先保存策略版本，再创建回测。
-                  <Button variant="link" asChild>
+                  <Button variant="outline" asChild>
                     <Link to="/strategies">前往策略工作台</Link>
                   </Button>
                 </AlertDescription>

@@ -70,6 +70,8 @@ export function NotificationSettingsPage() {
   const [name, setName] = useState("")
   const [channel, setChannel] = useState("ntfy")
   const [destination, setDestination] = useState("")
+  const [signingSecret, setSigningSecret] = useState("")
+  const [secretVisible, setSecretVisible] = useState(false)
   const [visible, setVisible] = useState(false)
   const [targets, setTargets] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState("")
@@ -91,6 +93,8 @@ export function NotificationSettingsPage() {
   function closeEditor() {
     setEditing(null)
     setDestination("")
+    setSigningSecret("")
+    setSecretVisible(false)
     setVisible(false)
     setFormError("")
   }
@@ -100,12 +104,16 @@ export function NotificationSettingsPage() {
     setName(item?.name ?? "")
     setChannel(item?.channel ?? "ntfy")
     setDestination("")
+    setSigningSecret("")
+    setSecretVisible(false)
     setVisible(false)
     setFormError("")
     if (item)
       await perform(
         async () => {
-          setDestination((await getSubscription(item.id)).destination)
+          const details = await getSubscription(item.id)
+          setDestination(details.destination)
+          setSigningSecret(details.signing_secret ?? "")
         },
         (message) => setFormError(message ? "原目标无法读取，请重新填写后保存。" : ""),
       )
@@ -150,7 +158,10 @@ export function NotificationSettingsPage() {
           {subscriptions.data && (
             <>
               {!subscriptions.data.items.length && (
-                <EmptyState title="尚无通知渠道" message="添加邮件或 ntfy 渠道以接收操作建议。" />
+                <EmptyState
+                  title="尚无通知渠道"
+                  message="添加邮件、ntfy 或群机器人以接收操作建议。"
+                />
               )}
               {!!subscriptions.data.items.length && (
                 <Table aria-label="已配置渠道" className="min-w-[680px]">
@@ -380,7 +391,8 @@ export function NotificationSettingsPage() {
           <DialogHeader>
             <DialogTitle>{editing === "new" ? "添加通知渠道" : "编辑通知渠道"}</DialogTitle>
             <DialogDescription>
-              邮件填写收件地址；ntfy 填写主题或完整地址。目标加密保存，编辑不会更改启用状态。
+              邮件填写收件地址，ntfy 填写主题或完整地址，机器人填写完整
+              Webhook。目标和签名密钥均加密保存，编辑不会更改启用状态。
             </DialogDescription>
           </DialogHeader>
           <form
@@ -388,9 +400,21 @@ export function NotificationSettingsPage() {
             onSubmit={(event) => {
               event.preventDefault()
               void perform(async () => {
-                if (editing === "new") await addSubscription(channel, destination, name)
+                if (editing === "new")
+                  await addSubscription(
+                    channel,
+                    destination,
+                    name,
+                    ["dingtalk", "feishu"].includes(channel) ? signingSecret : undefined,
+                  )
                 else if (editing)
-                  await updateSubscription(editing.id, editing.enabled, name, destination)
+                  await updateSubscription(
+                    editing.id,
+                    editing.enabled,
+                    name,
+                    destination,
+                    ["dingtalk", "feishu"].includes(channel) ? signingSecret : undefined,
+                  )
                 setTargets({})
                 closeEditor()
                 await client.invalidateQueries({ queryKey: ["notifications", "subscriptions"] })
@@ -414,7 +438,11 @@ export function NotificationSettingsPage() {
                 <FieldLabel htmlFor="notification-channel">渠道</FieldLabel>
                 <Select
                   value={channel}
-                  onValueChange={setChannel}
+                  onValueChange={(value) => {
+                    setChannel(value)
+                    setSigningSecret("")
+                    setSecretVisible(false)
+                  }}
                   disabled={busy || editing !== "new"}
                 >
                   <SelectTrigger id="notification-channel">
@@ -424,6 +452,9 @@ export function NotificationSettingsPage() {
                     <SelectGroup>
                       <SelectItem value="email">邮件</SelectItem>
                       <SelectItem value="ntfy">ntfy</SelectItem>
+                      <SelectItem value="dingtalk">钉钉机器人</SelectItem>
+                      <SelectItem value="feishu">飞书机器人</SelectItem>
+                      <SelectItem value="wecom">企业微信机器人</SelectItem>
                     </SelectGroup>
                   </SelectContent>
                 </Select>
@@ -433,6 +464,11 @@ export function NotificationSettingsPage() {
                 <div className="flex min-w-0 items-center gap-2">
                   <Input
                     id="destination"
+                    placeholder={
+                      ["dingtalk", "feishu", "wecom"].includes(channel)
+                        ? "完整 HTTPS 群机器人 Webhook 地址"
+                        : undefined
+                    }
                     type={visible ? "text" : "password"}
                     autoComplete="off"
                     value={destination}
@@ -450,6 +486,32 @@ export function NotificationSettingsPage() {
                 </div>
                 <FieldDescription>目标仅在当前编辑窗口读取，关闭后清除。</FieldDescription>
               </Field>
+              {["dingtalk", "feishu"].includes(channel) && (
+                <Field>
+                  <FieldLabel htmlFor="signing-secret">签名密钥（可选）</FieldLabel>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Input
+                      id="signing-secret"
+                      type={secretVisible ? "text" : "password"}
+                      value={signingSecret}
+                      onChange={(event) => setSigningSecret(event.target.value)}
+                      maxLength={512}
+                      autoComplete="off"
+                      disabled={busy}
+                    />
+                    <IconButton
+                      icon={secretVisible ? EyeOff : Eye}
+                      label={secretVisible ? "隐藏签名密钥" : "显示签名密钥"}
+                      disabled={busy}
+                      onClick={() => setSecretVisible((value) => !value)}
+                    />
+                  </div>
+                  <FieldDescription>
+                    机器人开启签名校验时填写；未开启可留空，清空后保存可移除签名。若使用关键词校验，请设置关键词
+                    Easy Quant。测试投递可查看配置是否生效。
+                  </FieldDescription>
+                </Field>
+              )}
             </FieldGroup>
             {formError && (
               <Alert variant="destructive">

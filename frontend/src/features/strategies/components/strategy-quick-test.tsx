@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Play, RefreshCw } from "lucide-react"
 import { useState } from "react"
 
+import { CodePreview } from "@/components/code-preview"
 import { DatePicker } from "@/components/date-picker"
 import { IconButton } from "@/components/icon-button"
 import { RunTimingPanel } from "@/components/run-timing"
@@ -57,6 +58,7 @@ export function StrategyQuickTest({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-4">
+        <CodePreview value={source} label="预览当前测试代码" />
         <Field>
           <FieldLabel htmlFor="strategy-run-day">快速测试交易日</FieldLabel>
           <div className="flex min-w-0 items-center gap-2">

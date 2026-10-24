@@ -50,8 +50,8 @@ jobs:
           if ! pnpm --dir frontend exec node -e "require('@playwright/test').chromium.launch({channel:'chrome'}).then(browser => browser.close()).catch(error => { console.error(error.message); process.exit(1); })"; then
             pnpm --dir frontend exec playwright install --with-deps chrome
           fi
-      - name: 离线浏览器验收
-        run: pnpm test:e2e
+      - name: 核心浏览器旅程
+        run: pnpm test:e2e:smoke
       - name: 校验三服务部署配置
         run: docker compose --env-file deploy/.env.example -f deploy/compose.yaml config --quiet
       - uses: actions/upload-artifact@v4

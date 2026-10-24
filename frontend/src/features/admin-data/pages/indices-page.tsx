@@ -133,7 +133,10 @@ export function IndicesPanel() {
                     </TableCell>
                     <TableCell>
                       {item.record_count > 0 ? (
-                        <Link className="underline" to={`/admin/data/instruments/${item.symbol}`}>
+                        <Link
+                          className="font-medium text-primary hover:opacity-80"
+                          to={`/admin/data/instruments/${item.symbol}`}
+                        >
                           查看{item.name} K 线
                         </Link>
                       ) : (

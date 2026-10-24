@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { useState } from "react"
+import { Link } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { EmptyState } from "@/components/app-shell"
@@ -56,7 +57,18 @@ export function JobsPage() {
           <TableBody>
             {query.data.items.map((job) => (
               <TableRow key={job.id}>
-                <TableCell>{localizedLabel(job.job_type)}</TableCell>
+                <TableCell>
+                  {localizedLabel(job.job_type)}
+                  {job.live_instance && (
+                    <Link
+                      className="block max-w-48 truncate font-medium text-primary hover:opacity-80"
+                      title={`${job.live_instance.name} · ${job.live_instance.id}`}
+                      to={`/live/${job.live_instance.id}`}
+                    >
+                      {job.live_instance.name || job.live_instance.id}
+                    </Link>
+                  )}
+                </TableCell>
                 <TableCell>
                   <Badge variant="secondary">{localizedLabel(job.status)}</Badge>
                   {job.lease_expired && <Badge variant="destructive">租约已过期</Badge>}
@@ -66,6 +78,7 @@ export function JobsPage() {
                 <TableCell>
                   {job.error_summary?.message ||
                     (job.lease_expired ? "等待 worker 重新领取；请检查 worker 日志" : null) ||
+                    (job.result_summary?.skipped ? String(job.result_summary.skipped) : null) ||
                     (job.job_type === "tdx-daily-update" && job.result_summary
                       ? `更新 ${Number(job.result_summary.imported_days ?? 0)} 日 / ${Number(job.result_summary.imported_rows ?? 0)} 条；未变化 ${Number(job.result_summary.unchanged_days ?? 0)} 日；休市 ${Number(job.result_summary.closed_days ?? 0)} 日`
                       : job.job_type === "index-daily-update" && job.result_summary

@@ -41,6 +41,7 @@ export interface JobRecord {
   lease_until?: string | null
   lease_expired?: boolean
   attempt_count: number
+  live_instance?: { id: string; name: string } | null
   result_summary?: Record<string, unknown>
   error_summary?: { message?: string }
 }
@@ -60,3 +61,9 @@ export interface JobPage {
 }
 export const listJobs = (page = 1) => apiRequest<JobPage>(`/admin/jobs?page=${page}&page_size=20`)
 export const listAuditEvents = () => apiRequest<AuditRecord[]>("/admin/audit-events")
+
+export const deleteSchedule = (id: string) =>
+  apiRequest(`/admin/schedules/${id}`, {
+    method: "DELETE",
+    body: JSON.stringify({ confirmed: true }),
+  })

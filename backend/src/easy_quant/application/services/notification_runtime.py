@@ -92,6 +92,11 @@ def attempt_delivery(container: Any, delivery_id: str, *, recover: bool = False)
             raise PermanentDeliveryError("通知凭据不可解密", "credentials_unavailable")
         try:
             destination = container.secret_box.decrypt(str(subscription["destination_encrypted"]))
+            signing_secret = (
+                container.secret_box.decrypt(subscription["signing_secret_encrypted"])
+                if subscription.get("signing_secret_encrypted")
+                else None
+            )
         except Exception:
             raise PermanentDeliveryError("通知凭据不可解密", "credentials_unavailable") from None
         channel.send(
@@ -101,6 +106,7 @@ def attempt_delivery(container: Any, delivery_id: str, *, recover: bool = False)
                 ChannelType(str(delivery["channel"])),
                 destination,
                 True,
+                signing_secret=signing_secret,
             ),
             str(delivery["title"]),
             str(delivery["body"]),

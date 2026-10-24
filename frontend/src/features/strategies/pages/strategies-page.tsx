@@ -153,7 +153,7 @@ function StrategyList() {
                       <TableRow key={row.version_id}>
                         <TableCell>
                           <Link
-                            className="font-medium underline-offset-4 hover:underline"
+                            className="font-medium text-primary hover:opacity-80"
                             to={versionPath(row.id, row.version_id)}
                           >
                             {row.name}
@@ -177,7 +177,11 @@ function StrategyList() {
                           {row.live_instances.length ? (
                             <div className="flex flex-col gap-1">
                               {row.live_instances.map((live) => (
-                                <Link key={live.id} className="underline" to={`/live/${live.id}`}>
+                                <Link
+                                  key={live.id}
+                                  className="font-medium text-primary hover:opacity-80"
+                                  to={`/live/${live.id}`}
+                                >
                                   {live.name}
                                 </Link>
                               ))}

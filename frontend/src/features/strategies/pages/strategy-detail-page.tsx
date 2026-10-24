@@ -3,6 +3,7 @@ import { ArrowLeft, ChartNoAxesCombined } from "lucide-react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { CodeWorkspace } from "@/components/code-workspace"
 import { DeleteResourceButton } from "@/components/delete-resource-button"
 import { IconLink } from "@/components/icon-button"
 import { PageHeader } from "@/components/page-header"
@@ -80,7 +81,11 @@ export function StrategyDetailContent({
             关联实盘：
             {strategy.live_instances.length
               ? strategy.live_instances.map((row) => (
-                  <Link key={row.id} className="mr-3 underline" to={`/live/${row.id}`}>
+                  <Link
+                    key={row.id}
+                    className="mr-3 inline-flex items-center gap-1 font-medium text-primary hover:opacity-80"
+                    to={`/live/${row.id}`}
+                  >
                     {row.name}
                   </Link>
                 ))
@@ -102,9 +107,7 @@ export function StrategyDetailContent({
           <CardDescription>只读预览；使用编辑按钮修改草稿或创建新版本。</CardDescription>
         </CardHeader>
         <CardContent>
-          <pre className="max-h-[36rem] overflow-auto rounded-md bg-muted p-4 text-xs">
-            <code>{strategy.source_code}</code>
-          </pre>
+          <CodeWorkspace value={strategy.source_code ?? ""} />
         </CardContent>
       </Card>
       <StrategyQuickTest strategy={strategy} source={strategy.source_code ?? ""} />

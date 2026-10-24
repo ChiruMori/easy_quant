@@ -7,6 +7,9 @@ from enum import StrEnum
 class ChannelType(StrEnum):
     EMAIL = "email"
     NTFY = "ntfy"
+    DINGTALK = "dingtalk"
+    FEISHU = "feishu"
+    WECOM = "wecom"
 
 
 class DeliveryStatus(StrEnum):
@@ -23,6 +26,7 @@ class NotificationSubscription:
     channel: ChannelType
     destination: str
     enabled: bool = True
+    signing_secret: str | None = None
 
 
 @dataclass(slots=True)

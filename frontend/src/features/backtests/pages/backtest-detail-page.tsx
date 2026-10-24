@@ -118,9 +118,9 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
           <AlertDescription>
             {run.error ?? "请在后台任务中查看失败原因。"}
             {run.error_details?.action_url && (
-              <a href={run.error_details.action_url} className="underline">
-                前往数据管理补齐数据
-              </a>
+              <Button variant="outline" size="sm" asChild>
+                <a href={run.error_details.action_url}>前往数据管理补齐数据</a>
+              </Button>
             )}
             {run.error_details?.missing_data && (
               <div className="max-h-64 overflow-auto">

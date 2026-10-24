@@ -3,7 +3,8 @@ import { apiRequest } from "@/lib/api/client"
 export interface Subscription {
   name?: string
   id: string
-  channel: "email" | "ntfy"
+  channel: "email" | "ntfy" | "dingtalk" | "feishu" | "wecom"
+  signing_secret?: string
   destination: string
   enabled: boolean
 }
@@ -32,20 +33,26 @@ export const listDeliveries = (page = 1) =>
   apiRequest<NotificationPage<Delivery>>(`/notifications/deliveries?page=${page}&page_size=10`)
 export const getSubscription = (id: string) =>
   apiRequest<Subscription>(`/notifications/subscriptions/${id}`)
-export const addSubscription = (channel: string, destination: string, name: string) =>
+export const addSubscription = (
+  channel: string,
+  destination: string,
+  name: string,
+  signing_secret?: string,
+) =>
   apiRequest<Subscription>("/notifications/subscriptions", {
     method: "POST",
-    body: JSON.stringify({ channel, destination, name }),
+    body: JSON.stringify({ channel, destination, name, signing_secret }),
   })
 export const updateSubscription = (
   id: string,
   enabled: boolean,
   name?: string,
   destination?: string,
+  signing_secret?: string,
 ) =>
   apiRequest<Subscription>(`/notifications/subscriptions/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({ enabled, name, destination }),
+    body: JSON.stringify({ enabled, name, destination, signing_secret }),
   })
 
 export const testSubscription = (id: string) =>

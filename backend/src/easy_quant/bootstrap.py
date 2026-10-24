@@ -312,12 +312,15 @@ def build_container(settings: Settings | None = None) -> Container:
 def _build_notification_channels(settings: Settings) -> dict[str, Any]:
     import httpx
 
+    from easy_quant.infrastructure.notifications.bot_webhooks import BotWebhookChannel
     from easy_quant.infrastructure.notifications.email import EmailChannel
     from easy_quant.infrastructure.notifications.ntfy import NtfyChannel
 
     channels: dict[str, Any] = {
         "ntfy": NtfyChannel(httpx.Client(timeout=10.0), settings.ntfy_base_url)
     }
+    bot_channel = BotWebhookChannel(httpx.Client(timeout=10.0), SystemClock())
+    channels.update({key: bot_channel for key in ("dingtalk", "feishu", "wecom")})
     if settings.smtp_host and settings.smtp_sender:
         channels["email"] = EmailChannel(
             settings.smtp_host,
@@ -513,6 +516,9 @@ def build_worker():
             pump_schedules_locked()
 
     def pump_schedules_locked() -> None:
+        from easy_quant.application.services.live_schedules import reconcile_live_schedules
+
+        reconcile_live_schedules(container)
         now = container.authentication.clock.now()
         for schedule_id, schedule in list(container.state.schedules.items()):
             if not schedule.get("enabled", True):
@@ -523,7 +529,7 @@ def build_worker():
             if job_type == "live-analysis" and payload.get("phase") == "on_market":
                 run_time = time.fromisoformat(container.settings.intraday_run_time)
                 expression = f"{run_time.minute} {run_time.hour} * * 1-5"
-                if (
+                if not schedule.get("custom_expression") and (
                     schedule.get("schedule_kind") != "cron"
                     or schedule.get("schedule_expression") != expression
                 ):
@@ -548,7 +554,7 @@ def build_worker():
             local_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
             if job_type == "live-analysis":
                 phase = payload.get("phase")
-                if phase == "on_market":
+                if phase == "on_market" and not schedule.get("custom_expression"):
                     run_time = time.fromisoformat(container.settings.intraday_run_time)
                     schedule["schedule_kind"] = "cron"
                     schedule["schedule_expression"] = f"{run_time.minute} {run_time.hour} * * 1-5"
@@ -574,6 +580,9 @@ def build_worker():
                 payload["dataset_key"] = "daily-bars"
             from easy_quant.domain.scheduling.entities import Job
 
+            if job_type == "live-analysis":
+                instance = container.state.live_instances.get(str(payload.get("instance_id")), {})
+                payload["live_name"] = instance.get("name") or payload.get("instance_id")
             due = str(next_run_at)
             container.jobs.enqueue(
                 Job(UuidGenerator().new(), job_type, f"{schedule_id}:{due}", payload, now)

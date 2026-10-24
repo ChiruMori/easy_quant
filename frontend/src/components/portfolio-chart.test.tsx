@@ -28,7 +28,10 @@ it("切换单位、临时添加移除与失败后重试；实盘无回测来源"
     .mockRejectedValueOnce(new Error("缺少行情"))
     .mockResolvedValueOnce({ id: "instrument:sh000300", name: "沪深300", points: series[0].points })
   render(<PortfolioChart kind="live" resourceId="l" series={series} amountLabel="累计收益" />)
-  fireEvent.click(screen.getByRole("radio", { name: "收益率（%）" }))
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "收益率（%）" }), {
+    button: 0,
+    ctrlKey: false,
+  })
   expect(screen.getByRole("img")).toHaveAccessibleName(/单位为%/)
   fireEvent.click(screen.getByRole("button", { name: "添加对比" }))
   expect(screen.queryByRole("combobox", { name: "对比来源" })).not.toBeInTheDocument()

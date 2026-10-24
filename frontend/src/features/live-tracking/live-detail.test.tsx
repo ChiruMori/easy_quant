@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import type { PropsWithChildren } from "react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -19,6 +21,7 @@ vi.mock("./api", () => ({
   getLiveDeliveries: vi.fn(),
   pauseLive: vi.fn(),
   terminateLive: vi.fn(),
+  resumeLive: vi.fn(),
   listOperations: vi.fn(),
   manualOperation: vi.fn(),
 }))
@@ -66,9 +69,9 @@ describe("实盘建议处理反馈", () => {
     vi.mocked(getLive).mockResolvedValue({ ...instance, operations })
     vi.mocked(listOperations).mockResolvedValue(operations)
     render(
-      <MemoryRouter>
+      <TestRouter>
         <LiveDetailPage instance={instance} />
-      </MemoryRouter>,
+      </TestRouter>,
     )
     fireEvent.click(screen.getByRole("button", { name: "接受建议" }))
     fireEvent.click(screen.getByRole("button", { name: "确认接受建议" }))
@@ -80,9 +83,9 @@ describe("实盘建议处理反馈", () => {
   it("成功后立即更新状态并禁用已处理按钮", async () => {
     vi.mocked(actOnRecommendation).mockResolvedValue(result)
     render(
-      <MemoryRouter>
+      <TestRouter>
         <LiveDetailPage instance={instance} />
-      </MemoryRouter>,
+      </TestRouter>,
     )
     fireEvent.click(screen.getByRole("button", { name: "接受建议" }))
     fireEvent.click(screen.getByRole("button", { name: "确认接受建议" }))
@@ -97,9 +100,9 @@ describe("实盘建议处理反馈", () => {
       .mockResolvedValueOnce(result)
     vi.mocked(getLive).mockResolvedValue(instance)
     render(
-      <MemoryRouter>
+      <TestRouter>
         <LiveDetailPage instance={instance} />
-      </MemoryRouter>,
+      </TestRouter>,
     )
     fireEvent.click(screen.getByRole("button", { name: "接受建议" }))
     fireEvent.click(screen.getByRole("button", { name: "确认接受建议" }))
@@ -119,9 +122,9 @@ describe("实盘建议处理反馈", () => {
       }),
     )
     render(
-      <MemoryRouter>
+      <TestRouter>
         <LiveDetailPage instance={instance} />
-      </MemoryRouter>,
+      </TestRouter>,
     )
     const button = screen.getByRole("button", { name: "接受建议" })
     fireEvent.click(button)
@@ -142,9 +145,9 @@ describe("实盘建议处理反馈", () => {
       next_decision_at: instance.next_decision_at,
     })
     render(
-      <MemoryRouter>
+      <TestRouter>
         <LiveDetailPage instance={instance} />
-      </MemoryRouter>,
+      </TestRouter>,
     )
     fireEvent.click(screen.getByRole("button", { name: "暂停" }))
     expect(pauseLive).not.toHaveBeenCalled()
@@ -154,9 +157,9 @@ describe("实盘建议处理反馈", () => {
   })
 })
 
-it("显示实盘名称、独立资金和历史策略代码及链接", () => {
+it("显示实盘名称、独立资金和历史策略代码及链接", async () => {
   render(
-    <MemoryRouter>
+    <TestRouter>
       <LiveDetailPage
         instance={{
           ...instance,
@@ -174,7 +177,7 @@ it("显示实盘名称、独立资金和历史策略代码及链接", () => {
           },
         }}
       />
-    </MemoryRouter>,
+    </TestRouter>,
   )
   expect(screen.getByRole("heading", { name: "实盘实例 我的实盘" })).toBeInTheDocument()
   fireEvent.click(screen.getByRole("button", { name: "策略与启动配置" }))
@@ -184,7 +187,8 @@ it("显示实盘名称、独立资金和历史策略代码及链接", () => {
     "href",
     "/strategies/s/versions/v1",
   )
-  expect(screen.getByText("# immutable v1")).toBeInTheDocument()
+  fireEvent.click(screen.getByRole("button", { name: "预览策略代码" }))
+  expect(await screen.findByRole("textbox", { name: "策略代码预览" })).toHaveValue("# immutable v1")
 })
 
 it("慢估值不阻塞建议与资金，投递独立失败并可重试", async () => {
@@ -193,7 +197,7 @@ it("慢估值不阻塞建议与资金，投递独立失败并可重试", async (
     .mockRejectedValueOnce(new Error("投递读取失败"))
     .mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 20 })
   render(
-    <MemoryRouter>
+    <TestRouter>
       <LiveDetailPage
         progressive
         instance={{
@@ -208,7 +212,7 @@ it("慢估值不阻塞建议与资金，投递独立失败并可重试", async (
           },
         }}
       />
-    </MemoryRouter>,
+    </TestRouter>,
   )
   expect(screen.getByRole("button", { name: "接受建议" })).toBeInTheDocument()
   expect(screen.getByText("80.00 元")).toBeInTheDocument()
@@ -218,3 +222,13 @@ it("慢估值不阻塞建议与资金，投递独立失败并可重试", async (
   await waitFor(() => expect(getLiveDeliveries).toHaveBeenCalledTimes(2))
   expect(getLivePortfolio).toHaveBeenCalledTimes(1)
 })
+
+function TestRouter({ children }: PropsWithChildren) {
+  return (
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MemoryRouter>{children}</MemoryRouter>
+    </QueryClientProvider>
+  )
+}

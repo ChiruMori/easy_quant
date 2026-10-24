@@ -1,5 +1,6 @@
 import Decimal from "decimal.js"
-import { Pause, RefreshCw, Square } from "lucide-react"
+import { ArrowUpRight } from "lucide-react"
+import { Pause, Play, RefreshCw, Square } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 
@@ -51,8 +52,10 @@ import {
   getLivePortfolio,
   listOperations,
   pauseLive,
+  resumeLive,
   terminateLive,
 } from "../api"
+import { LiveSchedulePanel } from "../components/live-schedule-panel"
 import { ManualOperationDialog } from "../components/manual-operation-dialog"
 import { RecommendationActions } from "../components/recommendation-actions"
 
@@ -234,6 +237,22 @@ export function LiveDetailPage({
                 }
               />
             )}
+            {current.status === "paused" && (
+              <ConfirmAction
+                icon={Play}
+                label="恢复实盘"
+                title="确认恢复实盘"
+                description="恢复后将按计划继续生成操作建议，资金及持仓以已记录的实际操作为准。"
+                destructive={false}
+                disabled={busy}
+                action={() =>
+                  runAction(async () => {
+                    const result = await resumeLive(current.id)
+                    setCurrent((previous) => ({ ...previous, ...result }))
+                  })
+                }
+              />
+            )}
             {current.status !== "terminated" && (
               <ConfirmAction
                 icon={Square}
@@ -264,6 +283,7 @@ export function LiveDetailPage({
           </div>
         }
       />
+      <LiveSchedulePanel instanceId={current.id} status={current.status} />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>操作未完成</AlertTitle>
@@ -337,7 +357,10 @@ export function LiveDetailPage({
               <Alert variant="destructive">
                 <AlertDescription>
                   {portfolioError}
-                  <Button variant="link" onClick={() => setPortfolioRevision((value) => value + 1)}>
+                  <Button
+                    variant="outline"
+                    onClick={() => setPortfolioRevision((value) => value + 1)}
+                  >
                     重试估值
                   </Button>
                 </AlertDescription>
@@ -355,7 +378,6 @@ export function LiveDetailPage({
                 kind="live"
                 resourceId={current.id}
                 amountLabel="累计收益"
-                comparisonsEnabled={current.status !== "terminated"}
                 series={series}
               />
             ) : !portfolioBusy && !portfolioError ? (
@@ -604,9 +626,12 @@ export function LiveDetailPage({
             渠道已接收表示通知服务接受请求，不保证终端已收到。每轮信号汇总发送，投递
             记录持久保存并分页展示，可在日志丢失后核查。
           </p>
-          <Link to="/notifications" className="text-sm underline">
-            检查通知渠道及测试连通性
-          </Link>
+          <Button variant="outline" size="sm" className="w-fit max-w-full" asChild>
+            <Link to="/notifications">
+              <ArrowUpRight />
+              检查通知渠道及测试连通性
+            </Link>
+          </Button>
           {deliveryBusy && (
             <div role="status" aria-label="正在加载投递记录">
               <Skeleton className="h-28 w-full" />
@@ -616,7 +641,7 @@ export function LiveDetailPage({
             <Alert variant="destructive">
               <AlertDescription>
                 {deliveryError}
-                <Button variant="link" onClick={() => setDeliveryRevision((value) => value + 1)}>
+                <Button variant="outline" onClick={() => setDeliveryRevision((value) => value + 1)}>
                   重试投递记录
                 </Button>
               </AlertDescription>
@@ -704,9 +729,12 @@ export function LiveDetailPage({
                       ?.map((item) => `${item.name}${item.enabled ? "" : "（已停用）"}`)
                       .join("、") || "历史配置"}
                   </p>
-                  <Link className="underline" to={`/backtests/${current.backtest_id}`}>
-                    查看来源回测
-                  </Link>
+                  <Button variant="outline" size="sm" className="w-fit max-w-full" asChild>
+                    <Link to={`/backtests/${current.backtest_id}`}>
+                      <ArrowUpRight />
+                      查看来源回测
+                    </Link>
+                  </Button>
                   <pre className="overflow-auto">
                     策略参数：{JSON.stringify(current.parameters ?? {}, null, 2)}
                   </pre>

@@ -7,6 +7,7 @@ from easy_quant.api.middleware.auth import require_admin
 from easy_quant.api.resource_lifecycle import resource_mutation
 from easy_quant.api.responses import success
 from easy_quant.application.services.audit_runtime import record_audit
+from easy_quant.application.services.live_schedules import is_live_schedule
 from easy_quant.application.services.scheduled_tasks import next_run, validate_index_configuration
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.scheduling.entities import Job, ScheduledTask, ScheduleKind
@@ -22,7 +23,6 @@ def validate_schedule(payload):
         "market-data-nightly",
         "tdx-daily-update",
         "index-daily-update",
-        "live-analysis",
     }:
         raise ValidationError("不支持的任务类型")
     if "enabled" in payload and not isinstance(payload["enabled"], bool):
@@ -40,7 +40,9 @@ def validate_schedule(payload):
 @blueprint.get("/schedules")
 @require_admin
 def schedules():
-    return success(list(get_container().state.schedules.values()))
+    return success(
+        [row for row in get_container().state.schedules.values() if not is_live_schedule(row)]
+    )
 
 
 @blueprint.post("/schedules")
@@ -102,6 +104,8 @@ def update_schedule(schedule_id: str):
     existing = schedules.get(schedule_id)
     if existing is None:
         return success(None, status=404)
+    if is_live_schedule(existing):
+        raise StateConflictError("实盘计划随实例启停自动管理，请前往实盘详情")
     item = dict(existing)
     before = dict(item)
     payload = request.get_json() or {}
@@ -154,6 +158,8 @@ def run_schedule(schedule_id: str):
     item = container.state.schedules.get(schedule_id)
     if item is None:
         return success(None, status=404)
+    if is_live_schedule(item):
+        raise StateConflictError("实盘计划由实例管理，不能从系统任务手动执行")
     key = request.headers.get("Idempotency-Key", "")
     if not key or len(key) > 128:
         raise ValidationError("手动执行必须提供有效 Idempotency-Key")
@@ -254,6 +260,18 @@ def jobs():
                     "attempt_count": item.attempt_count,
                     "result_summary": item.result_summary,
                     "error_summary": item.error_summary,
+                    "live_instance": (
+                        {
+                            "id": item.payload.get("instance_id"),
+                            "name": item.payload.get("live_name")
+                            or get_container()
+                            .state.live_instances.get(str(item.payload.get("instance_id")), {})
+                            .get("name")
+                            or item.payload.get("instance_id"),
+                        }
+                        if item.job_type in {"live-analysis", "live.analyze"}
+                        else None
+                    ),
                 }
                 for item in items
             ],
@@ -262,3 +280,31 @@ def jobs():
             "page_size": page_size,
         }
     )
+
+
+@blueprint.delete("/schedules/<schedule_id>")
+@require_admin
+@resource_mutation
+def delete_schedule(schedule_id: str):
+    container = get_container()
+    item = container.state.schedules.get(schedule_id)
+    if item is None:
+        return success(None, status=404)
+    if is_live_schedule(item):
+        raise StateConflictError("实盘计划由实例管理，不能从系统任务删除")
+    if item.get("enabled", True):
+        raise StateConflictError("请先停用定时任务，再删除")
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or payload.get("confirmed") is not True:
+        raise ValidationError("删除定时任务需要二次确认")
+    del container.state.schedules[schedule_id]
+    record_audit(
+        container,
+        actor_user_id=g.current_user.id,
+        action="delete",
+        resource_type="schedule",
+        resource_id=schedule_id,
+        before={"task_type": item["task_type"], "enabled": False},
+        after={"deleted": True},
+    )
+    return success({"id": schedule_id, "deleted": True})
