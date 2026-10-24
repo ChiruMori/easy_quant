@@ -163,3 +163,6 @@ export const getLiveMetrics = (id: string) =>
   apiRequest<{ at: string | null; profit: string | null; return_rate: string | null }>(
     `/live-instances/${id}/portfolio?view=metrics`,
   )
+
+export const resumeLive = (id: string) =>
+  apiRequest<LiveInstance>(`/live-instances/${id}/resume`, { method: "POST" })

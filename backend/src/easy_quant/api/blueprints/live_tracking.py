@@ -1,6 +1,5 @@
-from datetime import UTC, datetime, time, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
-from zoneinfo import ZoneInfo
 
 from flask import Blueprint, g, request
 
@@ -20,6 +19,7 @@ from easy_quant.application.services.live_reporting import (
     validate_termination_snapshot,
 )
 from easy_quant.application.services.live_runtime import analyze_live_instance
+from easy_quant.application.services.live_schedules import is_live_schedule, sync_live_schedules
 from easy_quant.application.services.manual_operations import ManualCommand, ManualOperationService
 from easy_quant.application.services.recommendation_actions import audit_row
 from easy_quant.domain.market_data.indices import is_index
@@ -100,39 +100,7 @@ def start_live():
         "after_market_enabled": bool(payload.get("after_market_enabled", False)),
     }
     get_container().resource_lifecycle.add_live_instance(item)
-    local_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
-    schedules = get_container().state.schedules
-    intraday_time = time.fromisoformat(get_container().settings.intraday_run_time)
-    schedule_specs = [
-        ("before_market", "cron", "0 9 * * 1-5", time(9, 0)),
-        (
-            "on_market",
-            "cron",
-            f"{intraday_time.minute} {intraday_time.hour} * * 1-5",
-            intraday_time,
-        ),
-    ]
-    if item["after_market_enabled"]:
-        schedule_specs.append(("after_market", "cron", "30 15 * * 1-5", time(15, 30)))
-    for phase, kind, expression, local_time in schedule_specs:
-        schedule_id = f"schedule-{UuidGenerator().new()}"
-        if local_time is None:
-            next_run = now + timedelta(seconds=get_container().settings.intraday_poll_seconds)
-        else:
-            candidate = datetime.combine(local_now.date(), local_time, local_now.tzinfo)
-            if candidate <= local_now:
-                candidate += timedelta(days=1)
-            next_run = candidate.astimezone(UTC)
-        schedules[schedule_id] = {
-            "id": schedule_id,
-            "task_type": "live-analysis",
-            "schedule_kind": kind,
-            "schedule_expression": expression,
-            "timezone": "Asia/Shanghai",
-            "configuration": {"instance_id": identifier, "phase": phase},
-            "next_run_at": next_run.isoformat(),
-            "enabled": True,
-        }
+    sync_live_schedules(get_container(), identifier, create=True)
     record_audit(
         get_container(),
         actor_user_id=g.current_user.id,
@@ -387,7 +355,9 @@ def manual_operation(instance_id: str, mode: str):
 @require_user
 @resource_mutation
 def pause_live(instance_id: str):
-    return success(_set_status(instance_id, "paused", "pause"))
+    item = _set_status(instance_id, "paused", "pause")
+    sync_live_schedules(get_container(), instance_id)
+    return success(item)
 
 
 def _set_status(instance_id: str, status: str, action: str):
@@ -437,10 +407,7 @@ def _set_status(instance_id: str, status: str, action: str):
 @resource_mutation
 def terminate_live(instance_id: str):
     item = _set_status(instance_id, "terminated", "terminate")
-    for schedule_id, schedule in list(get_container().state.schedules.items()):
-        if schedule.get("configuration", {}).get("instance_id") == instance_id:
-            schedule["enabled"] = False
-            get_container().state.schedules[schedule_id] = schedule
+    sync_live_schedules(get_container(), instance_id)
     return success(item)
 
 
@@ -490,3 +457,31 @@ def _present(item):
             and ("subscription_ids" not in item or row["id"] in item["subscription_ids"])
         ],
     }
+
+
+@blueprint.post("/<instance_id>/resume")
+@require_user
+@resource_mutation
+def resume_live(instance_id: str):
+    item = _set_status(instance_id, "active", "resume")
+    sync_live_schedules(get_container(), instance_id, create=True)
+    return success(item)
+
+
+@blueprint.get("/<instance_id>/schedules")
+@require_user
+def live_schedules(instance_id: str):
+    container = get_container()
+    item = container.state.live_instances.get(instance_id)
+    if item is None or item["owner_id"] != g.current_user.id:
+        raise NotFoundError("live_instance")
+    if item["status"] == "terminated":
+        return success([])
+    return success(
+        [
+            row
+            for row in container.state.schedules.values()
+            if is_live_schedule(row)
+            and row.get("configuration", {}).get("instance_id") == instance_id
+        ]
+    )

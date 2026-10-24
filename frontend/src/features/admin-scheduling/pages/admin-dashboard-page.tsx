@@ -7,7 +7,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 const entries = [
   ["/admin/users", "用户管理", "查看、启停和调整受控用户。", Users],
   ["/admin/invitations", "邀请码", "签发一次性注册邀请码。", KeyRound],
-  ["/admin/schedules", "定时任务", "管理数据与实盘分析调度。", CalendarClock],
+  ["/admin/schedules", "定时任务", "管理系统数据维护计划，实盘计划在各实例中查看。", CalendarClock],
   ["/admin/jobs", "后台任务", "检查任务状态与失败摘要。", FileClock],
 ] as const
 

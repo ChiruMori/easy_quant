@@ -34,7 +34,8 @@ def create_e2e_app():
         def send(self, *_args):
             return None
 
-    container.notification_channels["ntfy"] = OfflineNotificationChannel()
+    for channel in ("ntfy", "dingtalk", "feishu", "wecom"):
+        container.notification_channels[channel] = OfflineNotificationChannel()
 
     class OfflineManagementSyncV1(MarketDataSyncService):
         """管理旅程验证入队；实际指数同步使用版本化 fixture，其余同步由服务层测试覆盖。"""

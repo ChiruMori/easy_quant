@@ -6,6 +6,7 @@ from easy_quant.api.resource_lifecycle import delete_resource, inspect_resource,
 from easy_quant.api.responses import success
 from easy_quant.application.services.audit_runtime import record_audit
 from easy_quant.application.services.notification_runtime import notify_owner
+from easy_quant.application.services.notification_targets import validate_notification_target
 from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.infrastructure.core import UuidGenerator
 
@@ -80,9 +81,16 @@ def subscription_detail(subscription_id: str):
         if box is None:
             raise ValueError("unavailable")
         destination = box.decrypt(item["destination_encrypted"])
+        signing_secret = (
+            box.decrypt(str(item["signing_secret_encrypted"]))
+            if item.get("signing_secret_encrypted")
+            else ""
+        )
     except Exception:
         raise ValidationError("通知目标无法读取，请重新填写并保存") from None
-    response, status = success(_public_subscription(item) | {"destination": destination})
+    response, status = success(
+        _public_subscription(item) | {"destination": destination, "signing_secret": signing_secret}
+    )
     response.headers["Cache-Control"] = "no-store"
     return response, status
 
@@ -92,8 +100,9 @@ def subscription_detail(subscription_id: str):
 @resource_mutation
 def add_subscription():
     payload = request.get_json() or {}
-    if payload.get("channel") not in {"email", "ntfy"}:
-        raise ValidationError("通知渠道仅支持邮件或 ntfy")
+    validate_notification_target(
+        payload.get("channel"), payload.get("destination"), payload.get("signing_secret", "")
+    )
     name = str(payload.get("name", "")).strip()
     if not name or len(name) > 160 or not str(payload.get("destination", "")).strip():
         raise ValidationError("请填写渠道名称（最多 160 字）和通知目标")
@@ -107,6 +116,9 @@ def add_subscription():
         "channel": payload.get("channel"),
         "destination_encrypted": secret_box.encrypt(str(payload.get("destination", ""))),
         "enabled": True,
+        "signing_secret_encrypted": secret_box.encrypt(payload["signing_secret"])
+        if payload.get("signing_secret")
+        else None,
     }
     get_container().state.subscriptions.append(item)
     record_audit(
@@ -183,6 +195,25 @@ def update_subscription(subscription_id: str):
         if box is None:
             raise ValidationError("通知凭据加密器未配置")
         item["destination_encrypted"] = box.encrypt(destination.strip())
+    if "signing_secret" in payload:
+        secret = payload["signing_secret"]
+        if not isinstance(secret, str) or len(secret) > 512:
+            raise ValidationError("签名密钥格式无效")
+        box = get_container().secret_box
+        if box is None:
+            raise ValidationError("通知凭据加密器未配置")
+        item["signing_secret_encrypted"] = box.encrypt(secret) if secret else None
+    if "destination" in payload or "signing_secret" in payload:
+        box = get_container().secret_box
+        if box is None:
+            raise ValidationError("通知凭据加密器未配置")
+        validate_notification_target(
+            item["channel"],
+            box.decrypt(item["destination_encrypted"]),
+            box.decrypt(str(item["signing_secret_encrypted"]))
+            if item.get("signing_secret_encrypted")
+            else "",
+        )
     subscriptions = get_container().state.subscriptions
     index = next(index for index, row in enumerate(subscriptions) if row["id"] == subscription_id)
     subscriptions[index] = item

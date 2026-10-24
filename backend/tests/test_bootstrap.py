@@ -20,6 +20,7 @@ def test_worker_migrates_old_intraday_schedule_before_its_due_time(monkeypatch):
     container = make_test_container()
     clock = cast(FixedClock, container.authentication.clock)
     clock.current = datetime(2026, 9, 29, 6, tzinfo=UTC)
+    container.state.live_instances["l"] = {"id": "l", "name": "调度测试", "status": "active"}
     container.state.schedules["old"] = {
         "id": "old",
         "task_type": "live-analysis",

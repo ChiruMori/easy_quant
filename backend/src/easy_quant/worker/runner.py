@@ -59,10 +59,24 @@ class Worker:
             summary = self.handlers.get(job.job_type)(job) or {}
             job.succeed(self.worker_id, dict(summary))
         except Exception as exc:
-            logger.exception("任务执行失败", extra={"job_id": job.id, "job_type": job.job_type})
+            if job.job_type in {"live-analysis", "live.analyze"}:
+                logger.exception(
+                    "实盘任务执行失败 job_id=%s live_instance_id=%s live_name=%r phase=%s",
+                    job.id,
+                    job.payload.get("instance_id"),
+                    job.payload.get("live_name"),
+                    job.payload.get("phase"),
+                )
+            else:
+                logger.exception("任务执行失败", extra={"job_id": job.id, "job_type": job.job_type})
             if self.failure_hook is not None:
                 self.failure_hook()
             error: dict[str, Any] = {"code": "job_failed", "message": str(exc)}
+            if job.job_type in {"live-analysis", "live.analyze"}:
+                error.update(
+                    live_instance_id=job.payload.get("instance_id"),
+                    live_name=job.payload.get("live_name"),
+                )
             if isinstance(exc, DomainError):
                 error["code"] = exc.code
                 error["details"] = dict(exc.details)

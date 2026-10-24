@@ -1,5 +1,5 @@
 import Decimal from "decimal.js"
-import { Pause, RefreshCw, Square } from "lucide-react"
+import { Pause, Play, RefreshCw, Square } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 
@@ -51,8 +51,10 @@ import {
   getLivePortfolio,
   listOperations,
   pauseLive,
+  resumeLive,
   terminateLive,
 } from "../api"
+import { LiveSchedulePanel } from "../components/live-schedule-panel"
 import { ManualOperationDialog } from "../components/manual-operation-dialog"
 import { RecommendationActions } from "../components/recommendation-actions"
 
@@ -234,6 +236,22 @@ export function LiveDetailPage({
                 }
               />
             )}
+            {current.status === "paused" && (
+              <ConfirmAction
+                icon={Play}
+                label="恢复实盘"
+                title="确认恢复实盘"
+                description="恢复后将按计划继续生成操作建议，资金及持仓以已记录的实际操作为准。"
+                destructive={false}
+                disabled={busy}
+                action={() =>
+                  runAction(async () => {
+                    const result = await resumeLive(current.id)
+                    setCurrent((previous) => ({ ...previous, ...result }))
+                  })
+                }
+              />
+            )}
             {current.status !== "terminated" && (
               <ConfirmAction
                 icon={Square}
@@ -264,6 +282,7 @@ export function LiveDetailPage({
           </div>
         }
       />
+      <LiveSchedulePanel instanceId={current.id} status={current.status} />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>操作未完成</AlertTitle>
@@ -355,7 +374,6 @@ export function LiveDetailPage({
                 kind="live"
                 resourceId={current.id}
                 amountLabel="累计收益"
-                comparisonsEnabled={current.status !== "terminated"}
                 series={series}
               />
             ) : !portfolioBusy && !portfolioError ? (

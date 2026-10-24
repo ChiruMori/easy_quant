@@ -82,6 +82,7 @@ it("停用渠道仍可编辑、显隐和失败重试，保存不启用", async (
     false,
     "停用提醒",
     "edited-fixture",
+    undefined,
   )
 })
 

@@ -1,8 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Pencil, Plus, Save, X } from "lucide-react"
+import { Pencil, Plus, Save, Trash2, X } from "lucide-react"
 import { useState } from "react"
+import { Link } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
+import { ConfirmAction } from "@/components/confirm-action"
 import { IconButton } from "@/components/icon-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -37,7 +39,14 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { localizedLabel } from "@/lib/labels"
 
-import { createSchedule, listSchedules, runSchedule, type Schedule, updateSchedule } from "../api"
+import {
+  createSchedule,
+  deleteSchedule,
+  listSchedules,
+  runSchedule,
+  type Schedule,
+  updateSchedule,
+} from "../api"
 
 export function SchedulesPage() {
   const client = useQueryClient()
@@ -58,6 +67,16 @@ export function SchedulesPage() {
           停用后可编辑计划，也可随时手动执行一次；不改变下次定时执行时间。
         </p>
       </div>
+      <Alert>
+        <AlertTitle>系统级计划</AlertTitle>
+        <AlertDescription>
+          这里只管理数据维护计划。实盘分析计划随实例启停自动更新，并在终止后清除，请前往{" "}
+          <Link className="underline" to="/live">
+            实盘列表
+          </Link>{" "}
+          查看各实例计划。
+        </AlertDescription>
+      </Alert>
       <Card className="max-w-2xl">
         <CardHeader>
           <CardTitle>{editing ? "编辑定时任务" : "新增定时任务"}</CardTitle>
@@ -112,7 +131,6 @@ export function SchedulesPage() {
                       <SelectItem value="market-data-nightly">盘后综合数据同步</SelectItem>
                       <SelectItem value="index-daily-update">主要指数日线同步</SelectItem>
                       <SelectItem value="tdx-daily-update">通达信 A 股盘后增量</SelectItem>
-                      <SelectItem value="live-analysis">实盘分析</SelectItem>
                     </SelectGroup>
                   </SelectContent>
                 </Select>
@@ -242,6 +260,21 @@ export function SchedulesPage() {
               </TableCell>
               <TableCell>
                 <div className="flex gap-2">
+                  {!item.enabled && (
+                    <ConfirmAction
+                      icon={Trash2}
+                      label="删除定时任务"
+                      title="确认删除定时任务"
+                      description="将删除这条已停用的系统计划，历史执行记录保留。此操作不可恢复。"
+                      disabled={pending}
+                      action={async () => {
+                        await deleteSchedule(item.id)
+                        if (editing?.id === item.id) setEditing(null)
+                        await refresh()
+                      }}
+                    />
+                  )}
+
                   <IconButton
                     icon={Pencil}
                     label="编辑"

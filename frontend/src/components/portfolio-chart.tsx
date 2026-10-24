@@ -60,7 +60,7 @@ export const PortfolioChart = memo(function PortfolioChart({
   const { curves, days, data } = useMemo(() => {
     const curves = [...series, ...extra]
     const days = [
-      ...new Set(series.flatMap((item) => item.points.map((point) => point.day))),
+      ...new Set(curves.flatMap((item) => item.points.map((point) => point.day))),
     ].sort()
     const indexed = curves.map((item) => new Map(item.points.map((point) => [point.day, point])))
     const data = days.map((day) =>
