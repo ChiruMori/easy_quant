@@ -10,8 +10,10 @@ from typing import Any
 from easy_quant.domain.market_data.indices import is_index
 from easy_quant.factors.context import FactorContext
 from easy_quant.factors.registry import build_default_registry
+from easy_quant.platform_library.catalog import build_library_registry
 
 REGISTRY = build_default_registry()
+LIBRARY_REGISTRY = build_library_registry()
 MAX_STATE_BYTES = 256 * 1024
 
 
@@ -113,13 +115,15 @@ class RuntimeContext:
         self._reserved_positions = {
             key: decimal_value(value) for key, value in data.get("reserved_positions", {}).items()
         }
+        as_of = datetime.fromisoformat(data.get("decision_at", "9999-12-31T00:00:00+00:00"))
+        self._factor_context = FactorContext(SnapshotGateway(data), as_of)
         self._buy_symbols = set(data.get("pending_buy_symbols", []))
 
     def universe(self) -> list[str]:
         symbols = set(self.data.get("universe", []))
         # 证券快照补入尚无日线的新上市标的；只采用决策时点已知的状态。
         for symbol in self.data.get("records", {}).get("security-status", {}):
-            status = self.factor("fundamental.latest", symbol=symbol, dataset="security-status")
+            status = self.library("fundamental.latest", symbol=symbol, dataset="security-status")
             if not status or status.get("status") in {"delisted", "suspended"}:
                 continue
             listed_on = status.get("listed_on")
@@ -138,8 +142,8 @@ class RuntimeContext:
         ]
 
     def security_info(self, symbol: str) -> dict[str, object] | None:
-        value = self.factor("fundamental.latest", symbol=symbol, dataset="security-status")
-        industry = self.factor(
+        value = self.library("fundamental.latest", symbol=symbol, dataset="security-status")
+        industry = self.library(
             "fundamental.latest", symbol=symbol, dataset="sw-industry-memberships"
         )
         if value is None and industry is None:
@@ -147,12 +151,17 @@ class RuntimeContext:
         return {**(value or {}), **(industry or {})}
 
     def financials(self, symbol: str) -> object:
-        return self.factor("fundamental.history", symbol=symbol, dataset="financial-indicators")
+        return self.library("fundamental.history", symbol=symbol, dataset="financial-indicators")
 
     def valuation(self, symbol: str) -> object:
-        return self.factor("market.value", symbol=symbol)
+        return self.library("market.value", symbol=symbol)
+
+    def library(self, key: str, **parameters: object) -> Any:
+        return LIBRARY_REGISTRY.call(key, self._factor_context, parameters)
 
     def factor(self, key: str, **parameters: object) -> Any:
+        if key in {item.key for item in LIBRARY_REGISTRY.list()}:
+            return self.library(key, **parameters)
         data = self.data
         # Mock 仅在显式快测模式补技术因子的窗口，绝不补造财务指标。
         if (
@@ -182,7 +191,12 @@ class RuntimeContext:
                     },
                 }
         as_of = datetime.fromisoformat(data.get("decision_at", "9999-12-31T00:00:00+00:00"))
-        return REGISTRY.call(key, FactorContext(SnapshotGateway(data), as_of), parameters)
+        context = (
+            self._factor_context
+            if data is self.data
+            else FactorContext(SnapshotGateway(data), as_of)
+        )
+        return REGISTRY.call(key, context, parameters)
 
     def quotes(self, symbols: list[str]) -> dict[str, Decimal]:
         wanted = sorted(set(str(symbol) for symbol in symbols))
