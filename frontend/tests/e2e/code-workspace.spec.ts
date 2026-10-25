@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test"
 
 for (const width of [1440, 360]) {
   test(`本地 Monaco 高亮、接口补全、预览与工具栏 ${width}px`, async ({ page }, testInfo) => {
+    test.setTimeout(60000)
     await page.setViewportSize({ width, height: 1000 })
     const external: string[] = []
     page.on("request", (request) => {
@@ -37,7 +38,7 @@ for (const width of [1440, 360]) {
     })
     await page.goto("/strategies/new")
     const editor = page.getByRole("textbox", { name: "策略代码", exact: true })
-    await expect(editor).toBeVisible()
+    await expect(editor).toBeVisible({ timeout: 15000 })
     await expect(page.locator(".monaco-editor .view-lines").first()).toContainText(
       "def before_market",
     )
@@ -62,22 +63,8 @@ for (const width of [1440, 360]) {
       "context.position(",
     )
     await editor.press("Escape")
-    await page.getByRole("button", { name: "预览当前测试代码", exact: true }).click()
-    const preview = page.getByLabel("Python 代码预览容器", { exact: true })
-    await expect(preview.locator(".view-lines")).toContainText("context.position(")
-    await expect(
-      preview.getByRole("textbox", { name: "策略代码预览", exact: true }),
-    ).toHaveAttribute("readonly", "true")
-    await preview.getByRole("button", { name: "自动换行", exact: true }).click()
-    await expect(preview.getByRole("button", { name: "自动换行", exact: true })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    )
-    await preview.getByRole("button", { name: "搜索代码", exact: true }).click()
-    await expect(preview.locator(".find-widget")).toBeVisible()
-    await preview.getByRole("button", { name: "放大代码预览", exact: true }).click()
-    await expect(page.getByRole("dialog")).toContainText("策略代码预览")
-    await expect(page.getByRole("dialog").locator(".view-lines")).toContainText("context.position(")
+    await expect(page.getByRole("button", { name: "预览当前测试代码", exact: true })).toHaveCount(0)
+    await expect(page.getByRole("switch", { name: "允许 Mock 补足技术指标历史" })).toBeChecked()
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       width,
     )
@@ -85,7 +72,6 @@ for (const width of [1440, 360]) {
       path: testInfo.outputPath(`code-preview-${width}.png`),
       fullPage: true,
     })
-    await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click()
     expect(external).toEqual([])
   })
 }

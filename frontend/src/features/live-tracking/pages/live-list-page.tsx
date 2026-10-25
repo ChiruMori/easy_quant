@@ -1,11 +1,11 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query"
-import { Eye } from "lucide-react"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Eye, Pause, Play } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
 
 import { EmptyState } from "@/components/app-shell"
 import { DeleteResourceButton } from "@/components/delete-resource-button"
-import { IconLink } from "@/components/icon-button"
+import { IconButton, IconLink } from "@/components/icon-button"
 import { ListPagination } from "@/components/list-pagination"
 import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -34,7 +34,34 @@ import { formatMoney, profitTone } from "@/lib/finance"
 import { localizedLabel } from "@/lib/labels"
 import { cn } from "@/lib/utils"
 
-import { getLiveMetrics, listLivePage, type LiveInstance } from "../api"
+import { getLiveMetrics, listLivePage, type LiveInstance, pauseLive, resumeLive } from "../api"
+
+function LiveStatusAction({ item }: { item: LiveInstance }) {
+  const client = useQueryClient()
+  const action = useMutation({
+    mutationFn: () => (item.status === "active" ? pauseLive(item.id) : resumeLive(item.id)),
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["live-instances"] })
+      await client.invalidateQueries({ queryKey: ["live-instance", item.id] })
+    },
+  })
+  if (item.status !== "active" && item.status !== "paused") return null
+  return (
+    <div className="flex flex-col gap-1">
+      <IconButton
+        icon={item.status === "active" ? Pause : Play}
+        label={item.status === "active" ? "暂停实盘" : "恢复实盘"}
+        disabled={action.isPending}
+        onClick={() => action.mutate()}
+      />
+      {action.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {action.error.message}
+        </p>
+      )}
+    </div>
+  )
+}
 
 function LiveReturnRate({ item, load }: { item: LiveInstance; load: boolean }) {
   const frozen = item.status === "terminated" && item.return_rate !== undefined
@@ -200,6 +227,7 @@ export function LiveListPage({ instances }: { instances?: LiveInstance[] } = {})
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
+                            <LiveStatusAction item={item} />
                             <IconLink icon={Eye} label="查看实盘" to={`/live/${item.id}`} />
                             {item.status === "terminated" && (
                               <DeleteResourceButton

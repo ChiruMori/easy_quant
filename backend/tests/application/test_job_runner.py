@@ -147,3 +147,29 @@ def test_acquisition_handler_rolls_back_before_recording_failure(fixed_now: date
         registry.get("market-data-acquisition")(job)
     assert session.recovered
     assert container.state.acquisitions["task-1"]["status"] == "failed"
+
+
+def test_quick_test_crash_recovery_stops_after_three_executions(fixed_now):
+    job = Job(
+        "quick",
+        "strategy.run",
+        "quick:1",
+        {},
+        fixed_now,
+        status=JobStatus.RUNNING,
+        attempt_count=3,
+        lease_owner="dead",
+        lease_until=fixed_now - timedelta(seconds=1),
+    )
+    jobs = InMemoryJobs([job])
+    handlers = JobHandlerRegistry()
+
+    def unexpected(job):
+        pytest.fail("耗尽重试的快测不得再次执行")
+
+    handlers.register("strategy.run", unexpected)
+    worker = Worker("worker", jobs, handlers, FixedClock(fixed_now), VirtualSleeper())
+    assert worker.run_once()
+    assert job.status is JobStatus.FAILED
+    assert job.error_summary["code"] == "quick_test_retry_exhausted"
+    assert not worker.run_once()

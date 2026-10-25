@@ -58,7 +58,7 @@ export const runStrategy = (
   id: string,
   tradingDay: string,
   parameters: Record<string, unknown>,
-  allowMock = false,
+  allowMock = true,
 ) =>
   apiRequest<StrategyRun>(`/strategies/${id}/run`, {
     method: "POST",

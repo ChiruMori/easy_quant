@@ -19,12 +19,14 @@ import type { WorkspaceStrategy } from "../types"
 export function StrategyQuickTest({
   source,
   strategy,
+  showCodePreview = true,
 }: {
   source: string
+  showCodePreview?: boolean
   strategy?: WorkspaceStrategy
 }) {
   const [day, setDay] = useState("")
-  const [allowMock, setAllowMock] = useState(false)
+  const [allowMock, setAllowMock] = useState(true)
   const [jobId, setJobId] = useState("")
   const client = useQueryClient()
   const query = useQuery({
@@ -58,7 +60,7 @@ export function StrategyQuickTest({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-4">
-        <CodePreview value={source} label="预览当前测试代码" />
+        {showCodePreview && <CodePreview value={source} label="预览当前测试代码" />}
         <Field>
           <FieldLabel htmlFor="strategy-run-day">快速测试交易日</FieldLabel>
           <div className="flex min-w-0 items-center gap-2">
@@ -81,8 +83,8 @@ export function StrategyQuickTest({
           <FieldLabel htmlFor="quick-test-mock">允许 Mock 补足技术指标历史</FieldLabel>
         </Field>
         <p className="text-xs text-muted-foreground">
-          Mock 仅补足技术窗口，不补造财报。正式回测与实盘使用真实数据；MA/RSI 按需预热，动态历史默认
-          250 个交易日，可用 HISTORY_TRADING_DAYS 声明（最多 2500）。
+          默认允许 Mock 补足技术窗口，不补造财报。快速测试最多读取 7 个交易日（含所选日），
+          HISTORY_TRADING_DAYS 不会扩大快测窗口。正式回测与实盘使用真实数据。
         </p>
         {(run.error || query.error) && (
           <Alert variant="destructive">

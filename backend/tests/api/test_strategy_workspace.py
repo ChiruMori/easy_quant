@@ -184,6 +184,7 @@ def test_unsaved_quick_test_creates_no_version_and_erases_temporary_code(failed)
 
     def execute(_container, payload, **_kwargs):
         assert payload["source_code"] == SOURCE
+        assert payload["allow_mock"] is True
         if failed:
             raise StateConflictError("fixture failure")
         return {"phase_results": [], "status": "succeeded"}
@@ -335,3 +336,49 @@ def test_live_rejects_missing_strategy_version_even_with_owned_successful_backte
     )
     assert response.status_code == 404
     assert container.state.live_instances == {}
+
+
+def test_quick_test_reads_at_most_seven_days_even_with_large_declaration():
+    from datetime import date, timedelta
+
+    client, container, headers = _client_and_container()
+    days = [date(2026, 9, 1) + timedelta(days=index) for index in range(29)]
+    container.market_data.upsert_bars(
+        [
+            {
+                "symbol": "000001",
+                "trading_day": day.isoformat(),
+                "open": "10",
+                "high": "10",
+                "low": "10",
+                "close": "10",
+                "volume": "100",
+                "available_at": f"{day.isoformat()}T15:00:00+08:00",
+            }
+            for day in days
+        ]
+    )
+    original = container.market_data.list_runtime_bars
+    calls = []
+
+    def read(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    response = client.post(
+        "/api/v1/strategies/quick-test",
+        headers=headers,
+        json={
+            "source_code": "HISTORY_TRADING_DAYS = 2500\n" + SOURCE,
+            "trading_day": "2026-09-29",
+            "allow_mock": False,
+        },
+    )
+    with patch.object(container.market_data, "list_runtime_bars", side_effect=read):
+        _run_worker_once(container)
+    job = container.jobs.get(response.get_json()["data"]["id"])
+    assert job.status.value == "succeeded", job.error_summary
+    assert job.result_summary["history_trading_days"] == 6
+    assert job.result_summary["allow_mock"] is False
+    assert calls
+    assert all(args[0] >= days[-7] and args[1] <= days[-1] for args, _ in calls)

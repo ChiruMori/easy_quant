@@ -20,7 +20,7 @@ class StrategyCreateRequest(BaseModel):
 class StrategyRunRequest(BaseModel):
     trading_day: date
     parameters: dict[str, object] = Field(default_factory=dict)
-    allow_mock: bool = False
+    allow_mock: bool = True
     initial_cash: Decimal = Field(default=Decimal("1000000"), gt=0, allow_inf_nan=False)
     source_code: str | None = Field(default=None, min_length=1, max_length=100_000)
     strategy_id: str | None = None

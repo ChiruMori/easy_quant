@@ -84,7 +84,7 @@ def _execute_strategy_tick(
         raise StateConflictError("策略版本不存在")
 
     dependencies = extract_factor_dependencies(version.source_code)
-    history_window = extract_history_trading_days(version.source_code)
+    history_window = min(extract_history_trading_days(version.source_code), 6)
     profile.enter("loading_data")
     logger.info("快测正在读取行情 job_id=%s history_days=%d", job_id, history_window)
     trading_days = container.market_data.list_trading_days()
@@ -268,7 +268,7 @@ def _execute_strategy_tick(
                 costs={key: str(value) for key, value in session.portfolio.costs.items()},
                 cash=str(session.portfolio.cash),
                 runtime="quick_test",
-                allow_mock=bool(payload.get("allow_mock", False)),
+                allow_mock=bool(payload.get("allow_mock", True)),
                 decision_at=str(context["decision_at"]),
             )
             profile.record_hook(trading_day.isoformat(), phase, hook_started)
@@ -309,7 +309,7 @@ def _execute_strategy_tick(
         "trading_day": trading_day.isoformat(),
         "phase_results": phase_results,
         "mock_usage": mock_usage,
-        "allow_mock": bool(payload.get("allow_mock", False)),
+        "allow_mock": bool(payload.get("allow_mock", True)),
         "code_snapshot_saved": False,
         "intraday_quote": "open-close-midpoint-v1 (contains closing information)",
         "portfolio": {

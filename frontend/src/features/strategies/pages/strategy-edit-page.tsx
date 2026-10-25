@@ -254,7 +254,7 @@ function StrategyDraftForm({ strategy }: { strategy?: WorkspaceStrategy }) {
               {save.isPending && <p role="status">正在验证并保存草稿…</p>}
             </CardContent>
           </Card>
-          <StrategyQuickTest source={source} strategy={strategy} />
+          <StrategyQuickTest source={source} strategy={strategy} showCodePreview={false} />
         </section>
         <StrategyLibrarySidebar />
       </div>

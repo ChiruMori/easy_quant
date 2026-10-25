@@ -55,6 +55,17 @@ class Worker:
             job.job_type,
             job.attempt_count,
         )
+        if job.job_type == "strategy.run" and job.attempt_count > 3:
+            job.payload.pop("source_code", None)
+            job.fail(
+                self.worker_id,
+                {
+                    "code": "quick_test_retry_exhausted",
+                    "message": "快速测试多次中断，已停止自动重试。请检查 worker 资源后重新发起。",
+                },
+            )
+            self.jobs.save(job)
+            return True
         try:
             summary = self.handlers.get(job.job_type)(job) or {}
             job.succeed(self.worker_id, dict(summary))
