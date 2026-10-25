@@ -7,6 +7,7 @@ from functools import partial
 
 from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.factors.alpha101 import ALPHA_NUMBERS, calculate_alpha
+from easy_quant.factors.alpha101_docs import ALPHA_EXPLANATIONS, alpha_description
 from easy_quant.factors.series import (
     Unavailable,
     divide,
@@ -247,6 +248,56 @@ def references() -> tuple[Reference, ...]:
         "nl_size": "显式股票池内Size三次方对Size含截距回归的残差",
     }
 
+    meanings = {
+        "return": "正值为该窗口价格上涨，负值为下跌；不含分红再投资和交易费用。",
+        "ma": "表示窗口内平均价格水平；它平滑价格，不直接给出买卖方向。",
+        "price_position_ir": ("正值表示开收盘实体平均向上，负值向下；绝对值兼顾这种位置的稳定性。"),
+        "alpha": (
+            "正截距表示在该窗口线性模型中有未被指数解释的平均正收益成分，不是未来超额收益承诺。"
+        ),
+        "beta": ("Beta为1表示模型中对指数收益变化约一倍敏感；负值表示反向敏感。"),
+        "sigma": "越大表示该窗口内未被指数线性模型解释的收益波动越大。",
+        "beta_consistency": (
+            "这是Beta加权的残差波动，较大表示该量更波动，不能把高值直接解释为更稳定。"
+        ),
+        "volume_alpha": ("正截距表示成交量变化中存在未被指数同口径量变解释的平均正成分。"),
+        "volume_beta": ("越大表示成交量变化对指数成交量变化更敏感；它不是价格收益Beta。"),
+        "rsrs": (
+            "正值表示最新Low对High回归斜率高于自身近期均值，负值相反；回归方向采用本平台参考公式。"
+        ),
+        "MACD": "正柱值表示DIF高于DEA，负柱值相反；数值保留价格单位。",
+        "dif": "正值表示快线高于慢线，负值相反；绝对值受股票价格量级影响。",
+        "dea": ("它是平滑后的DIF信号线，用来描述趋势变化的较慢部分，而非独立收益预测。"),
+        "days_down_up": (
+            "数值受连续方向与减1偏移共同影响；上涨n天为abs(n-1)，下跌n天为n+1，并非对称连续天数。"
+        ),
+        "amount_ma": ("越大表示近期日均成交金额越多；它受公司规模和价格影响，不等于换手率。"),
+        "abs_return_amount": (
+            "越大表示单位累计成交金额伴随更大价格波动，可描述流动性摩擦；"
+            "不同金额单位下不可直接比较。"
+        ),
+        "rsi": ("较高表示平滑后的上涨价差相对下跌价差更强；指标本身不规定超买超卖阈值或交易动作。"),
+        "price_dist": ("越小表示越接近缩放后的下一个整数关口，整数点返回1；它不衡量未来突破概率。"),
+        "days_beyond": (
+            "正值表示近期高于自身滚动均值一倍标准差的天数更多，负值表示低于的天数更多。"
+        ),
+        "return_std": "越大表示近期日收益波动越大；没有年化，也不表示收益方向。",
+        "high_low": ("至少为1，越大表示窗口价格高低跨度越大，既可能来自趋势也可能来自往返波动。"),
+        "sharpe": (
+            "正值表示窗口平均日收益为正，绝对值按波动缩放；不是年化或扣除无风险利率后的标准Sharpe。"
+        ),
+        "adjusted_sharpe": (
+            "符号仍由平均收益决定，但对波动施加四次方惩罚，不能与普通Sharpe直接比较量级。"
+        ),
+        "log_price": "用于压缩价格量级差异；它仍然反映价格水平，不是估值高低判断。",
+        "size": "越小表示所用快照总市值越大；它描述规模，不代表公司质量。",
+        "float_size": "越小表示所用快照流通市值越大；不同于总市值规模。",
+        "nl_size": (
+            "正值表示Size三次方高于池内线性拟合值，负值相反；结果依赖"
+            "所选股票池，不等于单纯小盘得分。"
+        ),
+    }
+
     def add(
         key, category, operation, history, window=1, benchmark="sh000300", datasets=("daily-bars",)
     ):
@@ -256,7 +307,23 @@ def references() -> tuple[Reference, ...]:
                 category,
                 history,
                 partial(calculate, operation=operation, window=window, benchmark=benchmark),
-                f"{descriptions[operation]}；默认预热{history}个交易日，指数项使用{benchmark}。",
+                (
+                    f"计算逻辑：{descriptions[operation]}。\n结果含义：{meanings[operation]}"
+                    f"\n数据窗口：默认预热{history}个交易日。"
+                    + (
+                        f"回归指数：{benchmark}。"
+                        if operation
+                        in {
+                            "alpha",
+                            "beta",
+                            "sigma",
+                            "beta_consistency",
+                            "volume_alpha",
+                            "volume_beta",
+                        }
+                        else ""
+                    )
+                ),
                 datasets,
             )
         )
@@ -268,7 +335,7 @@ def references() -> tuple[Reference, ...]:
                 "Alpha101",
                 300,
                 partial(calculate_alpha, index=n),
-                f"Alpha101 第 {n} 项；截面项必须显式指定 symbols。",
+                alpha_description(n),
             )
         )
     for w in (5, 21, 42, 63, 126, 252):
@@ -325,7 +392,11 @@ def definitions() -> tuple[FactorDefinition, ...]:
     return tuple(
         FactorDefinition(
             key=item.key,
-            name=item.key,
+            name=(
+                ALPHA_EXPLANATIONS[int(item.key.split("_")[-1])][0]
+                if item.category == "Alpha101"
+                else item.key
+            ),
             description=item.description,
             parameters={"symbol": "证券代码", "symbols": "截面项必传的显式股票池；其余可省略"},
             defaults={"symbols": None},

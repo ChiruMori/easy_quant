@@ -44,13 +44,15 @@ export function FactorCatalogPage({ factors }: { factors?: FactorDefinition[] } 
       )}
       <div className="grid gap-4 lg:grid-cols-2">
         {visible.map((factor) => (
-          <Card key={factor.key}>
+          <Card key={factor.key} className="min-w-0">
             <CardHeader>
               <div className="flex flex-wrap items-center gap-2">
                 <CardTitle>{factor.name}</CardTitle>
                 <Badge variant="secondary">{factor.key}</Badge>
               </div>
-              <CardDescription>{factor.description}</CardDescription>
+              <CardDescription className="[overflow-wrap:anywhere] whitespace-pre-line">
+                {factor.description}
+              </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <section>
@@ -77,7 +79,9 @@ export function FactorCatalogPage({ factors }: { factors?: FactorDefinition[] } 
               <section>
                 <h3 className="text-sm font-medium">策略用法</h3>
                 <pre className="mt-2 overflow-x-auto rounded-md bg-muted p-3 text-xs">
-                  <code>{factor.example.replace("factor(", "context.factor(")}</code>
+                  <code>
+                    {factor.example.replace(/^(?:context\.)?factor\(/, "context.factor(")}
+                  </code>
                 </pre>
               </section>
             </CardContent>

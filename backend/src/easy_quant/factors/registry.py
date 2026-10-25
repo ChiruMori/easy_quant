@@ -17,7 +17,11 @@ def build_default_registry() -> FactorRegistry:
         (
             "technical.ma",
             "移动平均线（含 5 日均线）",
-            "计算指定窗口的收盘价均线；window=5 即为 5 日均线",
+            (
+                "计算逻辑：最近window个收盘价求算术均值，window="
+                "5即5日均线。结果含义：描述近期平均价格水平，用于平滑价格；"
+                "不直接规定买卖方向。"
+            ),
             {"symbol": "证券代码", "window": "窗口"},
             "均线或数据不足",
             "factor('technical.ma', symbol='000001', window=5)",
@@ -30,7 +34,12 @@ def build_default_registry() -> FactorRegistry:
         (
             "stat.expected-return",
             "历史预期回报",
-            "由可见历史收益估计胜率和预期回报",
+            (
+                "计算逻辑：相邻收盘价比减1得到日收益，求平均值作为expec"
+                "ted_return；正收益日数除以收益样本数作为win_r"
+                "ate。结果含义：二者只描述输入历史样本，不是未来收益或获胜"
+                "概率保证。"
+            ),
             {"symbol": "证券代码"},
             "胜率与预期回报",
             "factor('stat.expected-return', symbol='000001')",
@@ -44,7 +53,13 @@ def build_default_registry() -> FactorRegistry:
         (
             "technical.rsi",
             "相对强弱指标 RSI",
-            "根据截至决策时点可见的收盘价计算 RSI",
+            (
+                "计算逻辑：最近window个价差分别取上涨和下跌绝对值的简单"
+                "均值，RS=平均上涨/平均下跌，RSI=100-100/(1"
+                "+RS)；平均下跌为零时返回100。结果含义：较高表示近期上"
+                "涨价差相对更强；全平也按当前实现返回100。此接口不是Wil"
+                "der递归平滑的rsi。"
+            ),
             {"symbol": "证券代码", "window": "窗口，默认 14"},
             "RSI 或数据不足说明",
             "factor('technical.rsi', symbol='000001', window=14)",
@@ -57,7 +72,12 @@ def build_default_registry() -> FactorRegistry:
         (
             "technical.macd",
             "指数平滑异同移动平均线 MACD",
-            "计算 DIF、DEA 与柱值，不依赖 TA-Lib",
+            (
+                "计算逻辑：快慢EMA之差为DIF，DIF的信号EMA为DEA"
+                "，柱值=2*(DIF-DEA)，EMA从窗口首值递推。结果含"
+                "义：DIF正表示快线高于慢线，柱值正表示DIF高于DEA；数"
+                "值使用价格单位，不代表收益率。"
+            ),
             {"symbol": "证券代码", "fast": "快线", "slow": "慢线", "signal": "信号线"},
             "DIF、DEA、柱值或数据不足说明",
             "factor('technical.macd', symbol='000001', fast=12, slow=26, signal=9)",
