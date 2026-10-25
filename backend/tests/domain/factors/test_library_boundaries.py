@@ -12,11 +12,13 @@ from easy_quant.strategy_api.context import RuntimeContext
 
 
 def test_catalogs_separate_raw_data_and_computation():
-    assert {item.key for item in build_default_registry().list()} == {
-        "technical.ma",
-        "technical.rsi",
-        "technical.macd",
-        "stat.expected-return",
+    keys = {item.key for item in build_default_registry().list()}
+    assert {"technical.ma", "technical.rsi", "technical.macd", "stat.expected-return"} <= keys
+    assert not keys & {
+        "market.daily-bars",
+        "market.value",
+        "fundamental.latest",
+        "fundamental.history",
     }
     assert {item.key for item in build_library_registry().list()} == {
         "market.daily-bars",
@@ -53,13 +55,17 @@ def test_source_snapshot_is_read_once_and_results_are_isolated():
     assert gateway.calls == 1
 
 
-def test_library_runtime_and_legacy_route_have_same_visible_data():
+def test_library_runtime_rejects_old_factor_data_route():
     context = RuntimeContext(
         {"decision_at": "2026-01-02T00:00:00+00:00", "prices": {"a": ["10", "12"]}}
     )
-    assert context.library("market.daily-bars", symbol="a") == context.factor(
-        "market.daily-bars", symbol="a"
-    )
+    import pytest
+
+    from easy_quant.domain.shared.errors import NotFoundError
+
+    assert len(context.library("market.daily-bars", symbol="a")) == 2
+    with pytest.raises(NotFoundError):
+        context.factor("market.daily-bars", symbol="a")
     assert context.factor("technical.ma", symbol="a", window=2)["value"] == Decimal(11)
     source = "bars = context.library('market.daily-bars', symbol='a')\nprice = bars[-20]['close']"
     assert extract_history_trading_days(source) == 20
@@ -67,3 +73,19 @@ def test_library_runtime_and_legacy_route_have_same_visible_data():
     assert extract_factor_dependencies(
         "context.library('fundamental.history', symbol='a', dataset='financial-indicators')"
     ) == {"financial-indicators"}
+
+
+def test_saving_old_data_factor_calls_reports_library_migration():
+    import pytest
+
+    from easy_quant.application.services.strategy_validation import PythonStrategyValidator
+    from easy_quant.domain.shared.errors import ValidationError
+
+    source = (
+        "def before_market(context, parameters):\n return []\n"
+        "def on_market(context, parameters):\n return []\n"
+        "def after_market(context, parameters):\n"
+        " context.factor('market.daily-bars', symbol='a')\n return []"
+    )
+    with pytest.raises(ValidationError, match="library"):
+        PythonStrategyValidator().validate(source)

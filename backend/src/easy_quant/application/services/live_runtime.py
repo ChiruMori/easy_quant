@@ -79,6 +79,7 @@ def analyze_live_instance(
     excluded = currently_unavailable_symbols(container.market_data)
     universe_symbols: set[str] = set()
     prices: dict[str, list[str]] = {}
+    visible_bars: dict[str, list[dict[str, object]]] = {}
     found_bars = False
     for row in page_cache.days((*previous_days, trading_day)):
         day = date.fromisoformat(str(row["trading_day"]))
@@ -91,6 +92,7 @@ def analyze_live_instance(
         if row_available_at <= cutoff and (day < trading_day or include_today):
             universe_symbols.add(symbol)
             prices.setdefault(symbol, []).append(str(row["close"]))
+            visible_bars.setdefault(symbol, []).append(row)
         elif day == trading_day and phase == "on_market":
             universe_symbols.add(symbol)
     if "daily-bars" in dependencies and not found_bars:
@@ -146,6 +148,7 @@ def analyze_live_instance(
         {
             "universe": universe,
             "prices": prices,
+            "bars": visible_bars,
             "market_values": {},
             "current_prices": {
                 symbol: price

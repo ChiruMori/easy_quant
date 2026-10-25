@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from easy_quant.factors.reference import definitions
 from easy_quant.factors.statistical import expected_return
 from easy_quant.factors.technical import (
     moving_average,
@@ -86,4 +87,6 @@ def build_default_registry() -> FactorRegistry:
                 history_extra=int(item[0] == "technical.rsi"),
             )
         )
+    for definition in definitions():
+        registry.register(definition)
     return registry

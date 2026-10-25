@@ -127,6 +127,6 @@
     "parameters": "market.daily-bars、market.value、fundamental.latest、fundamental.history；symbol，基本面另传 dataset。",
     "output": "可见记录序列、最新记录或 None；数值为 Decimal。",
     "example": "bars = context.library('market.daily-bars', symbol=symbol)",
-    "runtime": "回测预热后只读快照，遵守 available_at；旧 factor 数据读取调用保留兼容。"
+    "runtime": "回测预热后只读快照，遵守 available_at；原始数据必须使用 library；factor 仅计算因子。"
   }
 ]

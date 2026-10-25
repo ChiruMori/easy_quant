@@ -26,3 +26,4 @@ class FactorDefinition:
     integer_parameters: tuple[str, ...] = ()
     history_parameter: str | None = None
     history_extra: int = 0
+    required_history: int | None = None

@@ -50,6 +50,7 @@ class SnapshotGateway:
                 "low",
                 "close",
                 "volume",
+                "amount",
                 "pe_ratio",
                 "pb_ratio",
                 "market_cap",
@@ -160,8 +161,6 @@ class RuntimeContext:
         return LIBRARY_REGISTRY.call(key, self._factor_context, parameters)
 
     def factor(self, key: str, **parameters: object) -> Any:
-        if key in {item.key for item in LIBRARY_REGISTRY.list()}:
-            return self.library(key, **parameters)
         data = self.data
         # Mock 仅在显式快测模式补技术因子的窗口，绝不补造财务指标。
         if (
@@ -185,6 +184,7 @@ class RuntimeContext:
                 )
                 data = {
                     **data,
+                    "bars": {s: rows for s, rows in data.get("bars", {}).items() if s != symbol},
                     "prices": {
                         **data["prices"],
                         symbol: [prices[0]] * (required - len(prices)) + prices,

@@ -134,7 +134,11 @@ def test_live_subprocess_quotes_only_requested_symbols_and_caches(fixed_now):
 
 
 def test_mock_is_explicit_deterministic_and_unavailable_to_real_runtimes():
-    base = {"prices": {"x": ["10", "11"]}, "allow_mock": True}
+    base = {
+        "prices": {"x": ["10", "11"]},
+        "bars": {"x": [{"close": "10"}, {"close": "11"}]},
+        "allow_mock": True,
+    }
     for runtime in ("backtest", "live"):
         result = RuntimeContext({**base, "runtime": runtime}).factor(
             "technical.ma", symbol="x", window=30

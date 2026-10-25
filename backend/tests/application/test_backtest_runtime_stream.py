@@ -94,10 +94,10 @@ def test_streamed_backtest_excludes_late_bars_until_they_are_available(fixed_now
     )
     source = (
         "def before_market(context, parameters):\n"
-        " print(len(context.factor('market.daily-bars', symbol='000001')))\n return []\n"
+        " print(len(context.library('market.daily-bars', symbol='000001')))\n return []\n"
         "def on_market(context, parameters):\n return []\n"
         "def after_market(context, parameters):\n"
-        " print(len(context.factor('market.daily-bars', symbol='000001')))\n return []"
+        " print(len(context.library('market.daily-bars', symbol='000001')))\n return []"
     )
     container.state.strategies.add_definition(StrategyDefinition("s", "u", "demo"))
     container.state.strategies.add_version(StrategyVersion("v", "s", 1, source, "hash", fixed_now))

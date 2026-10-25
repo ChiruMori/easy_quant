@@ -20,6 +20,41 @@ def _run_day(runner: StreamingStrategyRunner, day: date, *, close: str):
     )
 
 
+def test_complete_dated_bars_reach_factor_and_keep_availability(fixed_now):
+    source = (
+        "def before_market(context, parameters):\n return []\n"
+        "def on_market(context, parameters):\n return []\n"
+        "def after_market(context, parameters):\n"
+        " print(context.factor('alpha101_101', symbol='000001')['value'])\n"
+        " print(context.library('market.daily-bars', symbol='000001')[-1]['amount'])\n"
+        " return []"
+    )
+    with StreamingStrategyRunner(_version(source, fixed_now), {}) as runner:
+        result = runner.run_day(
+            date(2026, 9, 21),
+            expire_before=date(2026, 9, 1),
+            prior_before=[],
+            prior_after=[],
+            today_symbols=["000001"],
+            current_prices={},
+            today_after=[
+                {
+                    "symbol": "000001",
+                    "trading_day": "2026-09-21",
+                    "available_at": "2026-09-21T15:00:00+08:00",
+                    "open": "9",
+                    "high": "10",
+                    "low": "9.001",
+                    "close": "10",
+                    "volume": "100",
+                    "amount": "950",
+                }
+            ],
+        )
+    assert result[-1].status is StrategyRunStatus.SUCCEEDED
+    assert result[-1].stdout == "1\n950\n"
+
+
 def test_streaming_runner_reuses_history_but_resets_strategy_globals(fixed_now) -> None:
     source = (
         "counter = 0\n"
@@ -48,11 +83,11 @@ def test_streaming_runner_times_out_and_reaps_child(fixed_now) -> None:
 def test_phase_protocol_rejects_out_of_order_hooks_and_keeps_history_isolation(fixed_now):
     source = (
         "def before_market(context, parameters):\n"
-        " print(len(context.factor('market.daily-bars', symbol='000001')))\n return []\n"
+        " print(len(context.library('market.daily-bars', symbol='000001')))\n return []\n"
         "def on_market(context, parameters):\n"
-        " print(len(context.factor('market.daily-bars', symbol='000001')))\n return []\n"
+        " print(len(context.library('market.daily-bars', symbol='000001')))\n return []\n"
         "def after_market(context, parameters):\n"
-        " print(len(context.factor('market.daily-bars', symbol='000001')))\n return []"
+        " print(len(context.library('market.daily-bars', symbol='000001')))\n return []"
     )
     day = date(2026, 9, 21)
     arguments = {
