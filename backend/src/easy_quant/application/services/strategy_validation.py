@@ -73,30 +73,36 @@ def extract_history_trading_days(source_code: str) -> int:
             if node.func.attr in {"history", "daily_bars"}:
                 windows.append(DEFAULT_HISTORY_TRADING_DAYS)
                 continue
-            if node.func.attr != "factor":
+            if node.func.attr not in {"factor", "library"}:
                 continue
             if not node.args or not isinstance(node.args[0], ast.Constant):
                 windows.append(DEFAULT_HISTORY_TRADING_DAYS)
                 continue
             key = node.args[0].value
-            if key == "market.daily-bars":
+            if node.func.attr == "library" and key == "market.daily-bars":
                 required = _tail_history_window(tree, node)
                 if required > MAX_HISTORY_TRADING_DAYS:
                     raise ValidationError("因子所需历史超过 2500 个交易日")
                 windows.append(required)
                 continue
-            if key in {"stat.expected-return", "technical.macd"}:
-                # EMA/统计依赖整个输入序列，保留既有口径而非只取最小样本。
-                windows.append(DEFAULT_HISTORY_TRADING_DAYS)
+            from easy_quant.factors.registry import build_default_registry
+
+            definition = next(
+                (item for item in build_default_registry().list() if item.key == key), None
+            )
+            if definition is None:
                 continue
-            if key not in {"technical.ma", "technical.rsi"}:
+            if definition.history_parameter is None:
+                windows.append(definition.required_history or DEFAULT_HISTORY_TRADING_DAYS)
                 continue
             if any(keyword.arg is None for keyword in node.keywords):
                 windows.append(DEFAULT_HISTORY_TRADING_DAYS)
                 continue
-            value = next((kw.value for kw in node.keywords if kw.arg == "window"), None)
+            value = next(
+                (kw.value for kw in node.keywords if kw.arg == definition.history_parameter), None
+            )
             if value is None:
-                window = 5 if key == "technical.ma" else 14
+                window = int(str(definition.defaults[definition.history_parameter]))
             elif isinstance(value, ast.Constant) and type(value.value) is int:
                 window = value.value
             else:
@@ -104,7 +110,7 @@ def extract_history_trading_days(source_code: str) -> int:
                 continue
             if not 1 <= window <= MAX_HISTORY_TRADING_DAYS:
                 raise ValidationError("因子窗口必须在 1 至 2500 之间")
-            required = window + int(key == "technical.rsi")
+            required = window + definition.history_extra
             if required > MAX_HISTORY_TRADING_DAYS:
                 raise ValidationError("因子所需历史超过 2500 个交易日")
             windows.append(required)
@@ -117,14 +123,10 @@ def extract_history_trading_days(source_code: str) -> int:
 def extract_factor_dependencies(source_code: str) -> set[str]:
     tree = ast.parse(source_code)
     datasets: set[str] = set()
-    factor_datasets = {
-        "market.daily-bars": "daily-bars",
-        "technical.ma": "daily-bars",
-        "technical.rsi": "daily-bars",
-        "technical.macd": "daily-bars",
-        "stat.expected-return": "daily-bars",
-        "market.value": "market-values",
-    }
+    from easy_quant.factors.registry import build_default_registry
+
+    factor_datasets = {item.key: item.datasets for item in build_default_registry().list()}
+    library_datasets = {"market.daily-bars": ("daily-bars",), "market.value": ("market-values",)}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
@@ -136,15 +138,19 @@ def extract_factor_dependencies(source_code: str) -> set[str]:
         }
         datasets.update(helpers.get(node.func.attr, set()))
         if (
-            node.func.attr != "factor"
+            node.func.attr not in {"factor", "library"}
             or not node.args
             or not isinstance(node.args[0], ast.Constant)
         ):
             continue
         factor_key = node.args[0].value
-        if isinstance(factor_key, str) and factor_key in factor_datasets:
-            datasets.add(factor_datasets[factor_key])
-        if factor_key in {"fundamental.latest", "fundamental.history"}:
+        definitions = factor_datasets if node.func.attr == "factor" else library_datasets
+        if isinstance(factor_key, str) and factor_key in definitions:
+            datasets.update(definitions[factor_key])
+        if node.func.attr == "library" and factor_key in {
+            "fundamental.latest",
+            "fundamental.history",
+        }:
             dataset = next(
                 (
                     keyword.value.value
@@ -186,6 +192,23 @@ class PythonStrategyValidator:
         if invalid_hooks:
             raise ValidationError("策略钩子必须接收 context 和 parameters 两个参数")
         for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "factor"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value
+                in {
+                    "market.daily-bars",
+                    "market.value",
+                    "fundamental.latest",
+                    "fundamental.history",
+                }
+            ):
+                raise ValidationError(
+                    "原始数据读取已迁移，请将 context.factor 改为 context.library"
+                )
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 raise ValidationError("策略不允许导入模块")
             if (

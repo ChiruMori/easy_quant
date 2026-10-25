@@ -1,21 +1,10 @@
-from __future__ import annotations
+"""兼容导入；数据能力定义位于 platform_library。"""
 
-from easy_quant.factors.context import FactorContext
+from easy_quant.platform_library.market import (
+    daily_bars,
+    latest_record,
+    market_value,
+    record_history,
+)
 
-
-def daily_bars(context: FactorContext, parameters: dict[str, object]) -> object:
-    return context.read("daily-bars", str(parameters["symbol"]))
-
-
-def market_value(context: FactorContext, parameters: dict[str, object]) -> object:
-    rows = context.read("market-values", str(parameters["symbol"]))
-    return rows[-1] if rows else None
-
-
-def latest_record(context: FactorContext, parameters: dict[str, object]) -> object:
-    rows = context.read(str(parameters["dataset"]), str(parameters["symbol"]))
-    return rows[-1] if rows else None
-
-
-def record_history(context: FactorContext, parameters: dict[str, object]) -> object:
-    return context.read(str(parameters["dataset"]), str(parameters["symbol"]))
+__all__ = ["daily_bars", "latest_record", "market_value", "record_history"]

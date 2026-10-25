@@ -145,8 +145,10 @@ def _execute_strategy_tick(
             )
         ]
         prices: dict[str, list[str]] = {}
+        grouped_bars: dict[str, list[dict[str, object]]] = {}
         for row in sorted(visible_bars, key=lambda item: str(item["trading_day"])):
             prices.setdefault(str(row["symbol"]), []).append(str(row["close"]))
+            grouped_bars.setdefault(str(row["symbol"]), []).append(row)
         today_rows = [row for row in bars if str(row["trading_day"]) == trading_day.isoformat()]
         symbols = sorted(
             {str(row["symbol"]) for row in visible_bars}
@@ -163,6 +165,7 @@ def _execute_strategy_tick(
                 {
                     "universe": symbols,
                     "prices": prices,
+                    "bars": grouped_bars,
                     "market_values": {},
                     "records": records,
                     "positions": {},

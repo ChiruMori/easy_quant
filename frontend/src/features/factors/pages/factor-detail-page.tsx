@@ -12,7 +12,7 @@ export function FactorDetailPage({ factor }: { factor: FactorDetail }) {
   return (
     <article className="flex flex-col gap-4">
       <h1 className="text-2xl font-semibold">{factor.name}</h1>
-      <p>{factor.description}</p>
+      <p className="[overflow-wrap:anywhere] whitespace-pre-line">{factor.description}</p>
       <h2>参数</h2>
       <dl>
         {Object.entries(factor.parameters).map(([key, value]) => (

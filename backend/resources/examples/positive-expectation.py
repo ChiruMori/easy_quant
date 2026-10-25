@@ -8,10 +8,10 @@ def before_market(context, parameters):
     for symbol in context.universe():
         if context.position(symbol) > 0:
             continue
-        value = context.factor("market.value", symbol=symbol)
+        value = context.library("market.value", symbol=symbol)
         expected = context.factor("stat.expected-return", symbol=symbol)
         if value and expected["available"] and expected["expected_return"] > 0:
-            bars = context.factor("market.daily-bars", symbol=symbol)
+            bars = context.library("market.daily-bars", symbol=symbol)
             if bars:
                 signals.append(
                     context.signal(

@@ -178,10 +178,10 @@ def test_quick_test_excludes_bars_not_yet_available_at_decision_time() -> None:
     )
     source = (
         "def before_market(context, parameters):\n"
-        " print(len(context.factor('market.daily-bars', symbol='000001')))\n return []\n"
+        " print(len(context.library('market.daily-bars', symbol='000001')))\n return []\n"
         "def on_market(context, parameters):\n return []\n"
         "def after_market(context, parameters):\n"
-        " print(len(context.factor('market.daily-bars', symbol='000001')))\n return []"
+        " print(len(context.library('market.daily-bars', symbol='000001')))\n return []"
     )
     strategy = _create_strategy(client, headers, source)
     client.post(

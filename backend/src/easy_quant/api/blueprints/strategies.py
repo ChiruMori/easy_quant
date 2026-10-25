@@ -35,7 +35,7 @@ MOVING_AVERAGE_TEMPLATE = '''def before_market(context, parameters):
     for symbol in context.universe():
         if context.position(symbol) > 0:
             continue
-        bars = context.factor("market.daily-bars", symbol=symbol)
+        bars = context.library("market.daily-bars", symbol=symbol)
         ma5 = context.factor("technical.ma", symbol=symbol, window=5)
         if ma5["available"] and bars[-1]["close"] > ma5["value"]:
             signals.append(context.signal(

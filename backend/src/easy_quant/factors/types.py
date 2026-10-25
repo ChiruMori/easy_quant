@@ -1,22 +1,5 @@
-from __future__ import annotations
+"""兼容导入；数据能力定义位于 platform_library。"""
 
-from dataclasses import dataclass
-from typing import Protocol
+from easy_quant.platform_library.types import FactorDefinition, FactorFunction
 
-from easy_quant.factors.context import FactorContext
-
-
-class FactorFunction(Protocol):
-    def __call__(self, context: FactorContext, parameters: dict[str, object]) -> object: ...
-
-
-@dataclass(frozen=True, slots=True)
-class FactorDefinition:
-    key: str
-    name: str
-    description: str
-    parameters: dict[str, str]
-    output: str
-    example: str
-    output_example: str
-    function: FactorFunction
+__all__ = ["FactorDefinition", "FactorFunction"]

@@ -133,7 +133,8 @@ def test_runtime_query_discovers_symbols_then_reads_primary_key_ranges() -> None
     assert "daily_bars.symbol IN" in batch
     assert "daily_bars.close" in batch
     assert "daily_bars.available_at" in batch
-    assert "daily_bars.volume" not in batch
+    assert "daily_bars.volume" in batch
+    assert "daily_bars.amount" in batch
     assert "daily_bars.archive_sha256" not in batch
 
 
@@ -144,8 +145,8 @@ def test_runtime_store_batches_symbols_and_sorts_rows_by_day() -> None:
 
         def execute(self, _statement):
             return [
-                ("000002", date(2026, 9, 2), date(2026, 9, 2), 2, 2, 2, 2),
-                ("000001", date(2026, 9, 1), date(2026, 9, 1), 1, 1, 1, 1),
+                ("000002", date(2026, 9, 2), date(2026, 9, 2), 2, 2, 2, 2, 200, 400),
+                ("000001", date(2026, 9, 1), date(2026, 9, 1), 1, 1, 1, 1, 100, 100),
             ]
 
     store = SqlAlchemyMarketDataStore(cast(Session, FakeSession()))

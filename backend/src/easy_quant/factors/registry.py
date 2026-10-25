@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from easy_quant.domain.shared.errors import NotFoundError, ValidationError
-from easy_quant.factors.context import FactorContext
-from easy_quant.factors.market import daily_bars, latest_record, market_value, record_history
+from easy_quant.factors.reference import definitions
 from easy_quant.factors.statistical import expected_return
 from easy_quant.factors.technical import (
     moving_average,
@@ -10,91 +8,20 @@ from easy_quant.factors.technical import (
     relative_strength_index,
 )
 from easy_quant.factors.types import FactorDefinition
-
-
-class FactorRegistry:
-    def __init__(self) -> None:
-        self._items: dict[str, FactorDefinition] = {}
-
-    def register(self, definition: FactorDefinition) -> None:
-        if definition.key in self._items:
-            raise ValidationError("因子重复注册", {"key": definition.key})
-        if not all(
-            (
-                definition.description,
-                definition.output,
-                definition.example,
-                definition.output_example,
-            )
-        ):
-            raise ValidationError("因子文档不完整", {"key": definition.key})
-        self._items[definition.key] = definition
-
-    def list(self) -> tuple[FactorDefinition, ...]:
-        return tuple(self._items.values())
-
-    def get(self, key: str) -> FactorDefinition:
-        try:
-            return self._items[key]
-        except KeyError as error:
-            raise NotFoundError("factor") from error
-
-    def call(self, key: str, context: FactorContext, parameters: dict[str, object]) -> object:
-        definition = self.get(key)
-        defaults: dict[str, dict[str, object]] = {
-            "technical.ma": {"window": 5},
-            "technical.rsi": {"window": 14},
-            "technical.macd": {"fast": 12, "slow": 26, "signal": 9},
-        }
-        parameters = {**defaults.get(key, {}), **parameters}
-        for name in ("window", "fast", "slow", "signal"):
-            if name in parameters:
-                try:
-                    value = int(str(parameters[name]))
-                except ValueError as error:
-                    raise ValidationError("因子窗口必须为整数") from error
-                if not 1 <= value <= 2500:
-                    raise ValidationError("因子窗口必须在 1–2500 之间")
-                parameters[name] = value
-        missing = definition.parameters.keys() - parameters.keys()
-        if missing:
-            raise ValidationError("缺少因子参数", {"fields": sorted(missing)})
-        return definition.function(context, parameters)
+from easy_quant.platform_library.registry import FactorRegistry
 
 
 def build_default_registry() -> FactorRegistry:
     registry = FactorRegistry()
     items = [
         (
-            "market.daily-bars",
-            "K 线",
-            "读取截至 as_of 可见的日线 K 线",
-            {"symbol": "证券代码"},
-            "K 线序列",
-            "factor('market.daily-bars', symbol='000001')",
-            (
-                '[{"symbol": "000001", "trading_day": "2026-09-30", '
-                '"close": "10.50", "volume": "100000"}]'
-            ),
-            daily_bars,
-        ),
-        (
-            "market.value",
-            "市值",
-            "读取最新可见市值",
-            {"symbol": "证券代码"},
-            "市值记录",
-            "factor('market.value', symbol='000001')",
-            (
-                '{"symbol": "000001", "market_cap": 120000000000, '
-                '"available_at": "2026-09-30T15:00:00+08:00"}\n无记录时：None'
-            ),
-            market_value,
-        ),
-        (
             "technical.ma",
             "移动平均线（含 5 日均线）",
-            "计算指定窗口的收盘价均线；window=5 即为 5 日均线",
+            (
+                "计算逻辑：最近window个收盘价求算术均值，window="
+                "5即5日均线。结果含义：描述近期平均价格水平，用于平滑价格；"
+                "不直接规定买卖方向。"
+            ),
             {"symbol": "证券代码", "window": "窗口"},
             "均线或数据不足",
             "factor('technical.ma', symbol='000001', window=5)",
@@ -107,7 +34,12 @@ def build_default_registry() -> FactorRegistry:
         (
             "stat.expected-return",
             "历史预期回报",
-            "由可见历史收益估计胜率和预期回报",
+            (
+                "计算逻辑：相邻收盘价比减1得到日收益，求平均值作为expec"
+                "ted_return；正收益日数除以收益样本数作为win_r"
+                "ate。结果含义：二者只描述输入历史样本，不是未来收益或获胜"
+                "概率保证。"
+            ),
             {"symbol": "证券代码"},
             "胜率与预期回报",
             "factor('stat.expected-return', symbol='000001')",
@@ -121,7 +53,13 @@ def build_default_registry() -> FactorRegistry:
         (
             "technical.rsi",
             "相对强弱指标 RSI",
-            "根据截至决策时点可见的收盘价计算 RSI",
+            (
+                "计算逻辑：最近window个价差分别取上涨和下跌绝对值的简单"
+                "均值，RS=平均上涨/平均下跌，RSI=100-100/(1"
+                "+RS)；平均下跌为零时返回100。结果含义：较高表示近期上"
+                "涨价差相对更强；全平也按当前实现返回100。此接口不是Wil"
+                "der递归平滑的rsi。"
+            ),
             {"symbol": "证券代码", "window": "窗口，默认 14"},
             "RSI 或数据不足说明",
             "factor('technical.rsi', symbol='000001', window=14)",
@@ -134,7 +72,12 @@ def build_default_registry() -> FactorRegistry:
         (
             "technical.macd",
             "指数平滑异同移动平均线 MACD",
-            "计算 DIF、DEA 与柱值，不依赖 TA-Lib",
+            (
+                "计算逻辑：快慢EMA之差为DIF，DIF的信号EMA为DEA"
+                "，柱值=2*(DIF-DEA)，EMA从窗口首值递推。结果含"
+                "义：DIF正表示快线高于慢线，柱值正表示DIF高于DEA；数"
+                "值使用价格单位，不代表收益率。"
+            ),
             {"symbol": "证券代码", "fast": "快线", "slow": "慢线", "signal": "信号线"},
             "DIF、DEA、柱值或数据不足说明",
             "factor('technical.macd', symbol='000001', fast=12, slow=26, signal=9)",
@@ -145,34 +88,25 @@ def build_default_registry() -> FactorRegistry:
             ),
             moving_average_convergence_divergence,
         ),
-        (
-            "fundamental.latest",
-            "最新基本面记录",
-            "读取指定基本面数据集截至决策时点的最新记录",
-            {"symbol": "证券代码", "dataset": "基本面数据集"},
-            "最新记录或空值",
-            "factor('fundamental.latest', symbol='000001', dataset='valuation-indicators')",
-            (
-                '{"symbol": "000001", "available_at": "2026-09-30T15:00:00+08:00", '
-                '"pb_ratio": 1.2}\n无记录时：None'
-            ),
-            latest_record,
-        ),
-        (
-            "fundamental.history",
-            "历史基本面记录",
-            "按可获知时间读取财务、估值、质押等历史记录",
-            {"symbol": "证券代码", "dataset": "基本面数据集"},
-            "历史记录序列",
-            "factor('fundamental.history', symbol='000001', dataset='financial-indicators')",
-            (
-                '[{"symbol": "000001", "available_at": "2026-04-30T15:00:00+08:00"}, '
-                '{"symbol": "000001", "available_at": "2026-08-31T15:00:00+08:00"}]'
-                "\n无记录时：[]"
-            ),
-            record_history,
-        ),
     ]
     for item in items:
-        registry.register(FactorDefinition(*item))
+        defaults = {
+            "technical.ma": {"window": 5},
+            "technical.rsi": {"window": 14},
+            "technical.macd": {"fast": 12, "slow": 26, "signal": 9},
+        }.get(item[0], {})
+        registry.register(
+            FactorDefinition(
+                *item,
+                defaults=defaults,
+                datasets=("daily-bars",),
+                integer_parameters=tuple(defaults),
+                history_parameter="window"
+                if item[0] in {"technical.ma", "technical.rsi"}
+                else None,
+                history_extra=int(item[0] == "technical.rsi"),
+            )
+        )
+    for definition in definitions():
+        registry.register(definition)
     return registry

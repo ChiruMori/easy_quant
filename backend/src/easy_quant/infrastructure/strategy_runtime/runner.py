@@ -459,7 +459,21 @@ def _day_request(
 ) -> dict[str, object]:
     def price_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
         return [
-            {"symbol": row["symbol"], "trading_day": row["trading_day"], "close": row["close"]}
+            {
+                name: row[name]
+                for name in (
+                    "symbol",
+                    "trading_day",
+                    "available_at",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "amount",
+                )
+                if name in row
+            }
             for row in rows
         ]
 

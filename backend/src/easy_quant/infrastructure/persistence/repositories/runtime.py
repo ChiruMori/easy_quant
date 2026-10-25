@@ -92,6 +92,8 @@ def runtime_batch_statement(
             Bar.high,
             Bar.low,
             Bar.close,
+            Bar.volume,
+            Bar.amount,
         )
         .with_hint(Bar, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
         .where(
@@ -218,9 +220,20 @@ class InMemoryMarketDataStore:
         ]
 
     def list_runtime_bars(self, start_day: date, end_day: date) -> list[dict[str, Any]]:
-        fields = ("symbol", "trading_day", "available_at", "open", "high", "low", "close")
+        fields = (
+            "symbol",
+            "trading_day",
+            "available_at",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+        )
         return [
-            {field: row[field] for field in fields} for row in self.list_bars(start_day, end_day)
+            {field: row.get(field) for field in fields}
+            for row in self.list_bars(start_day, end_day)
         ]
 
     def iter_runtime_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
@@ -521,8 +534,20 @@ class SqlAlchemyMarketDataStore:
                     "high": str(high),
                     "low": str(low),
                     "close": str(close),
+                    "volume": str(volume) if volume is not None else None,
+                    "amount": str(amount) if amount is not None else None,
                 }
-                for symbol, trading_day, available_at, open_price, high, low, close in result
+                for (
+                    symbol,
+                    trading_day,
+                    available_at,
+                    open_price,
+                    high,
+                    low,
+                    close,
+                    volume,
+                    amount,
+                ) in result
             )
         rows.sort(key=lambda row: (str(row["trading_day"]), str(row["symbol"])))
         return rows

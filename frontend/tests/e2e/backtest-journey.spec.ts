@@ -40,6 +40,15 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await expect(page.getByRole("heading", { name: "因子目录" })).toBeVisible()
   await expect(page.getByText(/5 日均线/).first()).toBeVisible()
   await expect(page.getByText(/context\.factor/).first()).toBeVisible()
+  await page.getByLabel("搜索因子").fill("alpha101_19")
+  await expect(page.getByText("周度价格反转与量价相关惩罚", { exact: true })).toBeVisible()
+  await expect(page.getByText(/计算逻辑：先按7日价格变化方向取反/)).toBeVisible()
+  await expect(page.getByText(/结果含义：第一部分给近期下跌正号/)).toBeVisible()
+  await page.setViewportSize({ width: 375, height: 812 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  )
+  await page.setViewportSize({ width: 1280, height: 900 })
 
   await page.goto("/strategy-library")
   await expect(page.getByRole("heading", { name: "策略公共库" })).toBeVisible()

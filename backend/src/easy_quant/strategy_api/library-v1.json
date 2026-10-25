@@ -118,5 +118,15 @@
     "output": "上下文独立副本；日期及时间使用带时区 ISO 字符串。",
     "example": "ratio = Decimal(parameters.get('ratio', '0.10'))\nprint(context.data['trading_day'], context.data['phase'])",
     "runtime": "统一三个钩子 before_market/on_market/after_market；实盘盘后默认关闭。数据读取接口和 KV 在三个运行时相同。"
+  },
+  {
+    "key": "library",
+    "name": "平台原始数据",
+    "signature": "context.library(key, **parameters)",
+    "description": "读取平台维护的数据。",
+    "parameters": "market.daily-bars、market.value、fundamental.latest、fundamental.history；symbol，基本面另传 dataset。",
+    "output": "可见记录序列、最新记录或 None；数值为 Decimal。",
+    "example": "bars = context.library('market.daily-bars', symbol=symbol)",
+    "runtime": "回测预热后只读快照，遵守 available_at；原始数据必须使用 library；factor 仅计算因子。"
   }
 ]

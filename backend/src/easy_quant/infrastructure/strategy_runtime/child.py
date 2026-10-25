@@ -74,6 +74,7 @@ def stream_main() -> None:
 
     price_days: dict[str, list[str]] = {}
     prices: dict[str, list[str]] = {}
+    bars: dict[str, list[dict[str, object]]] = {}
     strategy_state: dict[str, object] = {}
 
     def add_prices(rows: list[dict[str, object]]) -> None:
@@ -81,12 +82,15 @@ def stream_main() -> None:
             symbol, day = str(row["symbol"]), str(row["trading_day"])
             days = price_days.setdefault(symbol, [])
             values = prices.setdefault(symbol, [])
+            records = bars.setdefault(symbol, [])
             position = bisect_left(days, day)
             if position < len(days) and days[position] == day:
                 values[position] = str(row["close"])
+                records[position] = dict(row)
             else:
                 days.insert(position, day)
                 values.insert(position, str(row["close"]))
+                records.insert(position, dict(row))
 
     namespace: dict[str, object] = {}
     active_day: str | None = None
@@ -106,9 +110,11 @@ def stream_main() -> None:
                 if expired:
                     del days[:expired]
                     del values[:expired]
+                    del bars[symbol][:expired]
                 if not days:
                     del price_days[symbol]
                     del prices[symbol]
+                    del bars[symbol]
             add_prices(cast(list[dict[str, object]], request.get("prior_before", [])))
             namespace = {"__builtins__": _safe_builtins()}
             with contextlib.redirect_stdout(io.StringIO()):
@@ -130,6 +136,7 @@ def stream_main() -> None:
         context = {
             "universe": sorted(universe),
             "prices": prices,
+            "bars": bars,
             "market_values": {},
             "trading_day": trading_day,
             "phase": phase,

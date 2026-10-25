@@ -4,11 +4,11 @@ from easy_quant.infrastructure.strategy_runtime.runner import SubprocessStrategy
 ADAPTED_STRATEGY = """def before_market(context, parameters):
     selected = []
     for symbol in context.universe():
-        value = context.factor("market.value", symbol=symbol)
-        finance = context.factor(
+        value = context.library("market.value", symbol=symbol)
+        finance = context.library(
             "fundamental.latest", symbol=symbol, dataset="financial-indicators"
         )
-        pledge = context.factor(
+        pledge = context.library(
             "fundamental.latest", symbol=symbol, dataset="pledge-ratios"
         )
         rsi = context.factor("technical.rsi", symbol=symbol, window=3)
