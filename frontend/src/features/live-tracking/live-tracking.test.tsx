@@ -26,5 +26,7 @@ describe("实盘跟踪", () => {
     )
     expect(screen.getByText(/不会自动下单/)).toBeInTheDocument()
     expect(screen.getByText(/l1/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "暂停实盘" })).toBeEnabled()
+    expect(screen.queryByRole("button", { name: /停止|终止/ })).not.toBeInTheDocument()
   })
 })

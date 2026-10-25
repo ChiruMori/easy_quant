@@ -234,9 +234,10 @@ describe("策略工作台", () => {
       expect(controls.quickTestEditor).toHaveBeenCalledWith({
         source_code: "# current editor",
         trading_day: "2026-09-29",
-        allow_mock: false,
+        allow_mock: true,
       }),
     )
+    expect(screen.queryByRole("button", { name: "预览当前测试代码" })).not.toBeInTheDocument()
     expect(controls.createStrategy).not.toHaveBeenCalled()
     expect(controls.saveStrategyDraft).not.toHaveBeenCalled()
     expect(screen.getByText(/不保存代码快照/)).toBeInTheDocument()
