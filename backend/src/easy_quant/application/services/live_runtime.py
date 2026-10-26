@@ -9,6 +9,7 @@ from time import monotonic
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.acquisition import AcquisitionFailed
 from easy_quant.application.services.instrument_eligibility import currently_unavailable_symbols
 from easy_quant.application.services.notification_runtime import notify_owner
 from easy_quant.application.services.recommendation_actions import (
@@ -31,6 +32,64 @@ logger = logging.getLogger(__name__)
 
 
 def analyze_live_instance(
+    container: Any,
+    instance_id: str,
+    phase: str,
+    decision_at: datetime,
+    current_prices: dict[str, object] | None = None,
+) -> dict[str, object]:
+    try:
+        return _analyze_live_instance(container, instance_id, phase, decision_at, current_prices)
+    except AcquisitionFailed as error:
+        # Commit the failure event before enqueueing delivery. Notification failures
+        # must not replace the data-source failure that the operator needs to see.
+        try:
+            _record_live_data_failure(container, instance_id, phase, decision_at, error)
+        except Exception as alert_error:
+            logger.error(
+                "实盘采集失败告警入队失败 instance_id=%s phase=%s error_type=%s",
+                instance_id,
+                phase,
+                type(alert_error).__name__,
+            )
+        raise
+
+
+def _record_live_data_failure(
+    container: Any, instance_id: str, phase: str, decision_at: datetime, error: AcquisitionFailed
+) -> None:
+    trading_day = decision_at.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    attempts = error.details.get("attempts", [])
+    summaries: dict[str, str] = {}
+    for attempt in attempts if isinstance(attempts, list) else []:
+        if isinstance(attempt, dict):
+            summaries[str(attempt.get("source_key", "unknown"))] = (
+                f"第{attempt.get('attempt', '?')}次：{attempt.get('message', '未知原因')}"
+            )
+    body = (
+        f"{trading_day} {phase} 数据获取失败，全部来源已尝试并重试。"
+        "本轮未生成建议，策略状态及阶段完成标记未提交；请检查来源后重新发起分析。\n"
+        + "\n".join(f"{source}：{message}" for source, message in summaries.items())
+    )
+    event_id = f"{instance_id}:{trading_day}:{phase}:data-failed"
+    with container.live_tracking.transaction() as state:
+        instance = state.instances.get(instance_id)
+        if instance is None:
+            return
+        outbox = dict(instance.get("notification_outbox", {}))
+        outbox[event_id] = {"title": "实盘分析失败：数据来源不可用", "body": body}
+        instance["notification_outbox"] = outbox
+        state.instances[instance_id] = instance
+    logger.error(
+        "实盘采集失败告警已记录 instance_id=%s phase=%s sources=%s",
+        instance_id,
+        phase,
+        len(summaries),
+    )
+    _drain_live_notifications(container, instance_id)
+
+
+def _analyze_live_instance(
     container: Any,
     instance_id: str,
     phase: str,
