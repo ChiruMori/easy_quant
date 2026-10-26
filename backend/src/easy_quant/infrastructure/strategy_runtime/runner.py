@@ -7,6 +7,7 @@ import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import suppress
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -83,7 +84,10 @@ class SubprocessStrategyRunner:
             )
         except subprocess.TimeoutExpired:
             for run in runs:
-                run.status, run.error = StrategyRunStatus.TIMED_OUT, "策略运行超时"
+                run.status, run.error = (
+                    StrategyRunStatus.TIMED_OUT,
+                    f"策略单阶段运行超过 {self.timeout_seconds:g} 秒",
+                )
             return runs
         if len(completed.stdout.encode("utf-8")) > self.result_limit:
             for run in runs:
@@ -314,26 +318,36 @@ class StreamingStrategyRunner:
             except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
                 process.kill()
                 process.wait()
-        if process.stdin is not None:
-            process.stdin.close()
-        if process.stdout is not None:
-            process.stdout.close()
+        for pipe in (process.stdin, process.stdout):
+            if pipe is not None:
+                # 子进程已退出时close可能再次flush失败，不覆盖原始执行结果。
+                with suppress(OSError):
+                    pipe.close()
         self._reader.shutdown(wait=False, cancel_futures=True)
 
     def _exchange(self, request: dict[str, object]) -> dict[str, Any]:
         assert self._process.stdin is not None and self._process.stdout is not None
+
         # Windows 子进程默认控制台编码未必是 UTF-8；行协议保持纯 ASCII。
-        self._process.stdin.write(json.dumps(request, ensure_ascii=True, default=str) + "\n")
-        self._process.stdin.flush()
-        future = self._reader.submit(self._process.stdout.readline, self.result_limit + 1)
+        stdin, stdout = self._process.stdin, self._process.stdout
+
+        def exchange_line():
+            stdin.write(json.dumps(request, ensure_ascii=True, default=str) + "\n")
+            stdin.flush()
+            return stdout.readline(self.result_limit + 1)
+
+        future = self._reader.submit(exchange_line)
         try:
             line = future.result(timeout=self.timeout_seconds)
         except FutureTimeoutError:
             self._process.kill()
             self._process.wait()
             raise
+        except OSError as error:
+            raise RuntimeError(f"策略子进程通信失败（exit_code={self._process.poll()}）") from error
         if not line:
-            raise RuntimeError("策略子进程已退出")
+            code = self._process.poll()
+            raise RuntimeError(f"策略子进程已退出（exit_code={code}）")
         if len(line.encode("utf-8")) > self.result_limit:
             raise RuntimeError("策略结果超过传输限制")
         payload = json.loads(line)
@@ -430,7 +444,10 @@ class StreamingStrategyRunner:
             payload = self._exchange(request)
         except FutureTimeoutError:
             for run in runs:
-                run.status, run.error = StrategyRunStatus.TIMED_OUT, "策略运行超时"
+                run.status, run.error = (
+                    StrategyRunStatus.TIMED_OUT,
+                    f"策略单阶段运行超过 {self.timeout_seconds:g} 秒",
+                )
             return runs
         except (OSError, RuntimeError, json.JSONDecodeError) as error:
             for run in runs:

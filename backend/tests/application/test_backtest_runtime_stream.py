@@ -121,7 +121,7 @@ def test_streamed_backtest_excludes_late_bars_until_they_are_available(fixed_now
     ]
 
 
-def test_backtest_uses_streams_and_preserves_snapshot_hash(fixed_now) -> None:
+def test_backtest_uses_streams_and_preserves_snapshot_hash(fixed_now, monkeypatch) -> None:
     import hashlib
     import json
 
@@ -138,6 +138,20 @@ def test_backtest_uses_streams_and_preserves_snapshot_hash(fixed_now) -> None:
         "available_at": f"{day}T15:00:00+08:00",
     }
     container.market_data.upsert_bars([row])
+    observed = []
+    original = container.market_data.iter_backtest_bars
+
+    def read_once(start, end):
+        observed.append((start, end))
+        yield from original(start, end)
+
+    def no_second_scan(*args):
+        raise AssertionError("快照不得重新扫描行情")
+
+    monkeypatch.setattr(container.market_data, "iter_backtest_bars", read_once)
+    monkeypatch.setattr(container.market_data, "iter_snapshot_bars", no_second_scan)
+    monkeypatch.setattr(container.market_data, "iter_runtime_bars", no_second_scan)
+
     source = (
         "def before_market(context, parameters):\n return []\n"
         "def on_market(context, parameters):\n return []\n"
@@ -152,6 +166,7 @@ def test_backtest_uses_streams_and_preserves_snapshot_hash(fixed_now) -> None:
         "config": {"start_day": day, "end_day": day, "initial_cash": "100000"},
     }
     backtest_runtime.execute_backtest(container, "b")
+    assert len(observed) == 1
     expected = json.dumps([row], ensure_ascii=False, sort_keys=True).encode("utf-8")
     assert container.backtests.get("b")["snapshot_id"] == hashlib.sha256(expected).hexdigest()
 

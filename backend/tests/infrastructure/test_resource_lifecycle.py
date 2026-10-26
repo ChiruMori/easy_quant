@@ -182,15 +182,23 @@ def test_live_instance_and_live_state_are_committed_atomically(fail_commit):
     database.fail_commit = fail_commit
     store = SqlResourceLifecycleStore(database.session)
     instance = {"id": "live", "owner_id": "owner", "strategy_version_id": "v"}
+    schedules = [
+        {"id": f"plan-{phase}", "configuration": {"instance_id": "live", "phase": phase}}
+        for phase in ("before_market", "on_market")
+    ]
     if fail_commit:
         with pytest.raises(RuntimeError, match="commit failed"):
-            store.add_live_instance(instance)
+            store.add_live_instance(instance, schedules)
         assert database.rows[StrategyVersionModel][0].state == "draft"
         assert database.rows[RuntimeDocumentModel] == []
     else:
-        store.add_live_instance(instance)
+        store.add_live_instance(instance, schedules)
         assert database.rows[StrategyVersionModel][0].state == "live"
-        assert len(database.rows[RuntimeDocumentModel]) == 1
+        assert len(database.rows[RuntimeDocumentModel]) == 3
+        assert {r.namespace for r in database.rows[RuntimeDocumentModel]} == {
+            "live_instances",
+            "schedules",
+        }
         assert database.rows[RuntimeDocumentModel][0].key == "live"
 
 
