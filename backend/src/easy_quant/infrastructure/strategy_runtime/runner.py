@@ -138,19 +138,20 @@ class SubprocessStrategyRunner:
         deadline = monotonic() + self.timeout_seconds
         try:
             assert process.stdin is not None and process.stdout is not None
-            process.stdin.write(
-                json.dumps(
-                    {
-                        "source_code": version.source_code,
-                        "parameters": parameters,
-                        "calls": [{"context": {**context_data, "runtime": "live"}, "phase": phase}],
-                    },
-                    default=str,
-                    ensure_ascii=True,
-                )
-                + "\n"
-            )
-            process.stdin.flush()
+
+            def write_request(payload: object) -> None:
+                assert process.stdin is not None
+                process.stdin.write(json.dumps(payload, default=str, ensure_ascii=True) + "\n")
+                process.stdin.flush()
+
+            reader.submit(
+                write_request,
+                {
+                    "source_code": version.source_code,
+                    "parameters": parameters,
+                    "calls": [{"context": {**context_data, "runtime": "live"}, "phase": phase}],
+                },
+            ).result(timeout=max(0, deadline - monotonic()))
             for _ in range(1001):
                 line = reader.submit(process.stdout.readline, self.result_limit + 1).result(
                     timeout=max(0, deadline - monotonic())
@@ -165,8 +166,9 @@ class SubprocessStrategyRunner:
                 if phase != "on_market" or not isinstance(symbols, list) or len(symbols) > 10000:
                     raise ValueError("非法报价请求")
                 response = {"quotes": quotes([str(item) for item in symbols])}
-                process.stdin.write(json.dumps(response, default=str, ensure_ascii=True) + "\n")
-                process.stdin.flush()
+                reader.submit(write_request, response).result(
+                    timeout=max(0, deadline - monotonic())
+                )
             else:
                 raise ValueError("报价请求次数超过限制")
         except (FutureTimeoutError, ValueError, RuntimeError, KeyError, OSError) as error:
@@ -176,7 +178,8 @@ class SubprocessStrategyRunner:
                 process.kill()
             process.wait()
             if process.stdin:
-                process.stdin.close()
+                with suppress(OSError):
+                    process.stdin.close()
             if process.stdout:
                 process.stdout.close()
             reader.shutdown(wait=False, cancel_futures=True)

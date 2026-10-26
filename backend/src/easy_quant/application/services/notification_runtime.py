@@ -162,6 +162,8 @@ def notify_owner(
     body: str,
     subscription_ids: list[str] | None = None,
     live_instance_id: str | None = None,
+    *,
+    defer: bool = False,
 ) -> list[dict[str, object]]:
     selected = [
         row
@@ -198,5 +200,17 @@ def notify_owner(
                     "error": None if selected else "没有本人启用且被此实盘选中的通知渠道",
                 }
                 state.deliveries.append(delivery)
-        results.append(attempt_delivery(container, str(delivery["id"])))
+        if defer and delivery["status"] == "pending":
+            container.jobs.enqueue(
+                Job(
+                    UuidGenerator().new(),
+                    "notification-delivery",
+                    f"notification:{key}:initial",
+                    {"delivery_id": delivery["id"]},
+                    container.authentication.clock.now(),
+                )
+            )
+            results.append(delivery)
+        else:
+            results.append(attempt_delivery(container, str(delivery["id"])))
     return results

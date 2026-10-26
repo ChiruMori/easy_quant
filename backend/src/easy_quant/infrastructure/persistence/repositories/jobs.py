@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
+from copy import deepcopy
 from datetime import datetime
+from threading import RLock
+from typing import cast
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from easy_quant.domain.scheduling.entities import Job, JobStatus
@@ -15,6 +19,7 @@ from easy_quant.infrastructure.persistence.models.scheduling import JobModel
 class InMemoryJobRepository:
     def __init__(self) -> None:
         self.items: dict[str, Job] = {}
+        self._lock = RLock()
 
     def enqueue(self, job: Job) -> Job:
         existing = next(
@@ -29,10 +34,37 @@ class InMemoryJobRepository:
         return self.items.get(job_id)
 
     def claim_due(self, worker_id: str, now: datetime, lease_until: datetime) -> Job | None:
-        job = next((item for item in self.items.values() if item.can_be_claimed(now)), None)
-        if job:
-            job.claim(worker_id, now, lease_until)
-        return job
+        with self._lock:
+            job = next((item for item in self.items.values() if item.can_be_claimed(now)), None)
+            if job:
+                job.claim(worker_id, now, lease_until)
+            return deepcopy(job)
+
+    def _owns(self, job: Job | None, worker_id: str, attempt: int, now: datetime) -> bool:
+        return bool(
+            job
+            and job.status == JobStatus.RUNNING
+            and job.lease_owner == worker_id
+            and job.attempt_count == attempt
+            and job.lease_until
+            and job.lease_until > now
+        )
+
+    def renew_lease(self, job_id, worker_id, attempt, now, lease_until) -> bool:
+        with self._lock:
+            job = self.items.get(job_id)
+            if not self._owns(job, worker_id, attempt, now):
+                return False
+            assert job is not None
+            job.renew(worker_id, lease_until)
+            return True
+
+    def finish_claim(self, job: Job, worker_id: str, now: datetime) -> bool:
+        with self._lock:
+            if not self._owns(self.items.get(job.id), worker_id, job.attempt_count, now):
+                return False
+            self.items[job.id] = deepcopy(job)
+            return True
 
     def save(self, job: Job) -> None:
         self.items[job.id] = job
@@ -115,6 +147,42 @@ class SqlAlchemyJobRepository:
                 session.add(self._to_model(job))
             else:
                 self._copy(job, row)
+
+    @staticmethod
+    def _claim_predicate(job_id: str, worker_id: str, attempt: int, now: datetime):
+        return (
+            JobModel.id == job_id,
+            JobModel.status == JobStatus.RUNNING.value,
+            JobModel.lease_owner == worker_id,
+            JobModel.attempt_count == attempt,
+            JobModel.lease_until > now,
+        )
+
+    def renew_lease(self, job_id, worker_id, attempt, now, lease_until) -> bool:
+        # Every heartbeat uses an independent short transaction, never the handler's session.
+        with self._operation() as session:
+            result = session.execute(
+                update(JobModel)
+                .where(*self._claim_predicate(job_id, worker_id, attempt, now))
+                .values(lease_until=lease_until)
+            )
+            return cast(CursorResult, result).rowcount == 1
+
+    def finish_claim(self, job: Job, worker_id: str, now: datetime) -> bool:
+        with self._operation() as session:
+            result = session.execute(
+                update(JobModel)
+                .where(*self._claim_predicate(job.id, worker_id, job.attempt_count, now))
+                .values(
+                    status=job.status.value,
+                    lease_owner=None,
+                    lease_until=None,
+                    payload_json=json.dumps(job.payload, ensure_ascii=False, default=str),
+                    result_json=json.dumps(job.result_summary, ensure_ascii=False, default=str),
+                    error_json=json.dumps(job.error_summary, ensure_ascii=False, default=str),
+                )
+            )
+            return cast(CursorResult, result).rowcount == 1
 
     def list_all(self) -> list[Job]:
         with self._operation() as session:

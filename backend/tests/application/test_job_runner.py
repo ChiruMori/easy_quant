@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from easy_quant.domain.scheduling.entities import Job, JobStatus
+from easy_quant.infrastructure.persistence.repositories.jobs import InMemoryJobRepository
 from easy_quant.worker.handlers.market_data import register_market_data_handlers
 from easy_quant.worker.registry import JobHandlerRegistry
 from easy_quant.worker.runner import Worker
@@ -14,31 +15,21 @@ from tests.fakes.core import FixedClock, VirtualSleeper
 from tests.fakes.platform import make_test_container
 
 
-class InMemoryJobs:
+class InMemoryJobs(InMemoryJobRepository):
     def __init__(self, jobs: list[Job]) -> None:
-        self.jobs = {job.id: job for job in jobs}
+        super().__init__()
+        self.items = {job.id: job for job in jobs}
+        self.jobs = self.items
 
-    def enqueue(self, job: Job) -> Job:
-        existing = next(
-            (item for item in self.jobs.values() if item.business_key == job.business_key), None
-        )
-        if existing is not None:
-            return existing
-        self.jobs[job.id] = job
-        return job
-
-    def get(self, job_id: str) -> Job | None:
-        return self.jobs.get(job_id)
-
-    def claim_due(self, worker_id: str, now: datetime, lease_until: datetime) -> Job | None:
-        for job in self.jobs.values():
-            if job.can_be_claimed(now):
-                job.claim(worker_id, now, lease_until)
-                return job
-        return None
-
-    def save(self, job: Job) -> None:
-        self.jobs[job.id] = job
+    def finish_claim(self, job: Job, worker_id: str, now: datetime) -> bool:
+        # Keep fixture references alive while using the production fencing predicate.
+        original = self.items[job.id]
+        accepted = super().finish_claim(job, worker_id, now)
+        if accepted:
+            original.status = job.status
+            original.result_summary = job.result_summary
+            original.error_summary = job.error_summary
+        return accepted
 
 
 def test_worker_runs_due_job(fixed_now: datetime, caplog) -> None:
@@ -93,9 +84,9 @@ def test_worker_recovers_session_before_saving_failed_job(fixed_now: datetime) -
     calls: list[str] = []
 
     class RecoveringJobs(InMemoryJobs):
-        def save(self, job: Job) -> None:
+        def finish_claim(self, job, worker_id, now):
             assert calls == ["rollback"]
-            super().save(job)
+            return super().finish_claim(job, worker_id, now)
 
     jobs = RecoveringJobs([job])
     handlers = JobHandlerRegistry()
