@@ -1,4 +1,5 @@
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -63,3 +64,32 @@ def test_idempotent_enqueue_also_releases_its_read_transaction(fixed_now):
     repository = SqlAlchemyJobRepository(cast(Session, object()), lambda: cast(Session, session))
     assert repository.enqueue(Job("other", "demo", "same", {}, fixed_now)).id == "j"
     assert session.commits == session.closes == 1
+
+
+@pytest.mark.parametrize("operation", ["renew", "finish"])
+@pytest.mark.parametrize("affected", [0, 1])
+def test_lease_updates_are_fenced_in_an_independent_short_transaction(
+    fixed_now, operation, affected
+):
+    class LeaseSession(JobSession):
+        def execute(self, statement):
+            self.statements.append(statement)
+            return SimpleNamespace(rowcount=affected)
+
+    session = LeaseSession()
+    repository = SqlAlchemyJobRepository(cast(Session, object()), lambda: cast(Session, session))
+    job = Job("j", "demo", "b", {}, fixed_now)
+    job.claim("w", fixed_now, fixed_now + timedelta(minutes=5))
+    if operation == "renew":
+        accepted = repository.renew_lease("j", "w", 1, fixed_now, fixed_now + timedelta(minutes=5))
+    else:
+        job.succeed("w", {"ok": True})
+        accepted = repository.finish_claim(job, "w", fixed_now)
+    assert accepted is bool(affected)
+    assert session.commits == session.closes == 1
+    sql = str(session.statements[0].compile(dialect=mysql.dialect()))
+    where = sql.split("WHERE")[1]
+    assert all(
+        name in where for name in ["id", "status", "lease_owner", "attempt_count", "lease_until"]
+    )
+    assert "lease_until >" in where

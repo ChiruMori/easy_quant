@@ -11,6 +11,7 @@ from easy_quant.application.services.authentication import AuthenticationService
 from easy_quant.application.services.market_data_sync import (
     MarketDataSyncService,
     validate_daily_response,
+    validate_live_quote_response,
 )
 from easy_quant.config import BACKEND_ROOT, Settings, get_settings
 from easy_quant.domain.market_data.indices import is_index
@@ -23,6 +24,7 @@ from easy_quant.infrastructure.data_sources.akshare.daily import (
 from easy_quant.infrastructure.data_sources.eastmoney.adapters import EastMoneySource
 from easy_quant.infrastructure.data_sources.eastmoney.client import EastMoneyClient
 from easy_quant.infrastructure.data_sources.tencent.adapters import TencentDailySource
+from easy_quant.infrastructure.data_sources.tencent.quotes import TencentQuoteSource
 from easy_quant.infrastructure.persistence.repositories.identity import SqlAlchemyIdentityRepository
 from easy_quant.infrastructure.persistence.repositories.jobs import SqlAlchemyJobRepository
 from easy_quant.infrastructure.persistence.repositories.live_actions import (
@@ -445,13 +447,21 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
             validate=validate_daily_response if daily else None,
         )
 
+    # Only selected symbols; independent clients prevent general sync timeouts and
+    # environment proxy settings from delaying the latency-sensitive quote path.
     quotes_acquisition = AcquisitionService(
-        [eastmoney],
+        [
+            TencentQuoteSource(httpx.Client(timeout=3.0, trust_env=False)),
+            EastMoneySource(EastMoneyClient(httpx.Client(timeout=3.0, trust_env=False))),
+        ],
         raw_cache,
         clock,
         sleeper,
-        retry=ExponentialRetry(max_attempts=2, base_seconds=0.5),
+        retry=ExponentialRetry(max_attempts=2, base_seconds=0.25),
         freshness=timedelta(seconds=30),
+        shuffle=lambda sources: None,
+        validate=validate_live_quote_response,
+        retry_by_round=True,
     )
 
     return MarketDataSyncService(

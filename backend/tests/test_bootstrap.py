@@ -297,3 +297,17 @@ def test_offline_settings_do_not_read_local_or_process_configuration(monkeypatch
     assert settings.intraday_run_time == "14:50"
     assert settings.session_cookie_secure is False
     assert settings.smtp_host is None
+
+
+def test_live_quotes_have_independent_validated_short_timeout_sources():
+    from tests.fakes.platform import make_test_container
+
+    service = bootstrap._build_market_data_sync(make_test_container(), object())
+    quotes = cast(Any, service.acquisitions["live-quotes"])
+    assert [source.key for source in quotes.sources] == ["tencent", "eastmoney"]
+    assert quotes.retry.max_attempts == 2 and quotes.retry_by_round
+    assert quotes.validate is not None
+    for source in quotes.sources:
+        client = source.client if source.key == "tencent" else source.client.client
+        assert client.timeout.connect == client.timeout.read == 3
+        assert not client._trust_env

@@ -95,3 +95,53 @@ def test_scalar_snapshot_preserves_fields_and_exact_decimal_text():
     assert list(store.iter_snapshot_bars(row.trading_day, row.trading_day)) == [
         store._snapshot_row(row)
     ]
+
+
+def test_backtest_scan_reads_provenance_once_and_never_joins_per_bar():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    class FakeSession:
+        def __init__(self):
+            self.statements = []
+
+        def scalars(self, statement):
+            self.statements.append(statement)
+            return ["000001", "000002"]
+
+        def execute(self, statement):
+            self.statements.append(statement)
+            if "daily_bars" not in str(statement):
+                return [(7, "tdx", "none", "digest")]
+            params = statement.compile().params
+            start = params["trading_day_1"]
+            return [
+                (
+                    symbol,
+                    start,
+                    now,
+                    Decimal(10),
+                    Decimal(11),
+                    Decimal(9),
+                    Decimal(10),
+                    Decimal(100),
+                    Decimal(1000),
+                    7,
+                )
+                for symbol in ("000002", "000001")
+            ]
+
+    session = FakeSession()
+    store = SqlAlchemyMarketDataStore(cast(Session, session))
+    rows = list(store.iter_backtest_bars(date(2026, 1, 1), date(2026, 2, 2)))
+    assert [(r["trading_day"], r["symbol"]) for r in rows] == [
+        ("2026-01-01", "000001"),
+        ("2026-01-01", "000002"),
+        ("2026-02-01", "000001"),
+        ("2026-02-01", "000002"),
+    ]
+    assert all(r["source"] == "tdx" and r["archive_sha256"] == "digest" for r in rows)
+    sql = [str(statement.compile(dialect=mysql.dialect())) for statement in session.statements]
+    assert len(sql) == 5  # 一次元数据；每月仅代码定位+主键范围读取。
+    assert all("JOIN" not in statement for statement in sql)
+    assert sum("bar_provenance" in statement for statement in sql) == 1
+    assert sum("FORCE INDEX (PRIMARY)" in statement for statement in sql) == 2

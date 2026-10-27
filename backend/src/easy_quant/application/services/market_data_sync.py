@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.entities import SemanticRequest
 from easy_quant.domain.market_data.indices import INDEX_CATALOG, index_instruments, is_index
+from easy_quant.domain.market_data.quotes import normalize_live_quotes
 from easy_quant.domain.shared.errors import DomainError, StateConflictError
 
 
@@ -99,25 +100,7 @@ class MarketDataSyncService:
         if not wanted:
             return {}
         value, _, _, _ = self._acquire("live-quotes", {"symbols": sorted(wanted)}, force, None)
-        if isinstance(value, dict):
-            data = value.get("data")
-            rows = list(data.get("diff", [])) if isinstance(data, dict) else []
-        elif isinstance(value, list):
-            rows = value
-        else:
-            rows = []
-        result: dict[str, str] = {}
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            symbol = str(row.get("f12") or row.get("代码") or row.get("code") or "").zfill(6)
-            price = row.get("f2") or row.get("最新价") or row.get("price")
-            if symbol in wanted and price not in (None, "-"):
-                result[symbol] = str(Decimal(str(price)))
-        missing = wanted - set(result)
-        if missing:
-            raise ValueError(f"实时价格缺失：{','.join(sorted(missing)[:20])}")
-        return result
+        return normalize_live_quotes(value, wanted)
 
     def _acquire(
         self,
@@ -698,3 +681,10 @@ def validate_daily_response(request: SemanticRequest, payload: bytes) -> None:
     required = request.parameters.get("required_end_date")
     if required and max(str(row["trading_day"]) for row in rows) < str(required):
         raise ValueError(f"来源指数行情未更新至 {required}")
+
+
+def validate_live_quote_response(request: SemanticRequest, payload: bytes) -> None:
+    symbols = request.parameters.get("symbols")
+    if not isinstance(symbols, list):
+        raise ValueError("实时报价请求缺少标的列表")
+    normalize_live_quotes(_rows(payload), {str(symbol).zfill(6) for symbol in symbols})

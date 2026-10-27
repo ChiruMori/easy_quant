@@ -85,7 +85,7 @@ def test_notification_failure_recovers_without_reexecuting_strategy(fixed_now, m
     )
     delivered = []
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise RuntimeError("temporary notification failure")
 
     monkeypatch.setattr("easy_quant.application.services.live_runtime.notify_owner", fail)
@@ -96,7 +96,7 @@ def test_notification_failure_recovers_without_reexecuting_strategy(fixed_now, m
     assert instance["notification_outbox"]
     monkeypatch.setattr(
         "easy_quant.application.services.live_runtime.notify_owner",
-        lambda *args: delivered.append(args[2]),
+        lambda *args, **kwargs: delivered.append(args[2]),
     )
     result = analyze_live_instance(container, "l", "before_market", fixed_now)
     assert result["created"] == []

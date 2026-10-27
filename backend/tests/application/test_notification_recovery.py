@@ -161,6 +161,10 @@ def test_live_multiple_signals_generate_one_summary_per_channel(monkeypatch, fix
     monkeypatch.setattr(live_runtime, "SubprocessStrategyRunner", Runner)
     first = live_runtime.analyze_live_instance(c, "l", "before_market", fixed_now)
     assert isinstance(first["created"], list) and len(first["created"]) == 3
+    assert calls == []  # 实盘分析只排队，渠道发送在独立任务中执行。
+    queued = [job for job in c.jobs.list_all() if job.job_type == "notification-delivery"]
+    assert len(queued) == 1
+    attempt_delivery(c, queued[0].payload["delivery_id"])
     assert len(calls) == 1 and "本轮共 3 条" in calls[0][2]
     assert c.state.deliveries[0]["live_instance_id"] == "l"
     assert live_runtime.analyze_live_instance(c, "l", "before_market", fixed_now)["created"] == []

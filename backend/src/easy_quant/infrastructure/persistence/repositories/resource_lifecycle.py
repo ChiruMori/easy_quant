@@ -49,11 +49,13 @@ class InMemoryResourceLifecycleStore:
         self.container = container
         self.lock = RLock()
 
-    def add_live_instance(self, instance):
+    def add_live_instance(self, instance, schedules=()):
         self.container.state.strategies.advance_state(
             instance["strategy_version_id"], StrategyState.LIVE
         )
         self.container.state.live_instances[instance["id"]] = instance
+        for row in schedules:
+            self.container.state.schedules[row["id"]] = row
 
     @contextmanager
     def guard(self):
@@ -106,7 +108,7 @@ class SqlResourceLifecycleStore:
     def __init__(self, factory):
         self.factory = factory
 
-    def add_live_instance(self, instance):
+    def add_live_instance(self, instance, schedules=()):
         with self.factory() as session, session.begin():
             session.add(
                 RuntimeDocumentModel(
@@ -115,6 +117,14 @@ class SqlResourceLifecycleStore:
                     payload_json=json.dumps(instance, ensure_ascii=False, default=str),
                 )
             )
+            for row in schedules:
+                session.add(
+                    RuntimeDocumentModel(
+                        namespace="schedules",
+                        key=row["id"],
+                        payload_json=json.dumps(row, ensure_ascii=False, default=str),
+                    )
+                )
             SqlAlchemyStrategyRepository.advance_state_in_transaction(
                 session,
                 instance["strategy_version_id"],

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import ast
 import hashlib
+import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from time import monotonic
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.acquisition import AcquisitionFailed
 from easy_quant.application.services.instrument_eligibility import currently_unavailable_symbols
 from easy_quant.application.services.notification_runtime import notify_owner
 from easy_quant.application.services.recommendation_actions import (
@@ -24,6 +28,8 @@ from easy_quant.infrastructure.core import UuidGenerator
 from easy_quant.infrastructure.persistence.market_data_pages import DailyBarPageCache
 from easy_quant.infrastructure.strategy_runtime.runner import SubprocessStrategyRunner
 
+logger = logging.getLogger(__name__)
+
 
 def analyze_live_instance(
     container: Any,
@@ -32,9 +38,90 @@ def analyze_live_instance(
     decision_at: datetime,
     current_prices: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    try:
+        return _analyze_live_instance(container, instance_id, phase, decision_at, current_prices)
+    except AcquisitionFailed as error:
+        # Commit the failure event before enqueueing delivery. Notification failures
+        # must not replace the data-source failure that the operator needs to see.
+        try:
+            _record_live_data_failure(container, instance_id, phase, decision_at, error)
+        except Exception as alert_error:
+            logger.error(
+                "实盘采集失败告警入队失败 instance_id=%s phase=%s error_type=%s",
+                instance_id,
+                phase,
+                type(alert_error).__name__,
+            )
+        raise
+
+
+def _record_live_data_failure(
+    container: Any, instance_id: str, phase: str, decision_at: datetime, error: AcquisitionFailed
+) -> None:
+    trading_day = decision_at.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    attempts = error.details.get("attempts", [])
+    summaries: dict[str, str] = {}
+    for attempt in attempts if isinstance(attempts, list) else []:
+        if isinstance(attempt, dict):
+            summaries[str(attempt.get("source_key", "unknown"))] = (
+                f"第{attempt.get('attempt', '?')}次：{attempt.get('message', '未知原因')}"
+            )
+    body = (
+        f"{trading_day} {phase} 数据获取失败，全部来源已尝试并重试。"
+        "本轮未生成建议，策略状态及阶段完成标记未提交；请检查来源后重新发起分析。\n"
+        + "\n".join(f"{source}：{message}" for source, message in summaries.items())
+    )
+    event_id = f"{instance_id}:{trading_day}:{phase}:data-failed"
+    with container.live_tracking.transaction() as state:
+        instance = state.instances.get(instance_id)
+        if instance is None:
+            return
+        outbox = dict(instance.get("notification_outbox", {}))
+        outbox[event_id] = {"title": "实盘分析失败：数据来源不可用", "body": body}
+        instance["notification_outbox"] = outbox
+        state.instances[instance_id] = instance
+    logger.error(
+        "实盘采集失败告警已记录 instance_id=%s phase=%s sources=%s",
+        instance_id,
+        phase,
+        len(summaries),
+    )
+    _drain_live_notifications(container, instance_id)
+
+
+def _analyze_live_instance(
+    container: Any,
+    instance_id: str,
+    phase: str,
+    decision_at: datetime,
+    current_prices: dict[str, object] | None = None,
+) -> dict[str, object]:
     if phase not in {"before_market", "on_market", "after_market"}:
         raise ValueError("未知策略阶段")
+    timings: dict[str, float] = {}
+    started = monotonic()
+    stage_started = started
+    stage = "pending_notifications"
+
+    def checkpoint(next_stage: str) -> None:
+        nonlocal stage, stage_started
+        now = monotonic()
+        timings[stage] = round(now - stage_started, 3)
+        logger.info(
+            "实盘分析阶段 instance_id=%s phase=%s completed=%s seconds=%.3f "
+            "elapsed_seconds=%.3f next=%s",
+            instance_id,
+            phase,
+            stage,
+            now - stage_started,
+            now - started,
+            next_stage,
+        )
+        stage, stage_started = next_stage, now
+
+    logger.info("实盘分析开始 instance_id=%s phase=%s stage=%s", instance_id, phase, stage)
     _drain_live_notifications(container, instance_id)
+    checkpoint("state")
     with container.live_tracking.transaction() as state:
         instance = state.instances.get(instance_id)
         if instance is None or instance.get("status") != "active":
@@ -55,33 +142,38 @@ def analyze_live_instance(
             "cash": str(portfolio.cash),
             "costs": {key: str(value) for key, value in portfolio.costs.items()},
         }
-    repository = container.state.strategies
-    version = next(
-        (
-            version
-            for definition in repository.definitions.values()
-            for version in repository.versions(definition.id)
-            if version.id == instance["strategy_version_id"]
-        ),
-        None,
-    )
+    checkpoint("version")
+    version = container.state.strategies.get_version(str(instance["strategy_version_id"]))
     if version is None:
         raise StateConflictError("实盘实例引用的策略版本不存在")
 
     trading_day = decision_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
-    history_days = extract_history_trading_days(version.source_code)
+    checkpoint("market_data")
+    dependencies = extract_factor_dependencies(version.source_code)
+    tree = ast.parse(version.source_code)
+    attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    # Unknown/dynamic data access keeps the conservative history window.
+    needs_history = bool(
+        attributes & {"data", "history", "daily_bars", "factor", "library"}
+    ) or any(
+        isinstance(node, ast.Name) and node.id == "HISTORY_TRADING_DAYS" for node in ast.walk(tree)
+    )
+    history_days = extract_history_trading_days(version.source_code) if needs_history else 1
     previous_days = sorted(
         day for day in container.market_data.list_trading_days() if day < trading_day
     )[-history_days:]
     page_cache = DailyBarPageCache(container.market_data)
-    dependencies = extract_factor_dependencies(version.source_code)
+    # Pure intraday quote strategies need no daily snapshot. Holdings are marked by
+    # a single batched quote request below; universe/data users retain market inputs.
+    quote_only = phase == "on_market" and not needs_history and "universe" not in attributes
     cutoff = decision_at.astimezone(UTC)
     excluded = currently_unavailable_symbols(container.market_data)
     universe_symbols: set[str] = set()
     prices: dict[str, list[str]] = {}
     visible_bars: dict[str, list[dict[str, object]]] = {}
     found_bars = False
-    for row in page_cache.days((*previous_days, trading_day)):
+    bar_rows = [] if quote_only else page_cache.days((*previous_days, trading_day))
+    for row in bar_rows:
         day = date.fromisoformat(str(row["trading_day"]))
         symbol = str(row["symbol"])
         if symbol in excluded:
@@ -103,6 +195,16 @@ def analyze_live_instance(
     universe = sorted(
         (universe_symbols | set(current_prices or {}) | set(portfolio.positions)) - excluded
     )
+    logger.info(
+        "实盘行情输入 instance_id=%s phase=%s history_days=%s rows=%s symbols=%s quote_only=%s",
+        instance_id,
+        phase,
+        0 if quote_only else history_days,
+        len(bar_rows),
+        len(universe),
+        quote_only,
+    )
+    checkpoint("records")
     records: dict[str, dict[str, list[dict[str, object]]]] = {}
     for dataset in dependencies - {"daily-bars"}:
         dataset_rows = container.market_data.list_records(dataset)
@@ -131,12 +233,30 @@ def analyze_live_instance(
         if missing:
             if phase != "on_market" or container.data_sync is None:
                 raise StateConflictError("实时价格服务不可用")
-            quote_cache.update(container.data_sync.quotes(missing, force=True))
+            quote_started = monotonic()
+            logger.info(
+                "实盘报价开始 instance_id=%s phase=%s symbols=%s", instance_id, phase, len(missing)
+            )
+            try:
+                quote_cache.update(container.data_sync.quotes(missing, force=True))
+            finally:
+                seconds = monotonic() - quote_started
+                timings["quotes"] = round(timings.get("quotes", 0) + seconds, 3)
+                logger.info(
+                    "实盘报价结束 instance_id=%s phase=%s symbols=%s seconds=%.3f",
+                    instance_id,
+                    phase,
+                    len(missing),
+                    seconds,
+                )
         unavailable = [symbol for symbol in symbols if symbol not in quote_cache]
         if unavailable:
             raise StateConflictError("实时价格缺失", {"symbols": unavailable})
         return {symbol: quote_cache[symbol] for symbol in symbols}
 
+    checkpoint("strategy")
+    if quote_only and portfolio.positions:
+        requested_quotes(sorted(set(portfolio.positions) - excluded))
     runner = SubprocessStrategyRunner(
         container.settings.strategy_timeout_seconds,
         container.settings.strategy_output_limit_bytes,
@@ -151,9 +271,7 @@ def analyze_live_instance(
             "bars": visible_bars,
             "market_values": {},
             "current_prices": {
-                symbol: price
-                for symbol, price in (current_prices or {}).items()
-                if symbol not in excluded
+                symbol: price for symbol, price in quote_cache.items() if symbol not in excluded
             },
             "positions": instance.get("positions", {}),
             "cash": instance["cash"],
@@ -187,6 +305,7 @@ def analyze_live_instance(
                 }
             )
         )
+    checkpoint("save_results")
     created: list[dict[str, object]] = []
     notifications: list[tuple[str, str, str]] = []
     with container.live_tracking.transaction() as state:
@@ -327,12 +446,16 @@ def analyze_live_instance(
             phase: trading_day.isoformat(),
         }
         state.instances[instance_id] = current_instance
+    checkpoint("notifications")
     _drain_live_notifications(container, instance_id)
+    checkpoint("done")
     return {
         "phase": phase,
         "trading_day": trading_day.isoformat(),
         "created": created,
         "stdout": result.stdout,
+        "timings": timings,
+        "elapsed_seconds": round(monotonic() - started, 3),
     }
 
 
@@ -350,6 +473,7 @@ def _drain_live_notifications(container: Any, instance_id: str) -> None:
             str(message["body"]),
             instance.get("subscription_ids"),
             instance_id,
+            defer=True,
         )
         with container.live_tracking.transaction() as state:
             current = state.instances.get(instance_id)

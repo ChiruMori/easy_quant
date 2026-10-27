@@ -4,11 +4,13 @@ import hashlib
 import heapq
 import json
 import logging
+import re
 import time as clock
 from collections import deque
+from contextlib import nullcontext
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from itertools import groupby, islice
+from itertools import chain, groupby, islice
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -35,10 +37,13 @@ logger = logging.getLogger(__name__)
 def execute_backtest(
     container: Any, run_id: str, *, profile: RunProfile | None = None
 ) -> dict[str, object]:
-    return _execute_backtest(container, run_id, profile or RunProfile())
+    with SnapshotSpool() as snapshot:
+        return _execute_backtest(container, run_id, profile or RunProfile(), snapshot)
 
 
-def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[str, object]:
+def _execute_backtest(
+    container: Any, run_id: str, profile: RunProfile, snapshot: SnapshotSpool
+) -> dict[str, object]:
     run = container.backtests.get(run_id)
     if run is None:
         raise StateConflictError("回测记录不存在")
@@ -231,6 +236,27 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
                 )
         return records
 
+    def read_inputs(start, end):
+        source = iter(container.market_data.iter_backtest_bars(start, end))
+        while True:
+            started_read = clock.monotonic()
+            batch = list(islice(source, 1000))
+            profile.workload["snapshot_read_seconds"] = (
+                profile.workload.get("snapshot_read_seconds", 0) + clock.monotonic() - started_read
+            )
+            if not batch:
+                break
+            started_encode = clock.monotonic()
+            accepted = [row for row in batch if str(row["symbol"]) not in excluded]
+            for row in accepted:
+                snapshot.append(row)
+            profile.workload["snapshot_encode_seconds"] = (
+                profile.workload.get("snapshot_encode_seconds", 0)
+                + clock.monotonic()
+                - started_encode
+            )
+            yield from accepted
+
     strategy_outputs = []
     history_window = extract_history_trading_days(version.source_code)
     backtest_session = PhasedBacktestSession(config)
@@ -255,9 +281,12 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
     started = clock.monotonic()
     profile.enter("warmup")
     report("warmup", 10, force=True)
-    for row in container.market_data.iter_runtime_bars(
-        history_start, start_day - timedelta(days=1)
-    ):
+    inputs = iter(read_inputs(history_start, end_day))
+    first_runtime_row = None
+    for row in inputs:
+        if str(row["trading_day"]) >= start_day.isoformat():
+            first_runtime_row = row
+            break
         if str(row["symbol"]) not in excluded:
             profile.workload["warmup_rows"] += 1
             available_at = datetime.fromisoformat(str(row["available_at"])).astimezone(UTC)
@@ -275,11 +304,7 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
 
     profile.enter("loading_data")
     report("loading_data", 15, force=True)
-    rows = (
-        row
-        for row in container.market_data.iter_runtime_bars(start_day, end_day)
-        if str(row["symbol"]) not in excluded
-    )
+    rows = chain([first_runtime_row] if first_runtime_row is not None else [], inputs)
     with StreamingStrategyRunner(
         version, dict(payload.get("parameters", {})), timeout_seconds=30
     ) as runner:
@@ -393,12 +418,26 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
                 )
                 profile.record_hook(day.isoformat(), phase, hook_started)
                 if result.status != "succeeded":
+                    # 不把策略异常中的任意用户数据写入worker日志；完整失败详情由授权任务页查看。
+                    match = re.match(r"([A-Za-z]+Error):", result.error or "")
+                    exit_match = re.search(r"exit_code=(-?\d+|None)", result.error or "")
+                    logger.error(
+                        "回测策略失败 run_id=%s day=%s hook=%s status=%s "
+                        "error_type=%s exit_code=%s",
+                        run_id,
+                        day.isoformat(),
+                        phase,
+                        result.status,
+                        match.group(1) if match else "strategy_failure",
+                        exit_match.group(1) if exit_match else "n/a",
+                    )
                     raise StateConflictError(
                         "策略运行失败",
                         {
                             "phase": phase,
                             "trading_day": day.isoformat(),
                             "error": result.error,
+                            "status": result.status,
                         },
                     )
                 if result.stdout:
@@ -447,27 +486,9 @@ def _execute_backtest(container: Any, run_id: str, profile: RunProfile) -> dict[
         row_count,
         clock.monotonic() - started,
     )
-    with SnapshotSpool() as snapshot:
+    with nullcontext(snapshot):
         profile.enter("snapshot")
         report("snapshot", 90, force=True)
-        source = iter(container.market_data.iter_snapshot_bars(history_start, end_day))
-        read_seconds = encode_seconds = 0.0
-        while True:
-            batch_started = clock.monotonic()
-            batch = list(islice(source, 1000))
-            read_seconds += clock.monotonic() - batch_started
-            if not batch:
-                break
-            batch_started = clock.monotonic()
-            for row in batch:
-                if str(row["symbol"]) not in excluded:
-                    snapshot.append(row)
-            encode_seconds += clock.monotonic() - batch_started
-            profile.workload.update(
-                snapshot_read_seconds=round(read_seconds, 3),
-                snapshot_encode_seconds=round(encode_seconds, 3),
-            )
-            report("snapshot", 90)
         snapshot_id = snapshot.finish()
         profile.workload.update(
             snapshot_rows=snapshot.record_count,

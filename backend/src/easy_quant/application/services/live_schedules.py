@@ -24,10 +24,7 @@ def sync_live_schedules(container, instance_id: str, *, create=False):
             if row.get("enabled", True):
                 schedules[key] = {**row, "enabled": False}
         return [dict(row, enabled=False) for _, row in linked]
-    hour, minute = container.settings.intraday_run_time.split(":")[:2]
-    phases = {"before_market": "0 9 * * 1-5", "on_market": f"{int(minute)} {int(hour)} * * 1-5"}
-    if instance.get("after_market_enabled", False):
-        phases["after_market"] = "30 15 * * 1-5"
+    phases = live_schedule_phases(container, instance)
     seen = set()
     now = container.authentication.clock.now()
     for key, row in linked:
@@ -57,29 +54,8 @@ def sync_live_schedules(container, instance_id: str, *, create=False):
         for phase, expression in phases.items():
             if phase in seen:
                 continue
-            key = f"live-schedule:{instance_id}:{phase}"
-            configuration = {"instance_id": instance_id, "phase": phase}
-            schedules[key] = {
-                "id": key,
-                "task_type": "live-analysis",
-                "schedule_kind": "cron",
-                "schedule_expression": expression,
-                "timezone": "Asia/Shanghai",
-                "enabled": instance.get("status") == "active",
-                "configuration": configuration,
-                "next_run_at": next_run(
-                    ScheduledTask(
-                        key,
-                        "live-analysis",
-                        ScheduleKind.CRON,
-                        expression,
-                        "Asia/Shanghai",
-                        configuration,
-                        now,
-                    ),
-                    now,
-                ).isoformat(),
-            }
+            row = new_live_schedule(container, instance, phase, expression)
+            schedules[row["id"]] = row
     return [
         dict(row)
         for row in schedules.values()
@@ -93,5 +69,48 @@ def reconcile_live_schedules(container):
         for row in container.state.schedules.values()
         if is_live_schedule(row)
     }
-    for identifier in identifiers:
-        sync_live_schedules(container, identifier)
+    identifiers.update(container.state.live_instances)
+    for identifier in sorted(identifiers):
+        sync_live_schedules(container, identifier, create=True)
+
+
+def live_schedule_phases(container, instance):
+    hour, minute = container.settings.intraday_run_time.split(":")[:2]
+    phases = {"before_market": "0 9 * * 1-5", "on_market": f"{int(minute)} {int(hour)} * * 1-5"}
+    if instance.get("after_market_enabled", False):
+        phases["after_market"] = "30 15 * * 1-5"
+    return phases
+
+
+def new_live_schedule(container, instance, phase, expression):
+    now = container.authentication.clock.now()
+    key = f"live-schedule:{instance['id']}:{phase}"
+    configuration = {"instance_id": instance["id"], "phase": phase}
+    return {
+        "id": key,
+        "task_type": "live-analysis",
+        "schedule_kind": "cron",
+        "schedule_expression": expression,
+        "timezone": "Asia/Shanghai",
+        "enabled": instance.get("status") == "active",
+        "configuration": configuration,
+        "next_run_at": next_run(
+            ScheduledTask(
+                key,
+                "live-analysis",
+                ScheduleKind.CRON,
+                expression,
+                "Asia/Shanghai",
+                configuration,
+                now,
+            ),
+            now,
+        ).isoformat(),
+    }
+
+
+def initial_live_schedules(container, instance):
+    return [
+        new_live_schedule(container, instance, phase, expression)
+        for phase, expression in live_schedule_phases(container, instance).items()
+    ]

@@ -98,10 +98,10 @@ def test_worker_closes_shared_session_on_all_exit_paths(fixed_now, outcome):
                 raise RuntimeError("claim failed")
             return super().claim_due(worker_id, now, lease_until)
 
-        def save(self, job):
+        def finish_claim(self, job, worker_id, now):
             if outcome == "save":
                 raise RuntimeError("save failed")
-            return super().save(job)
+            return super().finish_claim(job, worker_id, now)
 
     def handle(job: Job) -> dict[str, object]:
         assert not state["active"]

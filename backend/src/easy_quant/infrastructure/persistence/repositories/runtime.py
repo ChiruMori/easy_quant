@@ -32,6 +32,7 @@ from easy_quant.infrastructure.persistence.models.market_data_records import (
     InstrumentModel,
     JsonMarketRecordModel,
     TradingDayModel,
+    provenance,
 )
 from easy_quant.infrastructure.persistence.repositories.jobs import SqlAlchemyJobRepository
 from easy_quant.infrastructure.persistence.repositories.strategies import (
@@ -81,7 +82,12 @@ def runtime_symbols_statement(start_day: date, end_day: date, Bar: Any = DailyBa
 
 
 def runtime_batch_statement(
-    symbols: list[str], start_day: date, end_day: date, Bar: Any = DailyBarModel
+    symbols: list[str],
+    start_day: date,
+    end_day: date,
+    Bar: Any = DailyBarModel,
+    *,
+    include_provenance: bool = False,
 ):
     return (
         select(
@@ -94,6 +100,7 @@ def runtime_batch_statement(
             Bar.close,
             Bar.volume,
             Bar.amount,
+            *([Bar.provenance_id] if include_provenance else []),
         )
         .with_hint(Bar, "FORCE INDEX (PRIMARY)", dialect_name="mysql")
         .where(
@@ -111,7 +118,7 @@ def snapshot_chunks(payload: bytes) -> list[bytes]:
 
 
 def streamed_snapshot_chunks(payload: SnapshotSpool) -> Iterator[bytes]:
-    compressor = zlib.compressobj(wbits=31)
+    compressor = zlib.compressobj(level=1, wbits=31)
     buffer = bytearray()
     for block in payload.chunks():
         buffer.extend(compressor.compress(block))
@@ -239,6 +246,12 @@ class InMemoryMarketDataStore:
     def iter_runtime_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
         yield from sorted(
             self.list_runtime_bars(start_day, end_day),
+            key=lambda row: (str(row["trading_day"]), str(row["symbol"])),
+        )
+
+    def iter_backtest_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
+        yield from sorted(
+            self.list_bars(start_day, end_day),
             key=lambda row: (str(row["trading_day"]), str(row["symbol"])),
         )
 
@@ -514,43 +527,69 @@ class SqlAlchemyMarketDataStore:
         return [self._snapshot_row(row) for row in self.session.scalars(statement)]
 
     def list_runtime_bars(self, start_day: date, end_day: date) -> list[dict[str, Any]]:
+        return self._runtime_rows(start_day, end_day)
+
+    def _runtime_rows(self, start_day: date, end_day: date, metadata=None) -> list[dict[str, Any]]:
         symbols = list(
             self.session.scalars(
                 runtime_symbols_statement(start_day, end_day, self.storage.physical)
             )
         )
-        rows: list[dict[str, Any]] = []
+        rows = []
         for offset in range(0, len(symbols), RUNTIME_SYMBOL_BATCH):
-            batch = symbols[offset : offset + RUNTIME_SYMBOL_BATCH]
             result = self.session.execute(
-                runtime_batch_statement(batch, start_day, end_day, self.storage.physical)
+                runtime_batch_statement(
+                    symbols[offset : offset + RUNTIME_SYMBOL_BATCH],
+                    start_day,
+                    end_day,
+                    self.storage.physical,
+                    include_provenance=metadata is not None,
+                )
             )
-            rows.extend(
-                {
+            for row in result:
+                symbol, trading_day, available_at, opening, high, low, close, volume, amount = row[
+                    :9
+                ]
+                item = {
                     "symbol": symbol,
                     "trading_day": trading_day.isoformat(),
                     "available_at": available_at.isoformat(),
-                    "open": str(open_price),
+                    "open": str(opening),
                     "high": str(high),
                     "low": str(low),
                     "close": str(close),
                     "volume": str(volume) if volume is not None else None,
                     "amount": str(amount) if amount is not None else None,
                 }
-                for (
-                    symbol,
-                    trading_day,
-                    available_at,
-                    open_price,
-                    high,
-                    low,
-                    close,
-                    volume,
-                    amount,
-                ) in result
-            )
+                if metadata is not None:
+                    origin = metadata.get(row[9])
+                    if origin is None:
+                        raise RuntimeError("日线来源引用缺失，拒绝生成快照")
+                    item.update(source=origin[0], adjustment=origin[1], archive_sha256=origin[2])
+                rows.append(item)
         rows.sort(key=lambda row: (str(row["trading_day"]), str(row["symbol"])))
         return rows
+
+    def iter_backtest_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
+        # 血缘是独立的小字典；不让百万条日线逐行做 metadata join。
+        metadata = {
+            identity: (source, adjustment, digest)
+            for identity, source, adjustment, digest in self.session.execute(
+                select(
+                    provenance.c.id,
+                    provenance.c.source,
+                    provenance.c.adjustment,
+                    provenance.c.archive_sha256,
+                )
+            )
+        }
+        cursor = start_day
+        while cursor <= end_day:
+            chunk_end = min(
+                end_day, date(cursor.year, cursor.month, monthrange(cursor.year, cursor.month)[1])
+            )
+            yield from self._runtime_rows(cursor, chunk_end, metadata)
+            cursor = chunk_end + timedelta(days=1)
 
     def iter_runtime_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
         cursor = start_day

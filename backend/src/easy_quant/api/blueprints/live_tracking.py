@@ -19,7 +19,11 @@ from easy_quant.application.services.live_reporting import (
     validate_termination_snapshot,
 )
 from easy_quant.application.services.live_runtime import analyze_live_instance
-from easy_quant.application.services.live_schedules import is_live_schedule, sync_live_schedules
+from easy_quant.application.services.live_schedules import (
+    initial_live_schedules,
+    is_live_schedule,
+    sync_live_schedules,
+)
 from easy_quant.application.services.manual_operations import ManualCommand, ManualOperationService
 from easy_quant.application.services.recommendation_actions import audit_row
 from easy_quant.domain.market_data.indices import is_index
@@ -99,8 +103,9 @@ def start_live():
         "initial_positions": dict(payload["positions"]),
         "after_market_enabled": bool(payload.get("after_market_enabled", False)),
     }
-    get_container().resource_lifecycle.add_live_instance(item)
-    sync_live_schedules(get_container(), identifier, create=True)
+    get_container().resource_lifecycle.add_live_instance(
+        item, initial_live_schedules(get_container(), item)
+    )
     record_audit(
         get_container(),
         actor_user_id=g.current_user.id,

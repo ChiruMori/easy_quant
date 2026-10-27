@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
+from threading import Event, Thread
 from typing import Any
 
 from easy_quant.application.ports.core import Clock, Sleeper
@@ -24,6 +25,7 @@ class Worker:
     sleeper: Sleeper
     lease_duration: timedelta = timedelta(minutes=5)
     poll_seconds: float = 1.0
+    heartbeat_seconds: float = 30.0
     poll_hook: Callable[[], None] | None = None
     failure_hook: Callable[[], None] | None = None
     session_cleanup: Callable[[], None] | None = None
@@ -64,8 +66,31 @@ class Worker:
                     "message": "快速测试多次中断，已停止自动重试。请检查 worker 资源后重新发起。",
                 },
             )
-            self.jobs.save(job)
+            self.jobs.finish_claim(job, self.worker_id, self.clock.now())
             return True
+        stop = Event()
+        lost = Event()
+
+        def heartbeat() -> None:
+            interval = min(self.heartbeat_seconds, self.lease_duration.total_seconds() / 3)
+            while not stop.wait(max(0.001, interval)):
+                now = self.clock.now()
+                try:
+                    renewed = self.jobs.renew_lease(
+                        job.id, self.worker_id, job.attempt_count, now, now + self.lease_duration
+                    )
+                except Exception:
+                    # Retry while the current lease remains valid; completion is still fenced.
+                    logger.exception("任务续租失败 job_id=%s attempt=%s", job.id, job.attempt_count)
+                    continue
+                if not renewed:
+                    lost.set()
+                    logger.error("任务租约失效 job_id=%s attempt=%s", job.id, job.attempt_count)
+                    return
+                logger.info("任务已续租 job_id=%s attempt=%s", job.id, job.attempt_count)
+
+        heartbeat_thread = Thread(target=heartbeat, name="job-lease-heartbeat", daemon=True)
+        heartbeat_thread.start()
         try:
             summary = self.handlers.get(job.job_type)(job) or {}
             job.succeed(self.worker_id, dict(summary))
@@ -92,7 +117,12 @@ class Worker:
                 error["code"] = exc.code
                 error["details"] = dict(exc.details)
             job.fail(self.worker_id, error)
-        self.jobs.save(job)
+        finally:
+            stop.set()
+            heartbeat_thread.join(timeout=5)
+        if lost.is_set() or not self.jobs.finish_claim(job, self.worker_id, self.clock.now()):
+            logger.error("丢弃失效任务结果 job_id=%s attempt=%s", job.id, job.attempt_count)
+            return True
         if job.status.value == "succeeded":
             logger.info("任务已完成 job_id=%s job_type=%s", job.id, job.job_type)
         return True

@@ -157,3 +157,45 @@ def test_only_paused_owner_can_edit_expression_atomically_and_resume_keeps_it():
         retained["schedule_expression"] == update["schedule_expression"] and not retained["enabled"]
     )
     assert client.patch(path, json=update, headers=headers).status_code == 409
+
+
+def test_new_instance_plans_do_not_reread_a_stale_request_snapshot():
+    c, client, headers, payload = setup()
+
+    class OldReadSnapshot(dict):
+        def get(self, key, default=None):
+            return default
+
+    c.state.live_instances = OldReadSnapshot()
+    response = client.post("/api/v1/live-instances", json=payload, headers=headers)
+    assert response.status_code == 201
+    identifier = response.get_json()["data"]["id"]
+    assert len(c.state.schedules) == 2
+    assert all(
+        row["configuration"]["instance_id"] == identifier for row in c.state.schedules.values()
+    )
+
+
+def test_worker_repairs_instances_with_no_plans_idempotently():
+    from easy_quant.application.services.live_schedules import reconcile_live_schedules
+
+    c, client, headers, payload = setup()
+    identifier = client.post("/api/v1/live-instances", json=payload, headers=headers).get_json()[
+        "data"
+    ]["id"]
+    c.state.schedules.clear()
+    reconcile_live_schedules(c)
+    original = dict(c.state.schedules)
+    assert len(original) == 2
+    reconcile_live_schedules(c)
+    assert c.state.schedules == original
+    c.state.live_instances[identifier]["status"] = "paused"
+    c.state.schedules.clear()
+    reconcile_live_schedules(c)
+    assert len(c.state.schedules) == 2 and not any(
+        row["enabled"] for row in c.state.schedules.values()
+    )
+    c.state.live_instances[identifier]["status"] = "terminated"
+    c.state.schedules.clear()
+    reconcile_live_schedules(c)
+    assert not c.state.schedules

@@ -129,3 +129,55 @@ def test_single_phase_timeout_reaps_child(fixed_now):
         )
         assert runner._process.poll() is not None
     assert result.status is StrategyRunStatus.TIMED_OUT
+
+
+def test_moving_average_template_runs_over_a_year_with_bounded_history(fixed_now):
+    from datetime import timedelta
+
+    from easy_quant.api.blueprints.strategies import MOVING_AVERAGE_TEMPLATE
+
+    source = (
+        MOVING_AVERAGE_TEMPLATE.replace(
+            "def after_market(context, parameters):",
+            "def template_after_market(context, parameters):",
+        )
+        + "\ndef after_market(context, parameters):\n"
+        " print(len(context.library('market.daily-bars', symbol='000001')))\n return []"
+    )
+    with StreamingStrategyRunner(_version(source, fixed_now), {}) as runner:
+        for i in range(370):
+            day = date(2025, 1, 1) + timedelta(days=i)
+            results = runner.run_day(
+                day,
+                expire_before=day - timedelta(days=4),
+                prior_before=[],
+                prior_after=[],
+                today_after=[
+                    {
+                        "symbol": symbol,
+                        "trading_day": day.isoformat(),
+                        "close": str(10 + i),
+                        "available_at": f"{day}T15:00:00+08:00",
+                        "open": "10",
+                        "high": str(11 + i),
+                        "low": "9",
+                        "volume": "100",
+                        "amount": "1000",
+                    }
+                    for symbol in ("000001", "000002", "000003", "000004")
+                ],
+                today_symbols=["000001", "000002", "000003", "000004"],
+                current_prices={},
+            )
+            assert all(result.status is StrategyRunStatus.SUCCEEDED for result in results), results
+            assert results[-1].stdout == f"{min(i + 1, 5)}\n"
+
+
+def test_unexpected_child_exit_is_reported_with_exit_code(fixed_now):
+    source = "def before_market(context, parameters):\n return []"
+    with StreamingStrategyRunner(_version(source, fixed_now), {}) as runner:
+        runner._process.kill()
+        runner._process.wait()
+        result = _run_day(runner, date(2026, 9, 21), close="10")
+        assert all(row.status is StrategyRunStatus.FAILED for row in result)
+        assert all("exit_code=" in str(row.error) for row in result)
