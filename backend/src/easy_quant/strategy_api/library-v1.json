@@ -33,11 +33,11 @@
     "key": "financials",
     "name": "可见财务历史",
     "signature": "context.financials(symbol)",
-    "description": "读取按可获知时间排序的财务历史。标准字段 roe 为百分数，利润字段以元计；保留来源字段。",
+    "description": "读取各报告期在当前决策时点可见的最新财务指标版本，按报告期升序。标准数值为Decimal，roe为百分数，利润为报告币种元。",
     "parameters": "symbol：证券代码。",
     "output": "记录序列；含 report_period、publication_time_known、available_at。缺失指标为 None。",
     "example": "reports = context.financials(symbol)\nfor report in reports:\n    print(report.get('report_period'), report.get('adjusted_net_profit'))",
-    "runtime": "无公告日期时以采集时间为边界；不把累计利润当单季利润，不补造基本面。"
+    "runtime": "公告或来源修订时间未知时仅从采集时刻可见；不把累计利润当单季利润，不补造历史版本。完整三表及其他基本面使用 financial.* 平台库。"
   },
   {
     "key": "valuation",
@@ -128,5 +128,15 @@
     "output": "可见记录序列、最新记录或 None；数值为 Decimal。",
     "example": "bars = context.library('market.daily-bars', symbol=symbol)",
     "runtime": "回测预热后只读快照，遵守 available_at；原始数据必须使用 library；factor 仅计算因子。"
+  },
+  {
+    "key": "financial-reports",
+    "name": "年报、季报与基本面",
+    "signature": "context.library('financial.income-statements', symbol, period='all')",
+    "description": "八类入口：financial.balance-sheets/income-statements/cash-flow-statements/financial-indicators/company-profiles/dividend-plans/shareholder-counts/business-compositions。",
+    "parameters": "symbol：股票代码；period：all（默认）、annual（年报）、quarterly（非年报，含中报）。",
+    "output": "各报告期当时可见版本的记录序列，按报告期升序。缺失数值为None；金额元、比例百分数。",
+    "example": "reports = context.library('financial.income-statements', symbol='000001', period='annual')\nfor row in reports:\n    print(row['report_period'], row.get('parent_net_profit'))",
+    "runtime": "三个运行时一致，先按available_at过滤未来，再选择报告版本；利润和现金流为累计口径。未知版本时间只在实际采集后可见。"
   }
 ]

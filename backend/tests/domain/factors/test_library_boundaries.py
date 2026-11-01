@@ -5,6 +5,7 @@ from easy_quant.application.services.strategy_validation import (
     extract_factor_dependencies,
     extract_history_trading_days,
 )
+from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
 from easy_quant.factors.context import FactorContext
 from easy_quant.factors.registry import build_default_registry
 from easy_quant.platform_library.catalog import build_library_registry
@@ -19,12 +20,14 @@ def test_catalogs_separate_raw_data_and_computation():
         "market.value",
         "fundamental.latest",
         "fundamental.history",
+        *(f"financial.{key}" for key in FINANCIAL_DATASETS),
     }
     assert {item.key for item in build_library_registry().list()} == {
         "market.daily-bars",
         "market.value",
         "fundamental.latest",
         "fundamental.history",
+        *(f"financial.{key}" for key in FINANCIAL_DATASETS),
     }
 
 

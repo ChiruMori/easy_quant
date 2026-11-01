@@ -353,6 +353,25 @@ class InMemoryMarketDataStore:
             if dataset == dataset_key and (symbol is None or row.get("symbol") == symbol)
         ]
 
+    def record_counts(self, symbol: str, as_of: datetime):
+        counts: dict[str, int] = {}
+        for (dataset, _), row in self.market_records.items():
+            if (
+                row.get("symbol") == symbol
+                and datetime.fromisoformat(str(row["available_at"])) <= as_of
+            ):
+                counts[dataset] = counts.get(dataset, 0) + 1
+        return counts
+
+    def record_page(self, dataset: str, symbol: str, as_of: datetime, page: int, size: int):
+        rows = [
+            row
+            for row in self.list_records(dataset, symbol)
+            if datetime.fromisoformat(str(row["available_at"])) <= as_of
+        ]
+        rows.sort(key=lambda row: (str(row["available_at"]), str(row["record_key"])), reverse=True)
+        return rows[(page - 1) * size : page * size]
+
 
 class SqlAlchemyMarketDataStore:
     def __init__(self, session: Session) -> None:
@@ -832,6 +851,7 @@ class SqlAlchemyMarketDataStore:
                 JsonMarketRecordModel(
                     dataset_key=dataset_key,
                     record_key=key,
+                    symbol=str(item["symbol"]) if item.get("symbol") else None,
                     payload_json=json.dumps(item, ensure_ascii=False, default=str),
                     available_at=datetime.fromisoformat(str(item["available_at"])),
                 )
@@ -840,11 +860,39 @@ class SqlAlchemyMarketDataStore:
         return overwritten
 
     def list_records(self, dataset_key: str, symbol: str | None = None):
+        statement = select(JsonMarketRecordModel).where(
+            JsonMarketRecordModel.dataset_key == dataset_key
+        )
+        if symbol is not None:
+            statement = statement.where(JsonMarketRecordModel.symbol == symbol)
         rows = self.session.scalars(
-            select(JsonMarketRecordModel).where(JsonMarketRecordModel.dataset_key == dataset_key)
+            statement.order_by(JsonMarketRecordModel.available_at, JsonMarketRecordModel.record_key)
         )
         values = [json.loads(row.payload_json) for row in rows]
         return [row for row in values if symbol is None or row.get("symbol") == symbol]
+
+    def record_counts(self, symbol: str, as_of: datetime):
+        Record = JsonMarketRecordModel
+        return dict(
+            self.session.execute(
+                select(Record.dataset_key, func.count())
+                .where(Record.symbol == symbol, Record.available_at <= as_of)
+                .group_by(Record.dataset_key)
+            ).all()
+        )
+
+    def record_page(self, dataset: str, symbol: str, as_of: datetime, page: int, size: int):
+        Record = JsonMarketRecordModel
+        statement = (
+            select(Record)
+            .where(
+                Record.symbol == symbol, Record.dataset_key == dataset, Record.available_at <= as_of
+            )
+            .order_by(Record.available_at.desc(), Record.record_key.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        return [json.loads(row.payload_json) for row in self.session.scalars(statement)]
 
 
 class InMemoryBacktestStore:

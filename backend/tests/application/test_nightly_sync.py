@@ -29,7 +29,20 @@ def test_nightly_batches_are_idempotent_and_respect_source_settings():
     bars = [task for task in tasks if task["dataset_key"] == "daily-bars"]
     assert [len(task["symbols"]) for task in bars] == [20, 20, 1]
     assert all(task["end_day"] == "2026-09-28" for task in tasks)
-    assert len(tasks) == 9
+    assert len(tasks) == 30
+    for dataset in (
+        "balance-sheets",
+        "income-statements",
+        "cash-flow-statements",
+        "financial-indicators",
+        "company-profiles",
+        "dividend-plans",
+        "shareholder-counts",
+        "business-compositions",
+    ):
+        financial = [task for task in tasks if task["dataset_key"] == dataset]
+        assert [len(task["symbols"]) for task in financial] == [20, 20, 1]
+        assert all(task["start_day"] == "2021-01-01" for task in financial)
     assert all("source_keys" in kwargs for _, kwargs in calls)
     assert [dataset for dataset, _ in calls[:3]] == [
         "trading-calendar",

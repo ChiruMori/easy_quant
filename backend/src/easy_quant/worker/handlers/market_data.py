@@ -6,6 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from easy_quant.domain.market_data.calendar import TradingCalendar
+from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
 from easy_quant.domain.market_data.indices import INDEX_CATALOG, is_index
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import ValidationError
@@ -87,7 +88,7 @@ def register_market_data_handlers(
             "daily-bars",
             "market-values",
             "pledge-ratios",
-            "financial-indicators",
+            *FINANCIAL_DATASETS,
             "sw-industry-memberships",
         ):
             dataset_symbols = (
@@ -100,7 +101,7 @@ def register_market_data_handlers(
                     dataset_symbols[index : index + 20]
                     for index in range(0, len(dataset_symbols), 20)
                 ]
-                if dataset in {"daily-bars", "financial-indicators"}
+                if dataset == "daily-bars" or dataset in FINANCIAL_DATASETS
                 else [[]]
             )
             for index, batch in enumerate(batches):
@@ -111,7 +112,7 @@ def register_market_data_handlers(
                     ),
                     default=day,
                 )
-                if dataset == "financial-indicators":
+                if dataset in FINANCIAL_DATASETS:
                     start_day = date(day.year - 5, 1, 1)
                 task_id = f"nightly:{day}:{dataset}:{index}"
                 payload = {

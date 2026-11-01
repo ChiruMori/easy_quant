@@ -98,10 +98,31 @@ def ensure_dataset_catalog(datasets: Any) -> list[dict[str, Any]]:
         if dataset["key"] not in keys:
             datasets.append(dataset)
             rows.append(dataset)
+        elif dataset["key"] == "financial-indicators":
+            current = next(row for row in rows if row["key"] == dataset["key"])
+            original_sources = current["sources"]
+            legacy_enabled = any(source.get("enabled", True) for source in original_sources)
+            current["sources"] = [
+                source for source in original_sources if source["key"] != "akshare"
+            ]
+            present = {row["key"] for row in current["sources"]}
+            additions = [
+                {**source, "enabled": legacy_enabled}
+                for source in dataset["sources"]
+                if source["key"] not in present
+            ]
+            if additions or len(current["sources"]) != len(original_sources):
+                current["sources"] = [*current["sources"], *additions]
+                index = next(
+                    index for index, row in enumerate(datasets) if row["key"] == current["key"]
+                )
+                datasets[index] = current
     return rows
 
 
 def _default_datasets() -> list[dict[str, Any]]:
+    from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
+
     return [
         {
             "key": "trading-status",
@@ -165,8 +186,28 @@ def _default_datasets() -> list[dict[str, Any]]:
             "key": "financial-indicators",
             "name": "财务指标",
             "description": "按报告期保存的历史财务分析指标",
-            "sources": [{"key": "akshare", "name": "AKShare", "enabled": True}],
+            "sources": [
+                {"key": "eastmoney", "name": "东方财富（直连）", "enabled": True},
+                {"key": "sina", "name": "新浪财经（直连）", "enabled": True},
+            ],
         },
+        *[
+            {
+                "key": key,
+                "name": name,
+                "description": "按报告期/事件保存来源与可获知时间；不按天复制财报",
+                "sources": [
+                    {"key": "eastmoney", "name": "东方财富（直连）", "enabled": True},
+                    *(
+                        [{"key": "sina", "name": "新浪财经（直连）", "enabled": True}]
+                        if key in {"balance-sheets", "income-statements", "cash-flow-statements"}
+                        else []
+                    ),
+                ],
+            }
+            for key, name in FINANCIAL_DATASETS.items()
+            if key != "financial-indicators"
+        ],
     ]
 
 
@@ -250,6 +291,7 @@ def build_container(settings: Settings | None = None) -> Container:
             datasets.append(dataset)
     _refresh_dataset_description(datasets)
     _ensure_independent_daily_source(datasets)
+    ensure_dataset_catalog(datasets)
     existing_keys = {item["key"] for item in datasets}
     for dataset in _default_datasets():
         if dataset["key"] not in existing_keys:
@@ -411,13 +453,6 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
             )
         }
     )
-    financial_ak = AkShareSource(
-        {
-            "financial-indicators": lambda **parameters: ak.stock_financial_analysis_indicator(
-                symbol=str(parameters["symbol"]), start_year=str(parameters["start_year"])
-            )
-        }
-    )
 
     def industry_memberships(**_parameters):
         import pandas as pd
@@ -440,6 +475,31 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         return pd.DataFrame(rows)
 
     industry_ak = AkShareSource({"sw-industry-memberships": industry_memberships})
+
+    from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
+    from easy_quant.infrastructure.data_sources.financial_normalization import (
+        validate_financial_response,
+    )
+    from easy_quant.infrastructure.data_sources.financial_sources import (
+        EastMoneyFinancialSource,
+        SinaFinancialSource,
+    )
+
+    financial_em = EastMoneyFinancialSource(httpx.Client(timeout=20.0, trust_env=False))
+    financial_sina = SinaFinancialSource(httpx.Client(timeout=20.0, trust_env=False))
+    financial_acquisitions = {
+        key: AcquisitionService(
+            [financial_em, *([financial_sina] if key in financial_sina.reports else [])],
+            raw_cache,
+            clock,
+            sleeper,
+            retry=ExponentialRetry(max_attempts=2, base_seconds=0.5),
+            shuffle=lambda sources: None,
+            validate=validate_financial_response,
+            retry_by_round=True,
+        )
+        for key in FINANCIAL_DATASETS
+    }
 
     def acquisition(sources: list[Any], *, daily: bool = False) -> AcquisitionService:
         return AcquisitionService(
@@ -477,7 +537,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
             "live-quotes": quotes_acquisition,
             "market-values": acquisition([eastmoney]),
             "pledge-ratios": acquisition([pledge_ak]),
-            "financial-indicators": acquisition([financial_ak]),
+            **financial_acquisitions,
             "sw-industry-memberships": acquisition([industry_ak]),
         },
         container.market_data,

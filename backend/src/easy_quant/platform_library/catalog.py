@@ -1,3 +1,5 @@
+from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
+from easy_quant.platform_library.financials import financial_history
 from easy_quant.platform_library.market import (
     daily_bars,
     latest_record,
@@ -67,4 +69,23 @@ def build_library_registry() -> FactorRegistry:
     ]
     for item in items:
         registry.register(FactorDefinition(*item))
+    for dataset, name in FINANCIAL_DATASETS.items():
+        key = f"financial.{dataset}"
+        registry.register(
+            FactorDefinition(
+                key,
+                name,
+                "按决策时点读取各报告期当时可见版本；保留来源与修订信息，不按最初公告倒灌修订值。金额元、比例百分数，利润/现金流为累计口径。",
+                {
+                    "symbol": "股票代码",
+                    "period": "all（默认）、annual（年报）、quarterly（非年报）",
+                },
+                "按报告期升序的记录序列；period可传all/annual/quarterly（非年报），无数据为[]",
+                f"library('{key}', symbol='000001', period='annual')",
+                '[{"report_period":"2025-12-31","report_type":"年报","available_at":"2026-04-01T23:59:59+08:00","source":"eastmoney"}]',
+                financial_history(dataset),
+                defaults={"period": "all"},
+                datasets=(dataset,),
+            )
+        )
     return registry
