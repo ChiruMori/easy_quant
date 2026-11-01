@@ -31,7 +31,9 @@ export function PortfolioPage({ portfolio }: { portfolio: PortfolioView }) {
         <TableBody>
           {Object.entries(portfolio.positions).map(([symbol, quantity]) => (
             <TableRow key={symbol}>
-              <TableCell>{symbol}</TableCell>
+              <TableCell>
+                <InstrumentLink symbol={symbol} />
+              </TableCell>
               <TableCell>{quantity}</TableCell>
               <TableCell>{formatMoney(portfolio.costs[symbol])}</TableCell>
             </TableRow>
@@ -53,7 +55,7 @@ export function PortfolioPage({ portfolio }: { portfolio: PortfolioView }) {
             <TableRow key={entry.id}>
               <TableCell>{entry.id}</TableCell>
               <TableCell>{formatMoney(entry.cash_delta)}</TableCell>
-              <TableCell>{entry.symbol ?? "-"}</TableCell>
+              <TableCell>{entry.symbol ? <InstrumentLink symbol={entry.symbol} /> : "-"}</TableCell>
               <TableCell>{entry.quantity_delta}</TableCell>
             </TableRow>
           ))}
@@ -62,3 +64,4 @@ export function PortfolioPage({ portfolio }: { portfolio: PortfolioView }) {
     </div>
   )
 }
+import { InstrumentLink } from "@/components/instrument-link"

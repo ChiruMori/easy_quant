@@ -39,7 +39,7 @@ export function AppLayout() {
       ? "回测详情"
       : pathname.startsWith("/live/")
         ? "实盘详情"
-        : pathname.startsWith("/admin/data/instruments/")
+        : pathname.startsWith("/admin/data/instruments/") || pathname.startsWith("/instruments/")
           ? "股票详情"
           : pathname.startsWith("/strategies/")
             ? "策略工作台"

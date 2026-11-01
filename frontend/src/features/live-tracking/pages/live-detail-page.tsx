@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/app-shell"
 import { CollapsedDescription } from "@/components/collapsed-description"
 import { ConfirmAction } from "@/components/confirm-action"
 import { IconButton } from "@/components/icon-button"
+import { InstrumentLink } from "@/components/instrument-link"
 import { ListPagination } from "@/components/list-pagination"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
@@ -392,9 +393,16 @@ export function LiveDetailPage({
             ) : null}
             <p className="text-sm">
               锁定持仓：
-              {Object.entries(balances?.reserved_positions ?? {})
-                .map(([symbol, quantity]) => `${symbol} ${quantity} 股`)
-                .join("、") || "无"}
+              {Object.keys(balances?.reserved_positions ?? {}).length
+                ? Object.entries(balances?.reserved_positions ?? {}).map(
+                    ([symbol, quantity], index) => (
+                      <span key={symbol}>
+                        {index > 0 && "、"}
+                        <InstrumentLink symbol={symbol} /> {quantity} 股
+                      </span>
+                    ),
+                  )
+                : "无"}
             </p>
             <p className="text-sm">
               资金池：{formatMoney(balances?.capital_pool)} 元 · 当前现金：
@@ -417,7 +425,9 @@ export function LiveDetailPage({
                     const positionValue = current.portfolio?.position_values?.[symbol] ?? null
                     return (
                       <TableRow key={symbol}>
-                        <TableCell>{symbol}</TableCell>
+                        <TableCell>
+                          <InstrumentLink symbol={symbol} />
+                        </TableCell>
                         <TableCell>{quantity}</TableCell>
                         <TableCell>
                           <Tooltip>
@@ -555,7 +565,9 @@ export function LiveDetailPage({
                         })
                       : "历史记录"}
                   </TableCell>
-                  <TableCell>{item.instrument_id}</TableCell>
+                  <TableCell>
+                    <InstrumentLink symbol={item.instrument_id} />
+                  </TableCell>
                   <TableCell>
                     {
                       {

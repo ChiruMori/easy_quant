@@ -14,6 +14,7 @@ import {
 } from "recharts"
 
 import { IconButton } from "@/components/icon-button"
+import { InstrumentLink } from "@/components/instrument-link"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -430,7 +431,8 @@ export const PortfolioChart = memo(function PortfolioChart({
                         <p>{label}</p>
                         {marker.trades.map((trade, index) => (
                           <p key={index}>
-                            {trade.symbol} · {trade.quantity} 股 · {formatMoney(trade.price)} 元
+                            <InstrumentLink symbol={trade.symbol} /> · {trade.quantity} 股 ·{" "}
+                            {formatMoney(trade.price)} 元
                           </p>
                         ))}
                       </TooltipContent>

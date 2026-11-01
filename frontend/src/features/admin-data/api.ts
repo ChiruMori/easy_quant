@@ -42,8 +42,10 @@ export function useMarketDataCoverage(params: {
 export const getAcquisition = (id: string) =>
   apiRequest<Acquisition>(`/admin/market-data/acquisitions/${id}`)
 
-export const getInstrument = (symbol: string) =>
-  apiRequest<Instrument>(`/admin/market-data/instruments/${symbol}`)
+export const getInstrument = (symbol: string, readOnly = false) =>
+  apiRequest<Instrument>(
+    `/${readOnly ? "market-data" : "admin/market-data"}/instruments/${encodeURIComponent(symbol)}`,
+  )
 
 export const updateInstrumentStatus = (
   symbol: string,
@@ -55,12 +57,17 @@ export const updateInstrumentStatus = (
     body: JSON.stringify({ status, reason }),
   })
 
-export const getInstrumentDailyBars = (symbol: string, startDay?: string, endDay?: string) => {
+export const getInstrumentDailyBars = (
+  symbol: string,
+  startDay?: string,
+  endDay?: string,
+  readOnly = false,
+) => {
   const query = new URLSearchParams()
   if (startDay) query.set("start_day", startDay)
   if (endDay) query.set("end_day", endDay)
   return apiRequest<DailyBar[]>(
-    `/admin/market-data/instruments/${symbol}/daily-bars?${query.toString()}`,
+    `/${readOnly ? "market-data" : "admin/market-data"}/instruments/${encodeURIComponent(symbol)}/daily-bars?${query.toString()}`,
   )
 }
 

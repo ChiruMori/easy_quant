@@ -5,6 +5,15 @@ import type { DailyBar } from "./types"
 export type CandlePeriod = "day" | "week" | "month"
 export type CandleBar = Pick<DailyBar, "trading_day" | "open" | "high" | "low" | "close">
 
+export function movingAverage(bars: CandleBar[], window = 5): Array<number | null> {
+  let sum = new Decimal(0)
+  return bars.map((bar, index) => {
+    sum = sum.plus(bar.close)
+    if (index >= window) sum = sum.minus(bars[index - window].close)
+    return index + 1 < window ? null : sum.div(window).toNumber()
+  })
+}
+
 function periodKey(day: string, period: CandlePeriod): string {
   if (period === "day") return day
   if (period === "month") return day.slice(0, 7)

@@ -66,7 +66,9 @@ export function StockPerformanceTable({ runId }: { runId: string }) {
                 <TableBody>
                   {query.data.items.map((row) => (
                     <TableRow key={row.symbol}>
-                      <TableCell>{row.symbol}</TableCell>
+                      <TableCell>
+                        <InstrumentLink symbol={row.symbol} />
+                      </TableCell>
                       <TableCell>
                         <Badge variant="secondary">
                           {Number(row.quantity) ? "持仓中" : "已清仓"}
@@ -106,3 +108,4 @@ export function StockPerformanceTable({ runId }: { runId: string }) {
     </Card>
   )
 }
+import { InstrumentLink } from "@/components/instrument-link"

@@ -68,7 +68,9 @@ for (const width of [1440, 360]) {
       .getByRole("button", { name: "下一页" })
       .click()
     await expect(page.getByRole("table", { name: "股票收益明细" })).toContainText("已清仓")
-    await expect(page.getByRole("cell", { name: "000021", exact: true })).toBeVisible()
+    await expect(
+      page.getByRole("link", { name: "查看 000021 股票详情", exact: true }),
+    ).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       width,
     )

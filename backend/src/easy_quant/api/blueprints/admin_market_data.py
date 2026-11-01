@@ -194,11 +194,9 @@ def market_data_coverage():
 @blueprint.get("/instruments/<symbol>")
 @require_admin
 def get_instrument(symbol: str):
-    normalized = symbol.strip().lower().zfill(6)
-    instrument = get_container().market_data.get_instrument(normalized)
-    if instrument is None:
-        return success(None, status=404)
-    return success(instrument)
+    from easy_quant.api.blueprints.market_data import instrument_response
+
+    return instrument_response(symbol)
 
 
 @blueprint.put("/instruments/<symbol>/status")
@@ -232,15 +230,9 @@ def update_instrument_status(symbol: str):
 @blueprint.get("/instruments/<symbol>/daily-bars")
 @require_admin
 def get_instrument_daily_bars(symbol: str):
-    normalized = symbol.strip().lower().zfill(6)
-    start_day = request.args.get("start_day", type=date.fromisoformat)
-    end_day = request.args.get("end_day", type=date.fromisoformat)
-    rows = get_container().market_data.list_bars(start_day, end_day, normalized)
-    if start_day is None and end_day is None:
-        rows = rows[-180:]
-    elif len(rows) > 1000:
-        rows = rows[-1000:]
-    return success(rows)
+    from easy_quant.api.blueprints.market_data import daily_bars_response
+
+    return daily_bars_response(symbol)
 
 
 @blueprint.post("/acquisitions")

@@ -95,6 +95,7 @@ const router = createBrowserRouter([
       { path: "backtests/:runId", element: <BacktestDetailRoute /> },
       { path: "live", element: <LiveListPage /> },
       { path: "live/:instanceId", element: <LiveDetailRoute /> },
+      { path: "instruments/:symbol", element: <InstrumentDetailPage readOnly /> },
       { path: "notifications", element: <NotificationSettingsPage /> },
       {
         path: "admin/data",

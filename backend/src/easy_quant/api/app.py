@@ -11,6 +11,7 @@ from easy_quant.api.blueprints.backtests import blueprint as backtests_blueprint
 from easy_quant.api.blueprints.chart_comparisons import blueprint as chart_comparisons_blueprint
 from easy_quant.api.blueprints.factors import blueprint as factors_blueprint
 from easy_quant.api.blueprints.live_tracking import blueprint as live_tracking_blueprint
+from easy_quant.api.blueprints.market_data import blueprint as market_data_blueprint
 from easy_quant.api.blueprints.notifications import blueprint as notifications_blueprint
 from easy_quant.api.blueprints.recommendations import blueprint as recommendations_blueprint
 from easy_quant.api.blueprints.strategies import blueprint as strategies_blueprint
@@ -47,6 +48,7 @@ def create_app(*, settings: Settings | None = None, container: Container | None 
     register_request_logging(app)
     register_error_handlers(app)
     app.register_blueprint(auth_blueprint)
+    app.register_blueprint(market_data_blueprint)
     app.register_blueprint(backtests_blueprint)
     app.register_blueprint(chart_comparisons_blueprint)
     app.register_blueprint(factors_blueprint)
