@@ -193,7 +193,13 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <PortfolioChart key={run.id} kind="backtest" resourceId={run.id} series={series} />
+            <PortfolioChart
+              key={run.id}
+              kind="backtest"
+              resourceId={run.id}
+              series={series}
+              trades={run.trades.map((trade) => ({ ...trade, day: trade.trading_day }))}
+            />
           </CardContent>
         </Card>
       )}

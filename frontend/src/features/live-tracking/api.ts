@@ -76,6 +76,14 @@ export interface LivePortfolio {
   profit: string | null
   return_rate: string | null
   valuation_note: string
+  position_values?: Record<string, string | null>
+  trade_markers?: Array<{
+    at: string
+    action: string
+    symbol: string
+    quantity: string
+    price: string
+  }>
   missing_symbols: string[]
   curve: Array<{ at: string; profit: string | null; return_rate: string | null }>
 }

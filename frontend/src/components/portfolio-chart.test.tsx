@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest"
 import { apiRequest } from "@/lib/api/client"
 
 import { CollapsedDescription } from "./collapsed-description"
-import { PortfolioChart } from "./portfolio-chart"
+import { groupTradeMarkers, PortfolioChart } from "./portfolio-chart"
 
 vi.mock("@/lib/api/client", () => ({ apiRequest: vi.fn() }))
 afterEach(() => {
@@ -21,6 +21,30 @@ const series = [
     ],
   },
 ]
+
+it("同日买卖分组且保留多笔明细；不把无估值日和非成交动作画成买卖点", () => {
+  const trade = {
+    day: "2026-10-21",
+    action: "buy",
+    symbol: "000001",
+    quantity: "100",
+    price: "10.125",
+  }
+  const groups = groupTradeMarkers(
+    [
+      trade,
+      { ...trade, symbol: "000002" },
+      { ...trade, action: "sell" },
+      { ...trade, action: "hold" },
+      { ...trade, day: "2026-10-23" },
+    ],
+    [...series[0].points, { day: "2026-10-23", amount: null, return_rate: null }],
+  )
+  expect(groups.map((group) => [group.action, group.trades.length])).toEqual([
+    ["buy", 2],
+    ["sell", 1],
+  ])
+})
 
 it("切换单位、临时添加移除与失败后重试；实盘无回测来源", async () => {
   vi.mocked(apiRequest)

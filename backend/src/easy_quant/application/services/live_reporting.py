@@ -278,12 +278,14 @@ def portfolio_summary(
     zone = ZoneInfo("Asia/Shanghai")
     times = {started, now} if include_curve else set()
     if include_curve:
+        times.update(row.occurred_at for row in entries if row.symbol and row.quantity_delta)
         for row in bars:
             at = datetime.fromisoformat(str(row["available_at"]))
             if started < at < now:
                 times.add(at.astimezone(zone).replace(hour=23, minute=59, second=59, microsecond=0))
     curve = [point(at) for at in sorted(times) if at <= now]
     current = point(now)
+    current_prices = marks(now)
     return {
         **current,
         "cash": str(portfolio.cash),
@@ -294,6 +296,25 @@ def portfolio_summary(
         "capital_pool": str(initial_cash + Decimal(str(instance.get("capital_added", 0)))),
         "initial_equity": str(baseline) if not baseline_missing else None,
         "curve": curve,
+        "position_values": {
+            symbol: str(quantity * current_prices[symbol])
+            if symbol in current_prices
+            else ("0" if not quantity else None)
+            for symbol, quantity in portfolio.positions.items()
+        },
+        "trade_markers": [
+            {
+                "at": row.occurred_at.isoformat(),
+                "symbol": row.symbol,
+                "action": "buy" if row.quantity_delta > 0 else "sell",
+                "quantity": str(abs(row.quantity_delta)),
+                "price": str(row.price),
+            }
+            for row in entries
+            if row.symbol and row.quantity_delta and row.occurred_at <= now
+        ]
+        if include_curve
+        else [],
         "valuation_note": (
             "按已发布日线收盘价估值；收益扣除追加资金，收益率=累计收益/累计投入资金。"
             "初始持仓缺启动时估值或当前持仓缺行情时暂不计算。"

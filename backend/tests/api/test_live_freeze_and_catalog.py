@@ -59,6 +59,8 @@ def test_termination_freezes_balances_and_profit_then_never_reads_market_data(mo
     assert result["frozen_balances"]["positions"] == {"000001": "100"}
     assert result["terminated_at"]
     assert result["frozen_portfolio"]["profit"] == "200.00"
+    assert result["frozen_portfolio"]["position_values"] == {"000001": "1200"}
+    assert result["frozen_portfolio"]["trade_markers"] == []
     assert len(result["frozen_portfolio"]["curve"]) == 2
     frozen = deepcopy(c.state.live_instances[identifier])
     for path in (prefix, prefix + "/portfolio"):

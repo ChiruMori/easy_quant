@@ -22,7 +22,32 @@ for (const width of [1440, 360]) {
         { trading_day: "2026-10-21", equity: "110000", benchmark_equity: "105000" },
       ],
       metrics: {},
-      trades: [],
+      trades: [
+        {
+          trading_day: "2026-10-20",
+          symbol: "000001",
+          action: "buy",
+          quantity: "100",
+          price: "10.12",
+          fee: "0",
+        },
+        {
+          trading_day: "2026-10-20",
+          symbol: "000002",
+          action: "buy",
+          quantity: "200",
+          price: "20",
+          fee: "0",
+        },
+        {
+          trading_day: "2026-10-20",
+          symbol: "000001",
+          action: "sell",
+          quantity: "100",
+          price: "10.5",
+          fee: "0",
+        },
+      ],
       assumptions: { commission_rate: "0.0003", slippage_rate: "0.001" },
       snapshot_id: "snapshot",
       application_version: "fixture-v1",
@@ -41,7 +66,31 @@ for (const width of [1440, 360]) {
         capital_pool: "100000",
         initial_equity: "100000",
         reserved_positions: {},
-        positions: {},
+        positions: { "000001": "100", "000002": "200" },
+        position_values: { "000001": "1012.50", "000002": null },
+        trade_markers: [
+          {
+            at: "2026-10-19T16:10:00Z",
+            symbol: "000001",
+            action: "buy",
+            quantity: "100",
+            price: "10.125",
+          },
+          {
+            at: "2026-10-20T02:00:00Z",
+            symbol: "000002",
+            action: "buy",
+            quantity: "200",
+            price: "20",
+          },
+          {
+            at: "2026-10-20T03:00:00Z",
+            symbol: "000001",
+            action: "sell",
+            quantity: "100",
+            price: "10.5",
+          },
+        ],
         profit: "12.5",
         return_rate: "0.000125",
         missing_symbols: [],
@@ -51,7 +100,24 @@ for (const width of [1440, 360]) {
           { at: "2026-10-21T02:00:00Z", profit: "12.5", return_rate: "0.000125" },
         ],
       },
-      operations: { items: [], total: 0, page: 1, page_size: 20 },
+      operations: {
+        items: [
+          {
+            id: "pending",
+            instrument_id: "000001",
+            action: "buy",
+            quantity: "100",
+            ratio: "0.333333333333333333",
+            ratio_basis: "1000",
+            reason: "仓位比例建议",
+            status: "pending",
+            version: 0,
+          },
+        ],
+        total: 25,
+        page: 1,
+        page_size: 20,
+      },
       notification_deliveries: [
         {
           id: "delivery-v1",
@@ -75,8 +141,13 @@ for (const width of [1440, 360]) {
         },
       }),
     )
+    let valuationFailed = false
     await page.route("**/api/v1/live-instances/chart-live-v1**", (route) => {
       const path = new URL(route.request().url()).pathname
+      if (path.endsWith("/portfolio") && !valuationFailed) {
+        valuationFailed = true
+        return route.fulfill({ status: 503, json: { error: { message: "估值暂时不可用" } } })
+      }
       return route.fulfill({
         json: {
           data: path.endsWith("/portfolio")
@@ -131,7 +202,13 @@ for (const width of [1440, 360]) {
     await expect(page.getByRole("columnheader", { name: "创建时间" })).toBeVisible()
     await expect(page.getByRole("cell", { name: "2026/10/21 10:00:00" })).toBeVisible()
     await page.goto("/backtests/chart-v1")
+    await expect(page.locator('[data-trade-marker="buy"]')).toHaveCount(1)
+    await expect(page.locator('[data-trade-marker="sell"]')).toHaveCount(1)
+    await page.locator('[data-trade-marker="buy"]').focus()
+    await expect(page.getByRole("tooltip")).toContainText("2 笔模拟成交")
+    await expect(page.getByRole("tooltip")).toContainText("000002")
     await page.getByRole("tab", { name: "收益率（%）", exact: true }).click()
+    await expect(page.locator("[data-trade-marker]")).toHaveCount(2)
     await expect(page.getByRole("img", { name: /组合权益曲线/ })).toHaveAttribute(
       "aria-label",
       /单位为%/,
@@ -176,6 +253,22 @@ for (const width of [1440, 360]) {
     await page.reload()
     await expect(page.getByRole("button", { name: /^移除对比/ })).toHaveCount(0)
     await page.goto("/live/chart-live-v1")
+    await expect(page.getByRole("alert")).toContainText("估值暂时不可用")
+    await page.getByRole("button", { name: "重试估值", exact: true }).click()
+    const valuation = page.getByRole("button", { name: "000001 预估总价值说明" })
+    await expect(valuation).toHaveText("1012.50")
+    await expect(page.getByRole("button", { name: "000002 预估总价值说明" })).toHaveText(
+      "暂不可估值",
+    )
+    await valuation.hover()
+    await expect(page.getByRole("tooltip")).toContainText("行情可能延迟")
+    await page.mouse.move(0, 0)
+    await page.getByRole("button", { name: /^查看完整说明/ }).click()
+    await expect(page.getByRole("dialog")).toContainText("33.33%")
+    await page.keyboard.press("Escape")
+    await expect(page.locator("[data-trade-marker]")).toHaveCount(2)
+    await page.locator('[data-trade-marker="buy"]').focus()
+    await expect(page.getByRole("tooltip")).toContainText("2026-10-20 买入 B，2 笔实际成交")
     await expect(page.getByRole("region", { name: "可用资金", exact: true })).toContainText(
       "987.68 元",
     )
@@ -184,6 +277,7 @@ for (const width of [1440, 360]) {
     )
     await expect(page.getByRole("cell", { name: /ntfy_transport/ })).toBeVisible()
     await page.getByRole("tab", { name: "收益率（%）", exact: true }).click()
+    await expect(page.locator("[data-trade-marker]")).toHaveCount(2)
     await expect(page.getByRole("img", { name: /累计收益曲线/ })).toHaveAttribute(
       "aria-label",
       /单位为%/,
