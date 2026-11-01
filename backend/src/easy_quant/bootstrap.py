@@ -88,7 +88,11 @@ def _ensure_independent_daily_source(datasets: Any) -> None:
 
 
 def ensure_dataset_catalog(datasets: Any) -> list[dict[str, Any]]:
-    rows = list(datasets)
+    unique: dict[str, dict[str, Any]] = {}
+    for row in datasets:
+        # 来源编辑也读取同 key 的第一条；目录去重不能覆盖用户已保存的配置。
+        unique.setdefault(row["key"], row)
+    rows = list(unique.values())
     keys = {row["key"] for row in rows}
     for dataset in _default_datasets():
         if dataset["key"] not in keys:

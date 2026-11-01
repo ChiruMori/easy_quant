@@ -6,6 +6,7 @@ import {
   ComposedChart,
   Legend,
   Line,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -13,6 +14,7 @@ import {
 } from "recharts"
 
 import { IconButton } from "@/components/icon-button"
+import { InstrumentLink } from "@/components/instrument-link"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -27,7 +29,34 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tooltip as Hint, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { apiRequest } from "@/lib/api/client"
+import { formatMoney } from "@/lib/finance"
+
+export interface PortfolioTrade {
+  day: string
+  action: string
+  symbol: string
+  quantity: string
+  price: string
+}
+
+export function groupTradeMarkers(trades: PortfolioTrade[], points: PortfolioSeries["points"]) {
+  const days = new Set(
+    points
+      .filter((point) => point.amount !== null || point.return_rate !== null)
+      .map((point) => point.day),
+  )
+  const groups = new Map<string, { day: string; action: string; trades: PortfolioTrade[] }>()
+  for (const trade of trades) {
+    if (!days.has(trade.day) || !["buy", "sell"].includes(trade.action)) continue
+    const key = `${trade.day}:${trade.action}`
+    const group = groups.get(key) ?? { day: trade.day, action: trade.action, trades: [] }
+    group.trades.push(trade)
+    groups.set(key, group)
+  }
+  return [...groups.values()]
+}
 
 export interface PortfolioSeries {
   id: string
@@ -40,12 +69,14 @@ export const PortfolioChart = memo(function PortfolioChart({
   series,
   amountLabel = "组合权益",
   comparisonsEnabled = true,
+  trades = [],
 }: {
   kind: "backtest" | "live"
   resourceId: string
   series: PortfolioSeries[]
   amountLabel?: string
   comparisonsEnabled?: boolean
+  trades?: PortfolioTrade[]
 }) {
   const gradient = useId()
   const [unit, setUnit] = useState("amount")
@@ -79,6 +110,20 @@ export const PortfolioChart = memo(function PortfolioChart({
     )
     return { curves, days, data }
   }, [series, extra, unit])
+  const markers = useMemo(
+    () => groupTradeMarkers(trades, series[0]?.points ?? []),
+    [trades, series],
+  )
+  const pairedDays = useMemo(() => {
+    const buys = new Set(
+      markers.filter((marker) => marker.action === "buy").map((marker) => marker.day),
+    )
+    return new Set(
+      markers
+        .filter((marker) => marker.action === "sell" && buys.has(marker.day))
+        .map((marker) => marker.day),
+    )
+  }, [markers])
   async function find() {
     if (sending.current) return
     sending.current = true
@@ -247,13 +292,19 @@ export const PortfolioChart = memo(function PortfolioChart({
           </Badge>
         ))}
       </div>
+      {markers.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          红色 B · 买入 / 蓝色 S · 卖出（{kind === "live" ? "已记录的实际成交" : "模拟成交"}
+          ；同日同方向合并，悬停或聚焦查看）
+        </p>
+      )}
       <div
         role="img"
         aria-label={`${amountLabel}曲线，共 ${days.length} 个交易日，单位为${unit === "amount" ? "元" : "%"}`}
         className="h-72 w-full min-w-0"
       >
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
+          <ComposedChart data={data} margin={{ top: 24, right: 20, bottom: 8, left: 0 }}>
             <defs>
               <linearGradient id={gradient} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.16} />
@@ -324,6 +375,72 @@ export const PortfolioChart = memo(function PortfolioChart({
                 />
               ),
             )}
+            {markers.map((marker) => {
+              const value = data.find((point) => point.day === marker.day)?.line0
+              if (typeof value !== "number" || !Number.isFinite(value)) return null
+              const buy = marker.action === "buy"
+              const paired = pairedDays.has(marker.day)
+              const label = `${marker.day} ${buy ? "买入 B" : "卖出 S"}，${marker.trades.length} 笔${kind === "live" ? "实际" : "模拟"}成交`
+              return (
+                <ReferenceDot
+                  key={`${marker.day}:${marker.action}`}
+                  x={marker.day}
+                  y={value}
+                  ifOverflow="visible"
+                  shape={({ cx, cy }: { cx?: number; cy?: number }) => (
+                    <Hint>
+                      <TooltipTrigger asChild>
+                        <g
+                          tabIndex={0}
+                          role="graphics-symbol"
+                          aria-label={label}
+                          data-trade-marker={marker.action}
+                          data-marker-day={marker.day}
+                          className="cursor-help outline-none focus:stroke-foreground"
+                        >
+                          {paired ? (
+                            <path
+                              d={`M ${cx} ${(cy ?? 0) - 4} A 4 4 0 0 ${buy ? 0 : 1} ${cx} ${(cy ?? 0) + 4} Z`}
+                              fill={buy ? "#ef4444" : "#3b82f6"}
+                              stroke="var(--background)"
+                              strokeWidth={1}
+                            />
+                          ) : (
+                            <circle
+                              cx={cx}
+                              cy={cy}
+                              r={4}
+                              fill={buy ? "#ef4444" : "#3b82f6"}
+                              stroke="var(--background)"
+                              strokeWidth={1}
+                            />
+                          )}
+                          <text
+                            x={(cx ?? 0) + (paired ? (buy ? -7 : 7) : 0)}
+                            y={(cy ?? 0) - 10}
+                            textAnchor="middle"
+                            fill={buy ? "#ef4444" : "#3b82f6"}
+                            fontSize={11}
+                            fontWeight={700}
+                          >
+                            {buy ? "B" : "S"}
+                          </text>
+                        </g>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-h-60 max-w-72 overflow-y-auto">
+                        <p>{label}</p>
+                        {marker.trades.map((trade, index) => (
+                          <p key={index}>
+                            <InstrumentLink symbol={trade.symbol} /> · {trade.quantity} 股 ·{" "}
+                            {formatMoney(trade.price)} 元
+                          </p>
+                        ))}
+                      </TooltipContent>
+                    </Hint>
+                  )}
+                />
+              )
+            })}
           </ComposedChart>
         </ResponsiveContainer>
       </div>

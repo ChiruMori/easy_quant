@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/app-shell"
 import { CollapsedDescription } from "@/components/collapsed-description"
 import { ConfirmAction } from "@/components/confirm-action"
 import { IconButton } from "@/components/icon-button"
+import { InstrumentLink } from "@/components/instrument-link"
 import { ListPagination } from "@/components/list-pagination"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
@@ -40,6 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { StrategyPreview } from "@/features/strategies/components/strategy-preview"
 import { formatMoney, profitTone } from "@/lib/finance"
 import { localizedLabel } from "@/lib/labels"
@@ -379,15 +381,28 @@ export function LiveDetailPage({
                 resourceId={current.id}
                 amountLabel="累计收益"
                 series={series}
+                trades={(current.portfolio?.trade_markers ?? []).map((trade) => ({
+                  ...trade,
+                  day: new Date(trade.at).toLocaleDateString("sv-SE", {
+                    timeZone: "Asia/Shanghai",
+                  }),
+                }))}
               />
             ) : !portfolioBusy && !portfolioError ? (
               <p>暂无可估值的收益曲线</p>
             ) : null}
             <p className="text-sm">
               锁定持仓：
-              {Object.entries(balances?.reserved_positions ?? {})
-                .map(([symbol, quantity]) => `${symbol} ${quantity} 股`)
-                .join("、") || "无"}
+              {Object.keys(balances?.reserved_positions ?? {}).length
+                ? Object.entries(balances?.reserved_positions ?? {}).map(
+                    ([symbol, quantity], index) => (
+                      <span key={symbol}>
+                        {index > 0 && "、"}
+                        <InstrumentLink symbol={symbol} /> {quantity} 股
+                      </span>
+                    ),
+                  )
+                : "无"}
             </p>
             <p className="text-sm">
               资金池：{formatMoney(balances?.capital_pool)} 元 · 当前现金：
@@ -399,6 +414,7 @@ export function LiveDetailPage({
                   <TableRow>
                     <TableHead>持仓标的</TableHead>
                     <TableHead>总持仓（股）</TableHead>
+                    <TableHead>预估总价值（元）</TableHead>
                     <TableHead>锁定（股）</TableHead>
                     <TableHead>可用（股）</TableHead>
                   </TableRow>
@@ -406,10 +422,38 @@ export function LiveDetailPage({
                 <TableBody>
                   {Object.entries(balances?.positions ?? {}).map(([symbol, quantity]) => {
                     const locked = balances?.reserved_positions[symbol] ?? "0"
+                    const positionValue = current.portfolio?.position_values?.[symbol] ?? null
                     return (
                       <TableRow key={symbol}>
-                        <TableCell>{symbol}</TableCell>
+                        <TableCell>
+                          <InstrumentLink symbol={symbol} />
+                        </TableCell>
                         <TableCell>{quantity}</TableCell>
+                        <TableCell>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-auto p-0 tabular-nums"
+                                aria-label={`${symbol} 预估总价值说明`}
+                              >
+                                {portfolioBusy
+                                  ? "估值加载中…"
+                                  : portfolioError
+                                    ? "估值加载失败"
+                                    : positionValue === null
+                                      ? "暂不可估值"
+                                      : formatMoney(positionValue)}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-72">
+                              总持仓（含锁定持仓）按已发布日线收盘价估算，行情可能延迟，不代表实时市值或实际成交金额；缺少行情时暂不可估值。
+                              {current.status === "terminated" &&
+                                "数据冻结于终止时点，后续不再更新。"}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
                         <TableCell>{locked}</TableCell>
                         <TableCell>
                           {Decimal.max(0, new Decimal(quantity).minus(locked)).toFixed()}
@@ -521,7 +565,9 @@ export function LiveDetailPage({
                         })
                       : "历史记录"}
                   </TableCell>
-                  <TableCell>{item.instrument_id}</TableCell>
+                  <TableCell>
+                    <InstrumentLink symbol={item.instrument_id} />
+                  </TableCell>
                   <TableCell>
                     {
                       {
@@ -551,7 +597,7 @@ export function LiveDetailPage({
                       text={
                         item.reason +
                         (item.ratio
-                          ? `\n建议按${item.action === "buy" ? "该标的子仓位预算" : "该股持仓"}的 ${new Decimal(item.ratio).mul(100).toFixed()}% 操作（基数 ${formatMoney(item.ratio_basis)}）。`
+                          ? `\n建议按${item.action === "buy" ? "该标的子仓位预算" : "该股持仓"}的 ${new Decimal(item.ratio).mul(100).toFixed(2)}% 操作（基数 ${formatMoney(item.ratio_basis)}）。`
                           : "")
                       }
                     />

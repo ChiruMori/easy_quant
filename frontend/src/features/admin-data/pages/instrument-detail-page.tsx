@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { lazy, Suspense, useMemo, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useLocation, useParams } from "react-router-dom"
 
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { DatePicker } from "@/components/date-picker"
@@ -20,8 +20,12 @@ const CandlestickChart = lazy(() =>
   })),
 )
 
-export function InstrumentDetailPage() {
+export function InstrumentDetailPage({ readOnly = false }: { readOnly?: boolean }) {
   const { symbol = "" } = useParams()
+  const location = useLocation()
+  const from: unknown = location.state?.from
+  const returnTo =
+    typeof from === "string" && from.startsWith("/") && !from.startsWith("//") ? from : "/backtests"
   const isIndex = /^(sh|sz)\d{6}$/i.test(symbol)
   const [range, setRange] = useState({ start: "", end: "" })
   const [appliedRange, setAppliedRange] = useState(range)
@@ -32,11 +36,11 @@ export function InstrumentDetailPage() {
   const queryClient = useQueryClient()
   const instrument = useQuery({
     queryKey: ["instrument", symbol],
-    queryFn: () => getInstrument(symbol),
+    queryFn: () => getInstrument(symbol, readOnly),
   })
   const bars = useQuery({
     queryKey: ["instrument-bars", symbol, appliedRange],
-    queryFn: () => getInstrumentDailyBars(symbol, appliedRange.start, appliedRange.end),
+    queryFn: () => getInstrumentDailyBars(symbol, appliedRange.start, appliedRange.end, readOnly),
   })
   const chartData = useMemo(() => aggregateCandles(bars.data ?? [], period), [bars.data, period])
   if (instrument.isLoading) return <LoadingState label="正在加载股票详情" />
@@ -65,10 +69,12 @@ export function InstrumentDetailPage() {
           </p>
         </div>
         <Button variant="outline" asChild>
-          <Link to={isIndex ? "/admin/data?tab=indices" : "/admin/data"}>返回数据列表</Link>
+          <Link to={readOnly ? returnTo : isIndex ? "/admin/data?tab=indices" : "/admin/data"}>
+            {readOnly ? "返回来源页面" : "返回数据列表"}
+          </Link>
         </Button>
       </div>
-      {!isIndex && instrument.data?.status !== "delisted" && (
+      {!readOnly && !isIndex && instrument.data?.status !== "delisted" && (
         <Card>
           <CardHeader>
             <CardTitle>交易状态</CardTitle>
@@ -130,7 +136,9 @@ export function InstrumentDetailPage() {
           <CardTitle>K 线图</CardTitle>
           <CardDescription>
             红涨绿跌；支持拖动和滚轮缩放。默认读取最近 180 条日线，指定范围最多读取 1,000
-            条日线，周/月线由日线聚合。
+            条日线，周/月线由日线聚合。 默认叠加 MA5（5
+            {period === "day" ? "日" : period === "week" ? "周" : "月"}收盘均线），从所选区间的第 5
+            根 K 线开始绘制；点击图例可隐藏。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -153,7 +161,7 @@ export function InstrumentDetailPage() {
               setAppliedRange(range)
             }}
           >
-            <FieldGroup className="sm:flex-row">
+            <FieldGroup className="sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
               <Field>
                 <FieldLabel htmlFor="bar-start">开始日期</FieldLabel>
                 <DatePicker
@@ -180,10 +188,19 @@ export function InstrumentDetailPage() {
           {bars.isLoading ? (
             <LoadingState label="正在加载日线" />
           ) : bars.error ? (
-            <ErrorState title="无法加载日线" message={bars.error.message} />
+            <div className="flex flex-col items-start gap-3">
+              <ErrorState title="无法加载日线" message={bars.error.message} />
+              <Button
+                variant="outline"
+                disabled={bars.isFetching}
+                onClick={() => void bars.refetch()}
+              >
+                重试日线
+              </Button>
+            </div>
           ) : chartData.length ? (
             <Suspense fallback={<LoadingState label="正在加载 K 线图" />}>
-              <CandlestickChart bars={chartData} />
+              <CandlestickChart bars={chartData} period={period} />
             </Suspense>
           ) : (
             <p className="text-muted-foreground">所选范围内没有日线数据，请先同步该股票。</p>

@@ -2,6 +2,7 @@ import Decimal from "decimal.js"
 import { useState } from "react"
 
 import { EmptyState } from "@/components/app-shell"
+import { InstrumentLink } from "@/components/instrument-link"
 import { MetricCard } from "@/components/metric-card"
 import { PageHeader } from "@/components/page-header"
 import { PortfolioChart, type PortfolioSeries } from "@/components/portfolio-chart"
@@ -84,7 +85,8 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
       )}
       {run.benchmark && (
         <p className="text-sm text-muted-foreground">
-          基准：{run.benchmark.name}（{run.benchmark.symbol}），以区间首个交易日收盘为基点。
+          基准：{run.benchmark.name}（<InstrumentLink symbol={run.benchmark.symbol} />
+          ），以区间首个交易日收盘为基点。
         </p>
       )}
       {run.assumptions.intraday_quote && (
@@ -193,7 +195,13 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <PortfolioChart key={run.id} kind="backtest" resourceId={run.id} series={series} />
+            <PortfolioChart
+              key={run.id}
+              kind="backtest"
+              resourceId={run.id}
+              series={series}
+              trades={run.trades.map((trade) => ({ ...trade, day: trade.trading_day }))}
+            />
           </CardContent>
         </Card>
       )}
@@ -237,7 +245,9 @@ export function BacktestDetailPage({ run }: { run: Backtest }) {
                 {run.trades.map((trade, index) => (
                   <TableRow key={`${trade.trading_day}-${trade.symbol}-${index}`}>
                     <TableCell>{trade.trading_day}</TableCell>
-                    <TableCell>{trade.symbol}</TableCell>
+                    <TableCell>
+                      <InstrumentLink symbol={trade.symbol} />
+                    </TableCell>
                     <TableCell>{localizedLabel(trade.action)}</TableCell>
                     <TableCell className="text-right tabular-nums">{trade.quantity}</TableCell>
                     <TableCell className="text-right tabular-nums">{trade.price}</TableCell>

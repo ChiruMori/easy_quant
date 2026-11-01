@@ -59,6 +59,8 @@ def test_termination_freezes_balances_and_profit_then_never_reads_market_data(mo
     assert result["frozen_balances"]["positions"] == {"000001": "100"}
     assert result["terminated_at"]
     assert result["frozen_portfolio"]["profit"] == "200.00"
+    assert result["frozen_portfolio"]["position_values"] == {"000001": "1200"}
+    assert result["frozen_portfolio"]["trade_markers"] == []
     assert len(result["frozen_portfolio"]["curve"]) == 2
     frozen = deepcopy(c.state.live_instances[identifier])
     for path in (prefix, prefix + "/portfolio"):
@@ -152,3 +154,28 @@ def test_missing_catalog_is_repaired_without_resetting_source_preferences():
     ensure_dataset_catalog(rows)
     assert len(rows) == len(_default_datasets()) and rows[0] == original
     assert {row["key"] for row in rows} >= {"daily-bars", "trading-calendar"}
+
+
+def test_catalog_deduplicates_keys_and_preserves_first_saved_source_configuration():
+    c, client, headers, _ = setup()
+    saved = deepcopy(c.state.datasets[0])
+    saved["sources"][0]["enabled"] = False
+    duplicate = deepcopy(saved)
+    duplicate["sources"][0]["enabled"] = True
+    c.state.datasets = [saved, duplicate, {**deepcopy(saved), "key": "distinct-dataset"}]
+    before = deepcopy(c.state.datasets)
+    for _ in range(2):
+        rows = client.get("/api/v1/admin/market-data/datasets").get_json()["data"]
+        keys = [row["key"] for row in rows]
+        assert len(keys) == len(set(keys))
+        assert rows[0] == saved
+        assert "distinct-dataset" in keys
+    assert c.state.datasets[:3] == before
+    updated = client.put(
+        f"/api/v1/admin/market-data/datasets/{saved['key']}/sources",
+        headers=headers,
+        json={"source_keys": [saved["sources"][0]["key"]], "enabled_keys": []},
+    )
+    assert updated.status_code == 200
+    rows = client.get("/api/v1/admin/market-data/datasets").get_json()["data"]
+    assert rows[0]["sources"][0]["enabled"] is False

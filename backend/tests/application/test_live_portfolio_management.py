@@ -253,6 +253,16 @@ def test_pagination_search_and_equity_excludes_cash_injection():
         assert summary["profit"] == "199.87"
         assert summary["reserved_cash"] == "100"
         assert summary["available_cash"] == "0"
+        assert summary["position_values"] == {"000002": "1200"}
+        assert summary["trade_markers"] == [
+            {
+                "at": now.isoformat(),
+                "symbol": "000002",
+                "action": "buy",
+                "quantity": "100",
+                "price": "10",
+            }
+        ]
         page = operation_page(state, "l", 99, 1, operation_type="manual_buy")
         assert page["page"] == 1 and page["total"] == 1
         assert page["items"][0]["status"] == "executed"
@@ -261,6 +271,8 @@ def test_pagination_search_and_equity_excludes_cash_injection():
     with c.live_tracking.transaction() as state:
         summary = portfolio_summary(state, "l", c.market_data, now)
         assert summary["profit"] is None and summary["missing_symbols"] == ["000002"]
+        assert summary["position_values"] == {"000002": None}
+        assert len(summary["trade_markers"]) == 1
 
 
 def test_initial_position_baseline_and_future_prices_are_time_consistent():
@@ -294,9 +306,54 @@ def test_initial_position_baseline_and_future_prices_are_time_consistent():
         summary = portfolio_summary(state, "l", c.market_data, now)
         assert summary["profit"] == "400"
         assert summary["capital_pool"] == "1000"
+        assert summary["position_values"] == {"000002": "2400"}
+        assert summary["trade_markers"] == []
         assert summary["curve"][0]["profit"] == "0"
     c.market_data.daily_bars.clear()
     c.market_data.upsert_bars([bar(now, "12")])
     with c.live_tracking.transaction() as state:
         summary = portfolio_summary(state, "l", c.market_data, now)
         assert summary["profit"] is None and summary["missing_symbols"] == ["000002"]
+
+
+def test_position_value_and_complete_trade_markers_include_manual_sales_beyond_first_page():
+    c = action_container(cash=Decimal(100000))
+    now = c.authentication.clock.now()
+    service = manual(c)
+    for index in range(23):
+        service.apply(
+            "l",
+            "u",
+            ManualCommand(
+                f"trade-{index}",
+                "000002",
+                "buy" if index < 22 else "sell",
+                Decimal(100),
+                Decimal("10.001"),
+                Decimal("0.13"),
+                True,
+                Decimal(0),
+            ),
+        )
+    c.market_data.upsert_bars(
+        [
+            {
+                "symbol": "000002",
+                "trading_day": now.date().isoformat(),
+                "available_at": now.isoformat(),
+                "open": "10.125",
+                "high": "10.125",
+                "low": "10.125",
+                "close": "10.125",
+                "volume": "1",
+            }
+        ]
+    )
+    with c.live_tracking.transaction() as state:
+        summary = portfolio_summary(state, "l", c.market_data, now)
+        assert summary["position_values"] == {"000002": "21262.500"}
+        assert len(summary["trade_markers"]) == 23
+        assert sum(row["action"] == "sell" for row in summary["trade_markers"]) == 1
+        assert len(operation_page(state, "l", 1, 20)["items"]) == 20
+        assert all(row["symbol"] == "000002" for row in summary["trade_markers"])
+        assert all(row["price"] == "10.001" for row in summary["trade_markers"])
