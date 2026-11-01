@@ -22,6 +22,18 @@ class InMemoryJobRepository:
         self._lock = RLock()
 
     def enqueue(self, job: Job) -> Job:
+        if job.job_type == "market-data-collection":
+            active = next(
+                (
+                    item
+                    for item in self.items.values()
+                    if item.job_type in {"market-data-nightly", "market-data-collection"}
+                    and item.status in {JobStatus.QUEUED, JobStatus.RUNNING}
+                ),
+                None,
+            )
+            if active:
+                return active
         existing = next(
             (item for item in self.items.values() if item.business_key == job.business_key), None
         )
@@ -101,6 +113,17 @@ class SqlAlchemyJobRepository:
 
     def enqueue(self, job: Job, *, commit: bool = True) -> Job:
         with self._operation(commit=commit) as session:
+            if job.job_type == "market-data-collection":
+                active = session.scalar(
+                    select(JobModel)
+                    .where(
+                        JobModel.job_type.in_(["market-data-nightly", "market-data-collection"]),
+                        JobModel.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                    )
+                    .limit(1)
+                )
+                if active:
+                    return self._to_domain(active)
             existing = session.scalar(
                 select(JobModel).where(JobModel.business_key == job.business_key)
             )

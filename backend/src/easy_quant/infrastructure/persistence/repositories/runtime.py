@@ -15,6 +15,7 @@ from sqlalchemy import Table, case, delete, func, or_, select, tuple_
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
+from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.domain.strategies.entities import StrategyState
@@ -343,8 +344,20 @@ class InMemoryMarketDataStore:
         for row in rows:
             key = str(row["record_key"])
             overwritten += int((dataset_key, key) in self.market_records)
-            self.market_records[(dataset_key, key)] = row
+            if (
+                dataset_key not in FINANCIAL_DATASETS
+                or (dataset_key, key) not in self.market_records
+            ):
+                self.market_records[(dataset_key, key)] = row
         return overwritten
+
+    def list_record_versions(self, dataset_key, symbols):
+        wanted = set(symbols)
+        result = {}
+        for (dataset, _), row in self.market_records.items():
+            if dataset == dataset_key and row.get("symbol") in wanted:
+                result.setdefault(str(row["symbol"]), []).append(row)
+        return result
 
     def list_records(self, dataset_key: str, symbol: str | None = None):
         return [
@@ -842,22 +855,60 @@ class SqlAlchemyMarketDataStore:
 
     def upsert_records(self, dataset_key: str, rows: list[dict[str, Any]]) -> int:
         overwritten = 0
-        for item in rows:
-            key = str(item["record_key"])
+        for offset in range(0, len(rows), 500):
+            batch = rows[offset : offset + 500]
+            keys = [str(item["record_key"]) for item in batch]
             overwritten += int(
-                self.session.get(JsonMarketRecordModel, (dataset_key, key)) is not None
-            )
-            self.session.merge(
-                JsonMarketRecordModel(
-                    dataset_key=dataset_key,
-                    record_key=key,
-                    symbol=str(item["symbol"]) if item.get("symbol") else None,
-                    payload_json=json.dumps(item, ensure_ascii=False, default=str),
-                    available_at=datetime.fromisoformat(str(item["available_at"])),
+                self.session.scalar(
+                    select(func.count())
+                    .select_from(JsonMarketRecordModel)
+                    .where(
+                        JsonMarketRecordModel.dataset_key == dataset_key,
+                        JsonMarketRecordModel.record_key.in_(keys),
+                    )
                 )
+                or 0
+            )
+            statement = insert(JsonMarketRecordModel)
+            if dataset_key in FINANCIAL_DATASETS:
+                statement = statement.on_duplicate_key_update(
+                    record_key=statement.inserted.record_key
+                )
+            else:
+                statement = statement.on_duplicate_key_update(
+                    symbol=statement.inserted.symbol,
+                    payload_json=statement.inserted.payload_json,
+                    available_at=statement.inserted.available_at,
+                )
+            self.session.execute(
+                statement,
+                [
+                    {
+                        "dataset_key": dataset_key,
+                        "record_key": str(item["record_key"]),
+                        "symbol": str(item["symbol"]) if item.get("symbol") else None,
+                        "payload_json": json.dumps(item, ensure_ascii=False, default=str),
+                        "available_at": datetime.fromisoformat(str(item["available_at"])),
+                    }
+                    for item in batch
+                ],
             )
         self.session.commit()
         return overwritten
+
+    def list_record_versions(self, dataset_key, symbols):
+        result = {}
+        for offset in range(0, len(symbols), 100):
+            records = self.session.scalars(
+                select(JsonMarketRecordModel).where(
+                    JsonMarketRecordModel.dataset_key == dataset_key,
+                    JsonMarketRecordModel.symbol.in_(symbols[offset : offset + 100]),
+                )
+            )
+            for record in records:
+                row = json.loads(record.payload_json)
+                result.setdefault(str(row["symbol"]), []).append(row)
+        return result
 
     def list_records(self, dataset_key: str, symbol: str | None = None):
         statement = select(JsonMarketRecordModel).where(

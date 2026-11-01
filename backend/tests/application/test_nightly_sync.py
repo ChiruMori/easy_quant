@@ -1,12 +1,20 @@
+from datetime import date, timedelta
 from typing import Any, cast
 
-from easy_quant.domain.scheduling.entities import Job
+import pytest
+
+from easy_quant.application.ports.jobs import JobContinuation
+from easy_quant.application.services.acquisition import AcquisitionFailed
+from easy_quant.domain.scheduling.entities import Job, JobStatus
+from easy_quant.worker.handlers.collection import units
 from easy_quant.worker.handlers.market_data import register_market_data_handlers
 from easy_quant.worker.registry import JobHandlerRegistry
+from easy_quant.worker.runner import Worker
+from tests.fakes.core import FixedClock, VirtualSleeper
 from tests.fakes.platform import make_test_container
 
 
-def test_nightly_batches_are_idempotent_and_respect_source_settings():
+def setup_collection():
     container = make_test_container()
     calls = []
 
@@ -19,116 +27,164 @@ def test_nightly_batches_are_idempotent_and_respect_source_settings():
     container.market_data.upsert_instruments([{"symbol": f"{index:06d}"} for index in range(41)])
     registry = JobHandlerRegistry()
     register_market_data_handlers(registry, container)
-    now = container.authentication.clock.now()
-    job = Job("night", "market-data-nightly", "night", {}, now)
-    first = registry.get("market-data-nightly")(job)
-    second = registry.get("market-data-nightly")(job)
-    assert first is not None and second is not None
-    assert first["child_jobs"] == second["child_jobs"]
-    tasks = list(container.state.acquisitions.values())
-    bars = [task for task in tasks if task["dataset_key"] == "daily-bars"]
-    assert [len(task["symbols"]) for task in bars] == [20, 20, 1]
-    assert all(task["end_day"] == "2026-09-28" for task in tasks)
-    assert len(tasks) == 30
-    for dataset in (
-        "balance-sheets",
-        "income-statements",
-        "cash-flow-statements",
-        "financial-indicators",
-        "company-profiles",
-        "dividend-plans",
-        "shareholder-counts",
-        "business-compositions",
-    ):
-        financial = [task for task in tasks if task["dataset_key"] == dataset]
-        assert [len(task["symbols"]) for task in financial] == [20, 20, 1]
-        assert all(task["start_day"] == "2021-01-01" for task in financial)
-    assert all("source_keys" in kwargs for _, kwargs in calls)
-    assert [dataset for dataset, _ in calls[:3]] == [
-        "trading-calendar",
-        "securities",
-        "trading-status",
-    ]
-    assert calls[2][1]["confirmation_source_keys"] == {"akshare", "eastmoney", "tencent"}
+    job = Job(
+        "night",
+        "market-data-collection",
+        "night",
+        {"end_day": "2026-09-28"},
+        container.authentication.clock.now(),
+    )
+    return container, calls, registry, job
 
 
-def test_nightly_does_not_schedule_daily_bars_for_suspended_symbols():
-    container = make_test_container()
+def test_nightly_keeps_one_resumable_job_and_never_fans_out():
+    container, calls, registry, job = setup_collection()
+    container.jobs.enqueue(job)
+    worker = Worker("w", container.jobs, registry, container.authentication.clock, VirtualSleeper())
+    assert worker.run_once()
+    stored = container.jobs.get(job.id)
+    assert stored.status == JobStatus.QUEUED
+    assert stored.payload["collection"]["unit"] == 1
+    assert stored.result_summary["collection"] is True
+    assert len(container.jobs.list_all()) == 1
+    assert not container.state.acquisitions
+    assert calls[0][0] == "trading-calendar"
+
+
+def test_bulk_pages_resume_without_repeating_previous_page_and_checkpoint_history():
+    container, _, registry, job = setup_collection()
+    seen = []
+
+    class Bulk:
+        def page(self, dataset, period, page, symbols):
+            seen.append((dataset, period, page, symbols))
+            return (
+                [
+                    {
+                        "schema_version": "financial-v1",
+                        "symbol": "000001",
+                        "report_period": period,
+                        "total_assets": str(page),
+                    }
+                ],
+                2,
+                600,
+            )
+
+    container.financial_bulk = Bulk()
+    handler = registry.get(job.job_type)
+    handler(job)
+    handler(job)
+    assert isinstance(handler(job), JobContinuation)
+    assert job.payload["collection"]["page"] == 2
+    handler(job)
+    assert [row[2] for row in seen] == [1, 2]
+    assert len(seen[0][3]) == 41
+    assert job.payload["collection"]["unit"] == 3
+    assert "balance-sheets:2026-06-30" in container.collection_checkpoints
+    assert not container.jobs.list_all()
+
+
+def test_failed_unit_backs_off_three_times_then_other_datasets_continue():
+    container, _, registry, job = setup_collection()
+
+    class Broken:
+        def sync(self, *args, **kwargs):
+            raise ValueError("temporary")
+
+    container.data_sync = cast(Any, Broken())
+    handler = registry.get(job.job_type)
+    first = handler(job)
+    assert isinstance(first, JobContinuation)
+    assert first.resume_at == container.authentication.clock.now() + timedelta(minutes=5)
+    handler(job)
+    handler(job)
+    state = job.payload["collection"]
+    assert state["unit"] == 1 and len(state["failed"]) == 1
+    state["unit"] = len(units(date(2026, 9, 28)))
+    with pytest.raises(AcquisitionFailed):
+        handler(job)
+    assert not container.jobs.list_all()
+
+
+def test_legacy_fanout_jobs_do_not_make_requests():
+    _, calls, registry, job = setup_collection()
+    job.payload = {"task_id": "nightly:2026-11-01:income-statements:old"}
+    result = registry.get("market-data-acquisition")(job)
+    assert isinstance(result, dict) and result["status"] == "skipped"
+    assert calls == []
+
+
+def test_active_collection_is_reused_for_new_schedule_trigger():
+    container, _, _, job = setup_collection()
+    container.jobs.enqueue(job)
+    duplicate = Job("other", job.job_type, "other", {}, job.available_at)
+    assert container.jobs.enqueue(duplicate).id == job.id
+    assert len(container.jobs.list_all()) == 1
+
+
+def test_fallback_failure_does_not_skip_remaining_stocks_or_create_child_jobs():
+    container, _, registry, job = setup_collection()
+    handler = registry.get(job.job_type)
+    handler(job)
+    state = job.payload["collection"]
+    state["unit"] = next(
+        i
+        for i, unit in enumerate(units(date(2026, 9, 28)))
+        if unit["dataset"] == "business-compositions"
+    )
+    calls = []
 
     class Sync:
-        def sync(self, *_args, **_kwargs):
-            return {}
+        def sync(self, dataset, **kwargs):
+            calls.append(kwargs["symbols"])
+            if kwargs["symbols"] == ["000000"]:
+                raise ValueError("temporary")
+            return {"record_count": 1}
 
     container.data_sync = cast(Any, Sync())
-    container.market_data.upsert_instruments(
-        [
-            {"symbol": "600293", "status": "suspended"},
-            {"symbol": "000001", "status": "active"},
-        ]
-    )
-    registry = JobHandlerRegistry()
-    register_market_data_handlers(registry, container)
-    registry.get("market-data-nightly")(
-        Job("night", "market-data-nightly", "night", {}, container.authentication.clock.now())
-    )
-    bars = [
-        task
-        for task in container.state.acquisitions.values()
-        if task["dataset_key"] == "daily-bars"
-    ]
-    assert [task["symbols"] for task in bars] == [["000001"]]
+    for _ in range(4):
+        handler(job)
+    assert calls == [["000000"], ["000000"], ["000000"], ["000001"]]
+    assert state["last_symbol"] == "000001"
+    assert state["failed"][0]["symbol"] == "000000"
+    assert state["records"] == 1
+    assert not container.jobs.list_all()
 
 
-def test_nightly_automatically_resumes_and_enqueues_catchup_bars():
-    from datetime import date
+def test_repeated_provider_page_cannot_complete_the_dataset():
+    from easy_quant.infrastructure.data_sources.financial_bulk import BulkPage
 
-    from easy_quant.application.services.market_data_sync import MarketDataSyncService
-    from tests.application.test_market_data_sync import FakeAcquisition, _traded_bar
+    container, _, registry, job = setup_collection()
+    handler = registry.get(job.job_type)
+    handler(job)
+    handler(job)
+    row = {"schema_version": "financial-v1", "symbol": "000001", "report_period": "2026-06-30"}
 
-    container = make_test_container()
-    container.market_data.upsert_instruments(
-        [
-            {"symbol": "600293", "status": "suspended"},
-            {"symbol": "688496", "status": "suspended"},
-        ]
+    class Bulk:
+        def page(self, *args):
+            return BulkPage([row], 2, 600, "repeated-page", "000001", "000001")
+
+    container.financial_bulk = Bulk()
+    handler(job)
+    handler(job)
+    assert job.payload["collection"]["page"] == 2
+    assert job.payload["collection"]["retries"] == 1
+    assert "balance-sheets:2026-06-30" not in container.collection_checkpoints
+
+
+def test_cross_day_collection_does_not_discard_current_snapshot_as_future_data():
+    from zoneinfo import ZoneInfo
+
+    container, calls, registry, job = setup_collection()
+    handler = registry.get(job.job_type)
+    handler(job)
+    state = job.payload["collection"]
+    state["unit"] = next(
+        i for i, unit in enumerate(units(date(2026, 9, 28))) if unit["dataset"] == "market-values"
     )
-    daily = FakeAcquisition([_traded_bar()])
-    container.data_sync = MarketDataSyncService(
-        {
-            "securities": FakeAcquisition([{"code": "600293"}, {"code": "688496"}]),
-            "trading-calendar": FakeAcquisition([{"trade_date": "2026-09-30"}]),
-            "trading-status": FakeAcquisition(
-                [{"symbol": "688496", "status": "suspended", "as_of_day": "2026-09-30"}]
-            ),
-            "daily-bars": daily,
-        },
-        container.market_data,
-    )
-    registry = JobHandlerRegistry()
-    register_market_data_handlers(registry, container)
-    result = registry.get("market-data-nightly")(
-        Job(
-            "night",
-            "market-data-nightly",
-            "night",
-            {"end_day": date(2026, 9, 30).isoformat()},
-            container.authentication.clock.now(),
-        )
-    )
-    bars = [
-        task
-        for task in container.state.acquisitions.values()
-        if task["dataset_key"] == "daily-bars"
-    ]
-    assert len(bars) == 1
-    assert "600293" in bars[0]["symbols"]
-    assert "sh000300" in bars[0]["symbols"]
-    assert all(
-        symbol == "600293" or symbol.startswith(("sh", "sz")) for symbol in bars[0]["symbols"]
-    )
-    assert result is not None
-    trading_status = result["trading_status"]
-    assert isinstance(trading_status, dict)
-    assert trading_status["resumed_symbols"] == ["600293"]
-    assert len(daily.requests) == 1
-    assert daily.requests[0].parameters["symbol"] == "600293"
+    clock = cast(FixedClock, container.authentication.clock)
+    clock.advance(timedelta(days=2))
+    handler(job)
+    assert calls[-1][1]["end_day"] == clock.now().astimezone(ZoneInfo("Asia/Shanghai")).date()
+    assert state["day"] == "2026-09-28"

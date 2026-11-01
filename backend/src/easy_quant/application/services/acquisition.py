@@ -123,7 +123,7 @@ class AcquisitionService:
                     )
                     return cached, attempts
             started = monotonic()
-            logger.info(
+            logger.debug(
                 "数据来源请求 dataset=%s source=%s attempt=%s max_attempts=%s",
                 request.dataset_key,
                 source.key,
@@ -157,7 +157,7 @@ class AcquisitionService:
             # Persistence failures are infrastructure failures, not a reason to refetch.
             self.cache.put(envelope)
             attempts.append(SourceAttempt(source.key, attempt, AttemptStatus.SUCCEEDED))
-            logger.info(
+            logger.debug(
                 "数据来源成功 dataset=%s source=%s attempt=%s seconds=%.3f",
                 request.dataset_key,
                 source.key,

@@ -65,3 +65,28 @@ def test_financial_migration_only_expands_existing_record_table(monkeypatch):
         "daily_bar" not in str(args) and "FOREIGN KEY" not in str(args) for _, args, _ in calls
     )
     assert calls[-1][1][2] == ["symbol", "dataset_key", "available_at"]
+
+
+def test_bulk_financial_insert_is_batched_and_duplicate_versions_are_immutable():
+    statements = []
+
+    class FakeSession:
+        def scalar(self, statement):
+            return 0
+
+        def execute(self, statement, rows):
+            statements.append((statement, rows))
+
+        def commit(self):
+            pass
+
+    store = SqlAlchemyMarketDataStore(cast(Session, FakeSession()))
+    rows = [
+        {"record_key": str(i), "symbol": f"{i:06d}", "available_at": "2026-09-29T00:00:00+00:00"}
+        for i in range(501)
+    ]
+    store.upsert_records("income-statements", rows)
+    assert [len(batch) for _, batch in statements] == [500, 1]
+    sql = str(statements[0][0].compile(dialect=mysql.dialect()))
+    assert "ON DUPLICATE KEY UPDATE record_key" in sql
+    assert "payload_json = VALUES" not in sql

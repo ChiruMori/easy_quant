@@ -3,8 +3,6 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-vi.mock("@/features/admin-scheduling/api", () => ({ listSchedules: vi.fn().mockResolvedValue([]) }))
-
 const controls = vi.hoisted(() => ({
   coverageSpy: vi.fn(),
   showStale: false,

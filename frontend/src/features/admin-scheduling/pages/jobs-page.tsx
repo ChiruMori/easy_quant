@@ -50,7 +50,7 @@ export function JobsPage() {
               <TableHead>任务类型</TableHead>
               <TableHead>状态</TableHead>
               <TableHead>计划时间（北京时间）</TableHead>
-              <TableHead className="text-right">尝试次数</TableHead>
+              <TableHead className="text-right">领取次数</TableHead>
               <TableHead>执行结果</TableHead>
             </TableRow>
           </TableHeader>
@@ -70,13 +70,60 @@ export function JobsPage() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{localizedLabel(job.status)}</Badge>
+                  <Badge variant="secondary">
+                    {job.result_summary?.collection && job.status === "queued"
+                      ? "采集中（限频等待）"
+                      : localizedLabel(job.status)}
+                  </Badge>
                   {job.lease_expired && <Badge variant="destructive">租约已过期</Badge>}
                 </TableCell>
                 <TableCell>{formatBeijingTime(job.available_at)}</TableCell>
                 <TableCell className="text-right tabular-nums">{job.attempt_count}</TableCell>
                 <TableCell>
-                  {job.error_summary?.message ||
+                  {(job.result_summary?.collection ? (
+                    <div className="max-w-md text-sm whitespace-normal">
+                      <p>{String(job.result_summary.message ?? "采集中")}</p>
+                      <p className="text-muted-foreground">
+                        范围 {Number(job.result_summary.completed_units ?? 0)} /{" "}
+                        {Number(job.result_summary.total_units ?? 0)}
+                        {" · "}
+                        {localizedLabel(String(job.result_summary.dataset_key ?? ""))}{" "}
+                        {String(job.result_summary.report_period ?? "")}
+                        {" · 第 "}
+                        {Number(job.result_summary.page ?? 1)} 页{" · 保存 "}
+                        {Number(job.result_summary.record_count ?? 0)} 条{" · 未变化 "}
+                        {Number(job.result_summary.unchanged_count ?? 0)} 条
+                      </p>
+                      {job.error_summary?.message && (
+                        <p className="text-destructive">{job.error_summary.message}</p>
+                      )}
+                      {Array.isArray(job.result_summary.failed_datasets) &&
+                        job.result_summary.failed_datasets.length > 0 && (
+                          <details className="text-destructive">
+                            <summary className="cursor-pointer">
+                              失败范围{" "}
+                              {Number(
+                                job.result_summary.failed_count ??
+                                  job.result_summary.failed_datasets.length,
+                              )}{" "}
+                              个；展开查看（最多20项）
+                            </summary>
+                            {job.result_summary.failed_datasets.map((item, index) => {
+                              const failure = item as Record<string, unknown>
+                              return (
+                                <p key={index} className="mt-1 break-words">
+                                  {localizedLabel(String(failure.dataset ?? ""))}{" "}
+                                  {String(failure.period ?? "")} {String(failure.symbol ?? "")}：
+                                  {String(failure.message ?? "采集失败")}
+                                </p>
+                              )
+                            })}
+                            <p>成功数据已保留，可在定时任务中重新运行补采。</p>
+                          </details>
+                        )}
+                    </div>
+                  ) : null) ||
+                    job.error_summary?.message ||
                     (job.lease_expired ? "等待 worker 重新领取；请检查 worker 日志" : null) ||
                     (job.result_summary?.skipped ? String(job.result_summary.skipped) : null) ||
                     (job.job_type === "tdx-daily-update" && job.result_summary

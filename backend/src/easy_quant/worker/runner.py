@@ -3,14 +3,20 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from threading import Event, Thread
 from typing import Any
 
 from easy_quant.application.ports.core import Clock, Sleeper
-from easy_quant.application.ports.jobs import JobRepository
+from easy_quant.application.ports.jobs import JobContinuation, JobRepository
 from easy_quant.domain.shared.errors import DomainError
+from easy_quant.infrastructure.data_sources.request_budget import (
+    CollectionCancelled,
+    RequestBudget,
+    request_budget,
+)
 from easy_quant.worker.registry import JobHandlerRegistry
 
 logger = logging.getLogger(__name__)
@@ -51,7 +57,12 @@ class Worker:
         job = self.jobs.claim_due(self.worker_id, now, now + self.lease_duration)
         if job is None:
             return False
-        logger.info(
+        log = (
+            logger.debug
+            if job.job_type in {"market-data-nightly", "market-data-collection"}
+            else logger.info
+        )
+        log(
             "任务已领取 job_id=%s job_type=%s attempt=%s",
             job.id,
             job.job_type,
@@ -87,14 +98,45 @@ class Worker:
                     lost.set()
                     logger.error("任务租约失效 job_id=%s attempt=%s", job.id, job.attempt_count)
                     return
-                logger.info("任务已续租 job_id=%s attempt=%s", job.id, job.attempt_count)
+                logger.debug("任务已续租 job_id=%s attempt=%s", job.id, job.attempt_count)
 
         heartbeat_thread = Thread(target=heartbeat, name="job-lease-heartbeat", daemon=True)
         heartbeat_thread.start()
         try:
-            summary = self.handlers.get(job.job_type)(job) or {}
+
+            def check_collection():
+                current = self.jobs.get(job.id)
+                if (
+                    lost.is_set()
+                    or current is None
+                    or current.status.value != "running"
+                    or current.lease_owner != self.worker_id
+                    or current.attempt_count != job.attempt_count
+                    or current.lease_until is None
+                    or current.lease_until <= self.clock.now()
+                ):
+                    raise CollectionCancelled()
+
+            data_job = job.job_type in {
+                "market-data-nightly",
+                "market-data-collection",
+                "market-data-acquisition",
+                "index-daily-update",
+            }
+            budget = RequestBudget(
+                self.clock, self.sleeper, check_collection, last=self.clock.now()
+            )
+            with request_budget(budget) if data_job else nullcontext():
+                summary = self.handlers.get(job.job_type)(job) or {}
             job.error_summary = {}
-            job.succeed(self.worker_id, dict(summary))
+            if isinstance(summary, JobContinuation):
+                job.result_summary = summary.summary
+                job.fail(self.worker_id, {}, retry_at=summary.resume_at)
+            else:
+                job.succeed(self.worker_id, dict(summary))
+        except CollectionCancelled:
+            lost.set()
+            logger.info("采集已停止：任务删除、取消或租约失效 job_id=%s", job.id)
         except Exception as exc:
             if job.job_type in {"live-analysis", "live.analyze"}:
                 logger.exception(
@@ -117,10 +159,13 @@ class Worker:
             if isinstance(exc, DomainError):
                 error["code"] = exc.code
                 error["details"] = dict(exc.details)
+                if job.payload.get("collection"):
+                    job.result_summary = dict(exc.details)
             retry_at = None
             if (
                 job.job_type in {"market-data-nightly", "market-data-acquisition"}
                 and job.attempt_count < 3
+                and not job.payload.get("collection")
             ):
                 retry_at = self.clock.now() + timedelta(minutes=5 * job.attempt_count)
                 error["retry_at"] = retry_at.isoformat()
@@ -167,6 +212,7 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     build_worker().run_forever()
 
 

@@ -99,7 +99,7 @@ def ensure_dataset_catalog(datasets: Any) -> list[dict[str, Any]]:
         if dataset["key"] not in keys:
             datasets.append(dataset)
             rows.append(dataset)
-        elif dataset["key"] == "financial-indicators":
+        elif dataset["key"] in {"financial-indicators", "pledge-ratios"}:
             current = next(row for row in rows if row["key"] == dataset["key"])
             original_sources = current["sources"]
             legacy_enabled = any(source.get("enabled", True) for source in original_sources)
@@ -181,7 +181,7 @@ def _default_datasets() -> list[dict[str, Any]]:
             "key": "pledge-ratios",
             "name": "股票质押率",
             "description": "股票质押比例与质押数量",
-            "sources": [{"key": "akshare", "name": "AKShare", "enabled": True}],
+            "sources": [{"key": "eastmoney", "name": "东方财富", "enabled": True}],
         },
         {
             "key": "financial-indicators",
@@ -243,6 +243,8 @@ class Container:
     backtests: Any = None
     database_session: Any = None
     data_sync: MarketDataSyncService | None = None
+    financial_bulk: Any = None
+    collection_checkpoints: Any = field(default_factory=dict)
     tdx_daily: Any = None
     jobs: Any = None
     secret_box: SecretBox | None = None
@@ -393,8 +395,20 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
     import httpx
     import pandas as pd
 
+    from easy_quant.infrastructure.data_sources.financial_bulk import EastMoneyBulkFinancialSource
+    from easy_quant.infrastructure.data_sources.request_budget import before_data_request
+
+    def data_client(**kwargs):
+        return httpx.Client(event_hooks={"request": [before_data_request]}, **kwargs)
+
+    container.financial_bulk = EastMoneyBulkFinancialSource(
+        data_client(timeout=20.0, trust_env=False)
+    )
+    container.collection_checkpoints = SqlJsonDict(
+        container.database_session, "collection_checkpoints"
+    )
     clock, sleeper = SystemClock(), SystemSleeper()
-    eastmoney = EastMoneySource(EastMoneyClient(httpx.Client(timeout=20.0)))
+    eastmoney = EastMoneySource(EastMoneyClient(data_client(timeout=20.0)))
 
     def akshare_securities(**_: object):
         sh_main = ak.stock_info_sh_name_code(symbol="主板A股").rename(
@@ -430,7 +444,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         }
     )
 
-    daily_ak = AkShareDailySource(httpx.Client(timeout=20.0), ak_stocks, decode_sina_index)
+    daily_ak = AkShareDailySource(data_client(timeout=20.0), ak_stocks, decode_sina_index)
     tencent_stocks = AkShareSource(
         {
             "daily-bars": lambda **parameters: ak.stock_zh_a_hist_tx(
@@ -452,22 +466,22 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         },
         key="tencent",
     )
-    daily_tencent = TencentDailySource(httpx.Client(timeout=20.0), tencent_stocks)
-    calendar_ak = AkShareSource({"trading-calendar": lambda **_: ak.tool_trade_date_hist_sina()})
-    pledge_ak = AkShareSource(
-        {
-            "pledge-ratios": lambda **parameters: ak.stock_gpzy_pledge_ratio_em(
-                date=str(parameters["date"])
-            )
-        }
+    daily_tencent = TencentDailySource(data_client(timeout=20.0), tencent_stocks)
+    calendar_ak = AkShareSource(
+        {"trading-calendar": lambda **_: (before_data_request(), ak.tool_trade_date_hist_sina())[1]}
     )
+    from easy_quant.infrastructure.data_sources.pledge_bulk import EastMoneyPledgeSource
+
+    pledge_em = EastMoneyPledgeSource(data_client(timeout=20.0, trust_env=False))
 
     def industry_memberships(**_parameters):
         import pandas as pd
 
         rows = []
+        before_data_request()
         for _, industry in ak.sw_index_first_info().iterrows():
             code = str(industry["行业代码"]).split(".")[0]
+            before_data_request()
             for _, member in ak.index_component_sw(symbol=code).iterrows():
                 rows.append(
                     {
@@ -493,8 +507,8 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         SinaFinancialSource,
     )
 
-    financial_em = EastMoneyFinancialSource(httpx.Client(timeout=20.0, trust_env=False))
-    financial_sina = SinaFinancialSource(httpx.Client(timeout=20.0, trust_env=False))
+    financial_em = EastMoneyFinancialSource(data_client(timeout=20.0, trust_env=False))
+    financial_sina = SinaFinancialSource(data_client(timeout=20.0, trust_env=False))
     financial_acquisitions = {
         key: AcquisitionService(
             [financial_em, *([financial_sina] if key in financial_sina.reports else [])],
@@ -550,7 +564,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
             "trading-calendar": acquisition([calendar_ak]),
             "live-quotes": quotes_acquisition,
             "market-values": acquisition([eastmoney]),
-            "pledge-ratios": acquisition([pledge_ak]),
+            "pledge-ratios": acquisition([pledge_em]),
             **financial_acquisitions,
             "sw-industry-memberships": acquisition([industry_ak]),
         },
@@ -673,7 +687,13 @@ def build_worker():
                 payload["live_name"] = instance.get("name") or payload.get("instance_id")
             due = str(next_run_at)
             container.jobs.enqueue(
-                Job(UuidGenerator().new(), job_type, f"{schedule_id}:{due}", payload, now)
+                Job(
+                    UuidGenerator().new(),
+                    "market-data-collection" if job_type == "market-data-nightly" else job_type,
+                    f"{schedule_id}:{due}",
+                    payload,
+                    now,
+                )
             )
             advance_schedule(schedule_id, schedule, now)
 

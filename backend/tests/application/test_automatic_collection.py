@@ -6,7 +6,6 @@ import httpx
 import pytest
 
 from easy_quant.application.services.acquisition import (
-    AcquisitionFailed,
     AcquisitionService,
     ExponentialRetry,
 )
@@ -108,35 +107,6 @@ def test_default_automatic_plan_is_enabled_immediately_and_preserves_existing_ch
     before = json.dumps(custom)
     ensure_data_schedule(custom, fixed_now, "22:00")
     assert json.dumps(custom) == before
-
-
-def test_failed_catalog_refresh_keeps_known_stocks_and_enqueues_financial_jobs_idempotently():
-    container = make_test_container()
-    container.market_data.upsert_instruments(
-        [{"symbol": "000001", "status": "active"}, {"symbol": "000002", "status": "suspended"}]
-    )
-
-    class Sync:
-        def sync(self, dataset, **kwargs):
-            if dataset in {"securities", "trading-status", "trading-calendar"}:
-                raise ValueError("来源暂时失败")
-
-    container.data_sync = cast(Any, Sync())
-    registry = JobHandlerRegistry()
-    register_market_data_handlers(registry, container)
-    job = Job("night", "market-data-nightly", "night", {}, container.authentication.clock.now())
-    for _ in range(2):
-        with pytest.raises(AcquisitionFailed) as caught:
-            registry.get("market-data-nightly")(job)
-        failures = caught.value.details["failed_datasets"]
-        assert isinstance(failures, list) and len(failures) == 3
-    jobs = container.jobs.list_all()
-    assert len(jobs) == 12
-    assert sum(row.payload["dataset_key"] == "balance-sheets" for row in jobs) == 1
-    assert next(row for row in jobs if row.payload["dataset_key"] == "daily-bars").payload[
-        "symbols"
-    ] == ["000001"]
-    assert container.market_data.get_instrument("000002")["status"] == "suspended"
 
 
 def test_acquisition_retries_automatically_with_delay_and_stops_after_three_attempts():
