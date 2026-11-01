@@ -113,6 +113,16 @@ export const PortfolioChart = memo(function PortfolioChart({
     () => groupTradeMarkers(trades, series[0]?.points ?? []),
     [trades, series],
   )
+  const pairedDays = useMemo(() => {
+    const buys = new Set(
+      markers.filter((marker) => marker.action === "buy").map((marker) => marker.day),
+    )
+    return new Set(
+      markers
+        .filter((marker) => marker.action === "sell" && buys.has(marker.day))
+        .map((marker) => marker.day),
+    )
+  }, [markers])
   async function find() {
     if (sending.current) return
     sending.current = true
@@ -368,6 +378,7 @@ export const PortfolioChart = memo(function PortfolioChart({
               const value = data.find((point) => point.day === marker.day)?.line0
               if (typeof value !== "number" || !Number.isFinite(value)) return null
               const buy = marker.action === "buy"
+              const paired = pairedDays.has(marker.day)
               const label = `${marker.day} ${buy ? "买入 B" : "卖出 S"}，${marker.trades.length} 笔${kind === "live" ? "实际" : "模拟"}成交`
               return (
                 <ReferenceDot
@@ -383,18 +394,28 @@ export const PortfolioChart = memo(function PortfolioChart({
                           role="graphics-symbol"
                           aria-label={label}
                           data-trade-marker={marker.action}
+                          data-marker-day={marker.day}
                           className="cursor-help outline-none focus:stroke-foreground"
                         >
-                          <circle
-                            cx={(cx ?? 0) + (buy ? -5 : 5)}
-                            cy={cy}
-                            r={4}
-                            fill={buy ? "#ef4444" : "#3b82f6"}
-                            stroke="var(--background)"
-                            strokeWidth={1}
-                          />
+                          {paired ? (
+                            <path
+                              d={`M ${cx} ${(cy ?? 0) - 4} A 4 4 0 0 ${buy ? 0 : 1} ${cx} ${(cy ?? 0) + 4} Z`}
+                              fill={buy ? "#ef4444" : "#3b82f6"}
+                              stroke="var(--background)"
+                              strokeWidth={1}
+                            />
+                          ) : (
+                            <circle
+                              cx={cx}
+                              cy={cy}
+                              r={4}
+                              fill={buy ? "#ef4444" : "#3b82f6"}
+                              stroke="var(--background)"
+                              strokeWidth={1}
+                            />
+                          )}
                           <text
-                            x={(cx ?? 0) + (buy ? -7 : 7)}
+                            x={(cx ?? 0) + (paired ? (buy ? -7 : 7) : 0)}
                             y={(cy ?? 0) - 10}
                             textAnchor="middle"
                             fill={buy ? "#ef4444" : "#3b82f6"}

@@ -1,4 +1,37 @@
-import { expect, test } from "@playwright/test"
+import { expect, type Page, test } from "@playwright/test"
+
+async function expectMarkersAligned(page: Page) {
+  const coordinates = await page.locator("[data-trade-marker]").evaluateAll((markers) =>
+    markers.map((marker) => {
+      // 两日 fixture 直接对照主曲线端点；轴文字会为避免溢出自行内移。
+      const firstDay = document.querySelector(".recharts-xAxis text")?.textContent
+      const curve = document.querySelector(".recharts-area-curve") as SVGPathElement
+      const curvePoint = curve.getPointAtLength(
+        marker.getAttribute("data-marker-day") === firstDay ? 0 : curve.getTotalLength(),
+      )
+      const circle = marker.querySelector("circle")
+      const path = marker.querySelector("path")
+      const centerX = circle?.getAttribute("cx") ?? path?.getAttribute("d")?.split(" ")[1]
+      const centerY = circle
+        ? Number(circle.getAttribute("cy"))
+        : Number(path?.getAttribute("d")?.split(" ")[2]) + 4
+      return {
+        centerX: Number(centerX),
+        centerY,
+        dayX: curvePoint.x,
+        curveY: curvePoint.y,
+        single: Boolean(circle),
+        letterX: Number(marker.querySelector("text")?.getAttribute("x")),
+      }
+    }),
+  )
+  expect(coordinates.length).toBeGreaterThan(0)
+  for (const point of coordinates) {
+    expect(point.centerX).toBeCloseTo(point.dayX, 2)
+    expect(point.centerY).toBeCloseTo(point.curveY, 2)
+    if (point.single) expect(point.letterX).toBeCloseTo(point.dayX, 2)
+  }
+}
 
 for (const width of [1440, 360]) {
   test(`回测与实盘复用曲线、临时比较与单位切换 ${width}px`, async ({ page }, testInfo) => {
@@ -23,6 +56,14 @@ for (const width of [1440, 360]) {
       ],
       metrics: {},
       trades: [
+        {
+          trading_day: "2026-10-21",
+          symbol: "000001",
+          action: "sell",
+          quantity: "100",
+          price: "11",
+          fee: "0",
+        },
         {
           trading_day: "2026-10-20",
           symbol: "000001",
@@ -203,12 +244,14 @@ for (const width of [1440, 360]) {
     await expect(page.getByRole("cell", { name: "2026/10/21 10:00:00" })).toBeVisible()
     await page.goto("/backtests/chart-v1")
     await expect(page.locator('[data-trade-marker="buy"]')).toHaveCount(1)
-    await expect(page.locator('[data-trade-marker="sell"]')).toHaveCount(1)
+    await expect(page.locator('[data-trade-marker="sell"]')).toHaveCount(2)
+    await expectMarkersAligned(page)
     await page.locator('[data-trade-marker="buy"]').focus()
     await expect(page.getByRole("tooltip")).toContainText("2 笔模拟成交")
     await expect(page.getByRole("tooltip")).toContainText("000002")
     await page.getByRole("tab", { name: "收益率（%）", exact: true }).click()
-    await expect(page.locator("[data-trade-marker]")).toHaveCount(2)
+    await expect(page.locator("[data-trade-marker]")).toHaveCount(3)
+    await expectMarkersAligned(page)
     await expect(page.getByRole("img", { name: /组合权益曲线/ })).toHaveAttribute(
       "aria-label",
       /单位为%/,
@@ -267,6 +310,7 @@ for (const width of [1440, 360]) {
     await expect(page.getByRole("dialog")).toContainText("33.33%")
     await page.keyboard.press("Escape")
     await expect(page.locator("[data-trade-marker]")).toHaveCount(2)
+    await expectMarkersAligned(page)
     await page.locator('[data-trade-marker="buy"]').focus()
     await expect(page.getByRole("tooltip")).toContainText("2026-10-20 买入 B，2 笔实际成交")
     await expect(page.getByRole("region", { name: "可用资金", exact: true })).toContainText(
@@ -278,6 +322,7 @@ for (const width of [1440, 360]) {
     await expect(page.getByRole("cell", { name: /ntfy_transport/ })).toBeVisible()
     await page.getByRole("tab", { name: "收益率（%）", exact: true }).click()
     await expect(page.locator("[data-trade-marker]")).toHaveCount(2)
+    await expectMarkersAligned(page)
     await expect(page.getByRole("img", { name: /累计收益曲线/ })).toHaveAttribute(
       "aria-label",
       /单位为%/,
