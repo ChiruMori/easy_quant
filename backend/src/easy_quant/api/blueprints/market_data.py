@@ -5,6 +5,8 @@ from flask import Blueprint, request
 from easy_quant.api.dependencies import get_container
 from easy_quant.api.middleware.auth import require_user
 from easy_quant.api.responses import success
+from easy_quant.domain.market_data.fundamentals import FIELD_METADATA, FINANCIAL_DATASETS
+from easy_quant.domain.shared.errors import ValidationError
 
 blueprint = Blueprint("market_data", __name__, url_prefix="/api/v1/market-data")
 
@@ -33,3 +35,65 @@ def get_instrument(symbol: str):
 @require_user
 def get_daily_bars(symbol: str):
     return daily_bars_response(symbol)
+
+
+DETAIL_DATASETS = {
+    **FINANCIAL_DATASETS,
+    "market-values": "估值与市值",
+    "valuation-indicators": "估值指标",
+    "pledge-ratios": "股票质押率",
+    "sw-industry-memberships": "申万行业归属",
+    "security-status": "证券状态与风险",
+    "daily-bar-availability": "行情可用性",
+}
+
+
+@blueprint.get("/instruments/<symbol>/fundamentals")
+@require_user
+def get_fundamentals(symbol: str):
+    container = get_container()
+    normalized = symbol.strip().lower().zfill(6)
+    if container.market_data.get_instrument(normalized) is None:
+        return success(None, status=404)
+    now = container.authentication.clock.now()
+    counts = container.market_data.record_counts(normalized, now)
+    return success(
+        {
+            "symbol": normalized,
+            "as_of": now.isoformat(),
+            "fields": {
+                key: {"label": label, "unit": unit} for key, (label, unit) in FIELD_METADATA.items()
+            },
+            "datasets": [
+                {"key": key, "name": name, "count": counts.get(key, 0)}
+                for key, name in DETAIL_DATASETS.items()
+            ],
+        }
+    )
+
+
+@blueprint.get("/instruments/<symbol>/fundamentals/<dataset>")
+@require_user
+def get_fundamental_records(symbol: str, dataset: str):
+    if dataset not in DETAIL_DATASETS:
+        raise ValidationError("不支持的股票数据集")
+    try:
+        page = int(request.args.get("page", "1"))
+        size = int(request.args.get("page_size", "10"))
+    except ValueError as error:
+        raise ValidationError("分页参数必须为整数") from error
+    if not 1 <= page <= 100000 or not 1 <= size <= 50:
+        raise ValidationError("页码或每页数量超出范围")
+    container = get_container()
+    normalized = symbol.strip().lower().zfill(6)
+    if container.market_data.get_instrument(normalized) is None:
+        return success(None, status=404)
+    now = container.authentication.clock.now()
+    return success(
+        {
+            "items": container.market_data.record_page(dataset, normalized, now, page, size),
+            "total": container.market_data.record_counts(normalized, now).get(dataset, 0),
+            "page": page,
+            "page_size": size,
+        }
+    )

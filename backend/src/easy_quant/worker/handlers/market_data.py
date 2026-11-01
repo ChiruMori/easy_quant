@@ -3,13 +3,12 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import date, time, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.acquisition import _safe_source_error
 from easy_quant.domain.market_data.calendar import TradingCalendar
-from easy_quant.domain.market_data.indices import INDEX_CATALOG, is_index
+from easy_quant.domain.market_data.indices import INDEX_CATALOG
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import ValidationError
-from easy_quant.infrastructure.core import UuidGenerator
 from easy_quant.worker.registry import JobHandlerRegistry
 
 
@@ -44,112 +43,27 @@ def register_market_data_handlers(
 
     registry.register("tdx-daily-update", update_tdx)
 
-    def nightly(job: Job) -> dict[str, object]:
+    def nightly(job):
+        from easy_quant.worker.handlers.collection import collect
+
         if container is None or container.data_sync is None:
             raise RuntimeError("数据同步服务未配置")
-        now = container.authentication.clock.now()
-        day = now.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        # 先同步日历与证券清单，再以最新清单创建可独立重试的分批任务。
-        container.data_sync.sync(
-            "trading-calendar", force=True, source_keys=enabled_sources("trading-calendar")
-        )
-        calendar = TradingCalendar(container.market_data.list_trading_days() or None)
-        day = (
-            date.fromisoformat(str(job.payload["end_day"]))
-            if job.payload.get("end_day")
-            else calendar.freshness(first_day=None, last_day=None, now=now).recommended_end_day
-        )
-        if not calendar.is_trading_day(day):
-            return {"status": "skipped", "reason": "非交易日"}
-        container.data_sync.sync(
-            "securities", force=True, source_keys=enabled_sources("securities")
-        )
-        trading_status = container.data_sync.sync(
-            "trading-status",
-            end_day=day,
-            force=True,
-            source_keys=enabled_sources("trading-status"),
-            confirmation_source_keys=enabled_sources("daily-bars"),
-        )
-        suspended = {
-            str(item["symbol"])
-            for item in container.market_data.list_instruments()
-            if item.get("status") == "suspended"
-        }
-        symbols = sorted(
-            str(item["symbol"])
-            for item in container.market_data.list_instruments()
-            if item.get("status", "active") != "delisted"
-        )
-        coverage = container.market_data.bar_bounds()
-        jobs = []
-        for dataset in (
-            "daily-bars",
-            "market-values",
-            "pledge-ratios",
-            "financial-indicators",
-            "sw-industry-memberships",
-        ):
-            dataset_symbols = (
-                [symbol for symbol in symbols if symbol not in suspended]
-                if dataset == "daily-bars"
-                else [symbol for symbol in symbols if not is_index(symbol)]
-            )
-            batches = (
-                [
-                    dataset_symbols[index : index + 20]
-                    for index in range(0, len(dataset_symbols), 20)
-                ]
-                if dataset in {"daily-bars", "financial-indicators"}
-                else [[]]
-            )
-            for index, batch in enumerate(batches):
-                start_day = min(
-                    (
-                        coverage.get(symbol, {}).get("last_day") or day - timedelta(days=365)
-                        for symbol in batch
-                    ),
-                    default=day,
-                )
-                if dataset == "financial-indicators":
-                    start_day = date(day.year - 5, 1, 1)
-                task_id = f"nightly:{day}:{dataset}:{index}"
-                payload = {
-                    "task_id": task_id,
-                    "dataset_key": dataset,
-                    "symbols": batch,
-                    "start_day": start_day.isoformat(),
-                    "end_day": day.isoformat(),
-                    "force": True,
-                }
-                queued = container.jobs.enqueue(
-                    Job(UuidGenerator().new(), "market-data-acquisition", task_id, payload, now)
-                )
-                if task_id not in container.state.acquisitions:
-                    container.state.acquisitions[task_id] = {
-                        "id": task_id,
-                        **payload,
-                        "status": "queued",
-                        "job_id": queued.id,
-                    }
-                jobs.append(queued.id)
-        return {
-            "status": "queued",
-            "trading_day": day.isoformat(),
-            "child_jobs": jobs,
-            "trading_status": trading_status,
-        }
+        return collect(container, job, enabled_sources)
 
     registry.register("market-data-nightly", nightly)
+    registry.register("market-data-collection", nightly)
 
-    def acquire(job):
+    def acquire(job) -> dict[str, object]:
         if container is None or container.data_sync is None:
             raise RuntimeError("数据同步服务未配置")
         payload = job.payload
         task_id = str(payload.get("task_id", ""))
+        if task_id.startswith("nightly:"):
+            return {"status": "skipped", "skipped": "旧版分散采集任务已停用，请运行盘后聚合采集"}
         task = container.state.acquisitions.get(task_id) if task_id else None
         if task is not None:
             task["status"] = "running"
+            task.pop("retry_at", None)
             container.state.acquisitions[task_id] = task
         try:
             dataset = next(
@@ -186,7 +100,21 @@ def register_market_data_handlers(
             if container.database_session is not None:
                 container.database_session.rollback()
             if task is not None:
-                task.update({"status": "failed", "message": str(error)})
+                # 指数专项内联调用没有独立租约/队列，不能显示永远不会执行的重试。
+                retrying = job.job_type == "market-data-acquisition" and 0 < job.attempt_count < 3
+                task.update(
+                    {
+                        "status": "queued" if retrying else "failed",
+                        "message": f"{_safe_source_error(error)}；等待自动重试"
+                        if retrying
+                        else _safe_source_error(error),
+                    }
+                )
+                if retrying:
+                    task["retry_at"] = (
+                        container.authentication.clock.now()
+                        + timedelta(minutes=5 * job.attempt_count)
+                    ).isoformat()
                 details = getattr(error, "details", None)
                 if isinstance(details, dict):
                     task["attempts"] = details.get("attempts", [])
@@ -250,7 +178,7 @@ def register_market_data_handlers(
             }
             try:
                 result = acquire(Job(job.id, "market-data-acquisition", task_id, payload, now))
-                count += int(result.get("record_count", 0))
+                count += int(str(result.get("record_count", 0)))
             except Exception as error:
                 failures.append({"symbol": symbol, "message": str(error)})
         if failures:

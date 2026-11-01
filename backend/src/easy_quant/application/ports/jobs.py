@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -26,5 +27,14 @@ class JobPageQuery(Protocol):
     def list_page(self, page: int, page_size: int) -> tuple[list[Job], int, int]: ...
 
 
+@dataclass
+class JobContinuation:
+    summary: dict[str, object]
+    resume_at: datetime
+
+    def __getitem__(self, key: str) -> object:
+        return self.summary[key]
+
+
 class JobHandler(Protocol):
-    def __call__(self, job: Job) -> dict[str, object] | None: ...
+    def __call__(self, job: Job) -> dict[str, object] | JobContinuation | None: ...

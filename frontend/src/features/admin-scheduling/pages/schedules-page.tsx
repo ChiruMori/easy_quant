@@ -71,6 +71,7 @@ export function SchedulesPage() {
       <Alert>
         <AlertTitle>系统级计划</AlertTitle>
         <AlertDescription>
+          服务会自动补齐默认启用的盘后综合计划，按系统数据发布时间运行，涵盖财报与基本面；已有计划及明确停用选择保留。无需每日逐只股票维护。{" "}
           这里只管理数据维护计划。实盘分析计划随实例启停自动更新，终止后停用并保留配置，请前往{" "}
           <Button variant="outline" size="sm" className="w-fit max-w-full" asChild>
             <Link to="/live">

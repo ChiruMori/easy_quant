@@ -93,3 +93,20 @@ def test_lease_updates_are_fenced_in_an_independent_short_transaction(
         name in where for name in ["id", "status", "lease_owner", "attempt_count", "lease_until"]
     )
     assert "lease_until >" in where
+
+
+def test_retry_deadline_is_saved_in_the_same_fenced_completion(fixed_now):
+    class LeaseSession(JobSession):
+        def execute(self, statement):
+            self.statements.append(statement)
+            return SimpleNamespace(rowcount=1)
+
+    session = LeaseSession()
+    repository = SqlAlchemyJobRepository(cast(Session, object()), lambda: cast(Session, session))
+    job = Job("j", "market-data-nightly", "b", {}, fixed_now)
+    job.claim("w", fixed_now, fixed_now + timedelta(minutes=5))
+    due = fixed_now + timedelta(minutes=10)
+    job.fail("w", {"message": "temporary"}, retry_at=due)
+    assert repository.finish_claim(job, "w", fixed_now)
+    parameters = session.statements[0].compile().params
+    assert parameters["available_at"] == due and parameters["status"] == "queued"
