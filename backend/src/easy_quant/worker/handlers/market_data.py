@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict
 from datetime import date, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.acquisition import AcquisitionFailed, _safe_source_error
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
 from easy_quant.domain.market_data.indices import INDEX_CATALOG, is_index
@@ -50,10 +52,30 @@ def register_market_data_handlers(
             raise RuntimeError("数据同步服务未配置")
         now = container.authentication.clock.now()
         day = now.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        # 先同步日历与证券清单，再以最新清单创建可独立重试的分批任务。
-        container.data_sync.sync(
-            "trading-calendar", force=True, source_keys=enabled_sources("trading-calendar")
-        )
+        failures = []
+
+        def refresh(dataset, **kwargs):
+            assert container is not None
+            if enabled_sources(dataset) == set():
+                return {"status": "skipped", "reason": "该数据集来源已全部停用"}
+            try:
+                return container.data_sync.sync(
+                    dataset, force=True, source_keys=enabled_sources(dataset), **kwargs
+                )
+            except Exception as error:
+                if container.database_session is not None:
+                    container.database_session.rollback()
+                failures.append(
+                    {
+                        "dataset_key": dataset,
+                        "message": _safe_source_error(error),
+                        "details": error.details if isinstance(error, AcquisitionFailed) else {},
+                    }
+                )
+                return None
+
+        # 不完整清单不能覆盖已确认状态；独立失败不阻止其他数据集采集。
+        refresh("trading-calendar")
         calendar = TradingCalendar(container.market_data.list_trading_days() or None)
         day = (
             date.fromisoformat(str(job.payload["end_day"]))
@@ -61,15 +83,16 @@ def register_market_data_handlers(
             else calendar.freshness(first_day=None, last_day=None, now=now).recommended_end_day
         )
         if not calendar.is_trading_day(day):
+            if failures:
+                raise AcquisitionFailed(
+                    "交易日历刷新失败，等待自动重试", {"failed_datasets": failures}
+                )
             return {"status": "skipped", "reason": "非交易日"}
-        container.data_sync.sync(
-            "securities", force=True, source_keys=enabled_sources("securities")
-        )
-        trading_status = container.data_sync.sync(
+        job.payload["end_day"] = day.isoformat()
+        refresh("securities")
+        trading_status = refresh(
             "trading-status",
             end_day=day,
-            force=True,
-            source_keys=enabled_sources("trading-status"),
             confirmation_source_keys=enabled_sources("daily-bars"),
         )
         suspended = {
@@ -91,6 +114,8 @@ def register_market_data_handlers(
             *FINANCIAL_DATASETS,
             "sw-industry-memberships",
         ):
+            if enabled_sources(dataset) == set():
+                continue
             dataset_symbols = (
                 [symbol for symbol in symbols if symbol not in suspended]
                 if dataset == "daily-bars"
@@ -104,7 +129,7 @@ def register_market_data_handlers(
                 if dataset == "daily-bars" or dataset in FINANCIAL_DATASETS
                 else [[]]
             )
-            for index, batch in enumerate(batches):
+            for batch in batches:
                 start_day = min(
                     (
                         coverage.get(symbol, {}).get("last_day") or day - timedelta(days=365)
@@ -114,7 +139,8 @@ def register_market_data_handlers(
                 )
                 if dataset in FINANCIAL_DATASETS:
                     start_day = date(day.year - 5, 1, 1)
-                task_id = f"nightly:{day}:{dataset}:{index}"
+                batch_key = hashlib.sha256(",".join(batch).encode()).hexdigest()[:16]
+                task_id = f"nightly:{day}:{dataset}:{batch_key}"
                 payload = {
                     "task_id": task_id,
                     "dataset_key": dataset,
@@ -134,12 +160,16 @@ def register_market_data_handlers(
                         "job_id": queued.id,
                     }
                 jobs.append(queued.id)
-        return {
+        result = {
             "status": "queued",
             "trading_day": day.isoformat(),
             "child_jobs": jobs,
             "trading_status": trading_status,
+            "failed_datasets": failures,
         }
+        if failures:
+            raise AcquisitionFailed("部分基础刷新失败，其余采集批次已入队", result)
+        return result
 
     registry.register("market-data-nightly", nightly)
 
@@ -151,6 +181,7 @@ def register_market_data_handlers(
         task = container.state.acquisitions.get(task_id) if task_id else None
         if task is not None:
             task["status"] = "running"
+            task.pop("retry_at", None)
             container.state.acquisitions[task_id] = task
         try:
             dataset = next(
@@ -187,7 +218,21 @@ def register_market_data_handlers(
             if container.database_session is not None:
                 container.database_session.rollback()
             if task is not None:
-                task.update({"status": "failed", "message": str(error)})
+                # 指数专项内联调用没有独立租约/队列，不能显示永远不会执行的重试。
+                retrying = job.job_type == "market-data-acquisition" and 0 < job.attempt_count < 3
+                task.update(
+                    {
+                        "status": "queued" if retrying else "failed",
+                        "message": f"{_safe_source_error(error)}；等待自动重试"
+                        if retrying
+                        else _safe_source_error(error),
+                    }
+                )
+                if retrying:
+                    task["retry_at"] = (
+                        container.authentication.clock.now()
+                        + timedelta(minutes=5 * job.attempt_count)
+                    ).isoformat()
                 details = getattr(error, "details", None)
                 if isinstance(details, dict):
                     task["attempts"] = details.get("attempts", [])

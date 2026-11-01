@@ -49,6 +49,31 @@ def _rows(payload: bytes) -> object:
     return json.loads(payload.decode("utf-8"))
 
 
+def validate_securities_response(request: SemanticRequest, payload: bytes) -> None:
+    value = _rows(payload)
+    if isinstance(value, dict):
+        data = value.get("data")
+        if not isinstance(data, dict):
+            raise ValueError("证券清单结构无效")
+        rows = data.get("diff")
+        if not isinstance(rows, list) or len(rows) != int(data["total"]):
+            raise ValueError("证券清单不完整，拒绝缓存并切换来源")
+    else:
+        rows = value
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("证券清单为空，拒绝缓存并切换来源")
+    codes = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("证券记录格式无效")
+        raw = row.get("code") or row.get("代码") or row.get("f12")
+        code = str(raw).zfill(6) if raw is not None else ""
+        name = row.get("name") or row.get("名称") or row.get("f14")
+        if len(code) != 6 or not code.isdigit() or code in codes or not name:
+            raise ValueError("证券清单代码、名称无效或重复")
+        codes.add(code)
+
+
 class MarketDataSyncService:
     """把真实来源的原始响应归一化写入平台仓储。"""
 

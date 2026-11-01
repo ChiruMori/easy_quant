@@ -93,6 +93,7 @@ class Worker:
         heartbeat_thread.start()
         try:
             summary = self.handlers.get(job.job_type)(job) or {}
+            job.error_summary = {}
             job.succeed(self.worker_id, dict(summary))
         except Exception as exc:
             if job.job_type in {"live-analysis", "live.analyze"}:
@@ -116,7 +117,22 @@ class Worker:
             if isinstance(exc, DomainError):
                 error["code"] = exc.code
                 error["details"] = dict(exc.details)
-            job.fail(self.worker_id, error)
+            retry_at = None
+            if (
+                job.job_type in {"market-data-nightly", "market-data-acquisition"}
+                and job.attempt_count < 3
+            ):
+                retry_at = self.clock.now() + timedelta(minutes=5 * job.attempt_count)
+                error["retry_at"] = retry_at.isoformat()
+            if retry_at is not None:
+                error["message"] = f"{error['message']}；已安排自动重试"
+                logger.warning(
+                    "任务等待自动重试 job_id=%s attempt=%s retry_at=%s",
+                    job.id,
+                    job.attempt_count,
+                    retry_at.isoformat(),
+                )
+            job.fail(self.worker_id, error, retry_at=retry_at)
         finally:
             stop.set()
             heartbeat_thread.join(timeout=5)

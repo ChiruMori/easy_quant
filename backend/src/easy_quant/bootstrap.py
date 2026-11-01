@@ -12,6 +12,7 @@ from easy_quant.application.services.market_data_sync import (
     MarketDataSyncService,
     validate_daily_response,
     validate_live_quote_response,
+    validate_securities_response,
 )
 from easy_quant.config import BACKEND_ROOT, Settings, get_settings
 from easy_quant.domain.market_data.indices import is_index
@@ -353,6 +354,13 @@ def build_container(settings: Settings | None = None) -> Container:
         container.authentication.initialize_admin(
             settings.initial_admin_username, settings.initial_admin_password.get_secret_value()
         )
+    from easy_quant.application.services.data_schedules import ensure_data_schedule
+
+    with container.resource_lifecycle.guard():
+        scoped.rollback()
+        ensure_data_schedule(
+            state.schedules, container.authentication.clock.now(), settings.daily_data_publish_time
+        )
     scoped.remove()
     return container
 
@@ -501,14 +509,20 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
         for key in FINANCIAL_DATASETS
     }
 
-    def acquisition(sources: list[Any], *, daily: bool = False) -> AcquisitionService:
+    def acquisition(
+        sources: list[Any], *, daily: bool = False, securities: bool = False
+    ) -> AcquisitionService:
         return AcquisitionService(
             sources,
             raw_cache,
             clock,
             sleeper,
             retry=ExponentialRetry(max_attempts=2, base_seconds=0.5),
-            validate=validate_daily_response if daily else None,
+            validate=validate_daily_response
+            if daily
+            else validate_securities_response
+            if securities
+            else None,
         )
 
     # Only selected symbols; independent clients prevent general sync timeouts and
@@ -530,7 +544,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
 
     return MarketDataSyncService(
         {
-            "securities": acquisition([securities_ak, eastmoney]),
+            "securities": acquisition([securities_ak, eastmoney], securities=True),
             "trading-status": acquisition([eastmoney]),
             "daily-bars": acquisition([daily_ak, eastmoney, daily_tencent], daily=True),
             "trading-calendar": acquisition([calendar_ak]),

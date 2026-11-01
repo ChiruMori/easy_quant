@@ -45,6 +45,7 @@ import {
   useDatasets,
   useMarketDataCoverage,
 } from "../api"
+import { AutomaticCollectionStatus } from "../components/automatic-collection-status"
 import { SourceToggleForm } from "../components/source-toggle-form"
 import type { Acquisition } from "../types"
 import { IndicesPanel } from "./indices-page"
@@ -193,6 +194,7 @@ export function DatasetsPage() {
           </DropdownMenu>
         }
       />
+      <AutomaticCollectionStatus />
       <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <section aria-label="标的数据" className="min-w-0">
           <Tabs

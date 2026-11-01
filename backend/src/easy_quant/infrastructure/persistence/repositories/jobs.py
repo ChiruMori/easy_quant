@@ -175,6 +175,7 @@ class SqlAlchemyJobRepository:
                 .where(*self._claim_predicate(job.id, worker_id, job.attempt_count, now))
                 .values(
                     status=job.status.value,
+                    available_at=job.available_at,
                     lease_owner=None,
                     lease_until=None,
                     payload_json=json.dumps(job.payload, ensure_ascii=False, default=str),

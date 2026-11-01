@@ -53,7 +53,7 @@ export function AcquisitionsPage() {
     <div className="flex max-w-2xl flex-col gap-6">
       <PageHeader
         title="范围拉取"
-        description="按数据类型与日期区间同步真实数据。指数在数据管理的指数 Tab 中维护。"
+        description="此入口用于异常补采。日常数据由定时任务中的盘后综合计划自动采集，包含三大财报与基本面。指数也可在数据管理的指数 Tab 中维护。"
       />
       <Card>
         <CardHeader>

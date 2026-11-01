@@ -120,9 +120,12 @@ def test_database_url_is_required(monkeypatch) -> None:
     raise AssertionError("缺少数据库 URL 时必须拒绝启动配置")
 
 
-def test_runtime_container_always_uses_configured_database(monkeypatch) -> None:
+def test_runtime_container_always_uses_configured_database(monkeypatch, fixed_now) -> None:
     class ScopedSession:
         remove_calls = 0
+
+        def rollback(self) -> None:
+            pass
 
         def remove(self) -> None:
             self.remove_calls += 1
@@ -157,11 +160,25 @@ def test_runtime_container_always_uses_configured_database(monkeypatch) -> None:
         database_url=SecretStr("mysql+pymysql://configured/db"),
         secret_key=SecretStr("test-secret"),
     )
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from tests.fakes.core import FixedClock
+
+    monkeypatch.setattr(bootstrap, "SystemClock", lambda: FixedClock(fixed_now))
+
+    monkeypatch.setattr(
+        "easy_quant.infrastructure.persistence.repositories.resource_lifecycle.SqlResourceLifecycleStore",
+        lambda _: SimpleNamespace(guard=nullcontext),
+    )
     container = bootstrap.build_container(settings)
 
     assert seen_urls == ["mysql+pymysql://configured/db"]
     assert container.database_session is session
     assert session.remove_calls == 1
+    automatic = container.state.schedules["schedule-market-data-nightly"]
+    assert automatic["enabled"] is True
+    assert automatic["next_run_at"] == fixed_now.isoformat()
 
 
 def test_security_catalog_includes_both_shanghai_boards(monkeypatch) -> None:
