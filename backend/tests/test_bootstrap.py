@@ -151,7 +151,9 @@ def test_runtime_container_always_uses_configured_database(monkeypatch, fixed_no
         bootstrap, "SqlAlchemyBacktestStore", lambda _session, _status_factory: object()
     )
     monkeypatch.setattr(bootstrap, "SqlAlchemyJobRepository", lambda _session, _factory: object())
-    monkeypatch.setattr(bootstrap, "SqlAlchemyCompressedRawCache", lambda _session: object())
+    monkeypatch.setattr(
+        bootstrap, "SqlAlchemyCompressedRawCache", lambda _session, _factory: object()
+    )
     monkeypatch.setattr(bootstrap, "SqlJsonList", lambda _session, _namespace: [])
     monkeypatch.setattr(bootstrap, "SqlJsonDict", lambda _session, _namespace: {})
     monkeypatch.setattr(bootstrap, "_build_market_data_sync", lambda _container, _cache: object())

@@ -4,12 +4,16 @@ import logging
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from easy_quant.application.ports.jobs import JobContinuation
+from easy_quant.application.ports.storage_errors import StorageFailure
 from easy_quant.application.services.acquisition import AcquisitionFailed, _safe_source_error
 from easy_quant.application.services.financial_sync import save_financial_rows
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
 from easy_quant.domain.market_data.indices import is_index
+from easy_quant.infrastructure.persistence.recovery import storage_failure
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +59,8 @@ def collect(container, job, enabled_sources):
     day = date.fromisoformat(
         job.payload.get("end_day") or now.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
     )
-    state = job.payload.setdefault(
-        "collection",
-        {
+    if "collection" not in job.payload:
+        job.payload["collection"] = {
             "day": day.isoformat(),
             "bar_day": min(
                 day,
@@ -72,8 +75,8 @@ def collect(container, job, enabled_sources):
             "failed": [],
             "last_symbol": "",
             "retries": 0,
-        },
-    )
+        }
+    state = job.payload["collection"]
     day = date.fromisoformat(state["day"])
     work = units(day)
     if state["unit"] >= len(work):
@@ -83,6 +86,7 @@ def collect(container, job, enabled_sources):
         return result
     unit = work[state["unit"]]
     dataset, period = unit["dataset"], unit["period"]
+    state.update(dataset_key=dataset, report_period=period)
     checkpoint_key = f"{dataset}:{period}"
     checkpoints = container.collection_checkpoints
     previous = checkpoints.get(checkpoint_key)
@@ -95,9 +99,14 @@ def collect(container, job, enabled_sources):
         if dataset == "company-profiles"
         else 30
     )
-    fresh = previous and now - datetime.fromisoformat(previous["completed_at"]) < ttl
+    fresh = previous and (
+        previous.get("bar_day") == state["bar_day"]
+        if dataset == "daily-bars"
+        else now - datetime.fromisoformat(previous["completed_at"]) < ttl
+    )
     done = False
     candidates, symbol = [], ""
+    sources = None
     try:
         sources = enabled_sources(dataset)
         if sources == set() or (fresh and state["page"] == 1 and not state["last_symbol"]):
@@ -106,9 +115,9 @@ def collect(container, job, enabled_sources):
             if sources is not None and "eastmoney" not in sources:
                 raise ValueError("批量采集需要启用东方财富来源；未自动回退逐股洪泛")
             symbols = {
-                str(row["symbol"])
-                for row in container.market_data.list_instruments()
-                if not is_index(str(row["symbol"]))
+                symbol
+                for symbol in container.market_data.instrument_symbols()
+                if not is_index(symbol)
             }
             if not symbols:
                 raise ValueError("证券清单为空，不能确认批量财务覆盖")
@@ -144,45 +153,47 @@ def collect(container, job, enabled_sources):
         elif dataset in {"daily-bars", "business-compositions"}:
             if sources is not None and "eastmoney" not in sources:
                 raise ValueError("串行自动采集需要启用受请求预算控制的东方财富来源")
-            instruments = sorted(
-                container.market_data.list_instruments(), key=lambda row: row["symbol"]
+            candidates = container.market_data.instrument_candidates(state["last_symbol"], dataset)
+            keys = [f"{dataset}:{row['symbol']}" for row in candidates]
+            recent_checks = (
+                checkpoints.get_many(keys)
+                if hasattr(checkpoints, "get_many")
+                else {key: checkpoints.get(key) for key in keys}
             )
-            candidates = [
-                row
-                for row in instruments
-                if str(row["symbol"]) > state["last_symbol"]
-                and row.get("status") != "delisted"
-                and (dataset == "daily-bars" or not is_index(str(row["symbol"])))
-                and (dataset != "daily-bars" or row.get("status") != "suspended")
-            ]
             if not candidates:
                 done = True
-            else:
-                symbol = str(candidates[0]["symbol"])
+            for candidate in candidates:
+                symbol = str(candidate["symbol"])
                 key = f"{dataset}:{symbol}"
-                last = checkpoints.get(key)
-                if not last or now - datetime.fromisoformat(last["completed_at"]) >= timedelta(
-                    days=1 if dataset == "daily-bars" else 30
-                ):
-                    start = date(day.year - 5, 1, 1)
-                    if dataset == "daily-bars":
-                        bounds = container.market_data.bar_coverage([symbol]).get(symbol, {})
-                        day = date.fromisoformat(state["bar_day"])
-                        start = bounds.get("last_day") or day - timedelta(days=365)
-                    if start < day or dataset != "daily-bars":
-                        result = container.data_sync.sync(
-                            dataset,
-                            symbols=[symbol],
-                            start_day=start,
-                            end_day=day,
-                            force=True,
-                            source_keys=(
-                                {"eastmoney"} & sources if sources is not None else {"eastmoney"}
-                            ),
-                        )
-                        state["records"] += int(result.get("record_count", 0))
-                    checkpoints[key] = {"completed_at": now.isoformat()}
+                last = recent_checks.get(key)
+                checked = last and (
+                    last.get("bar_day") == state["bar_day"]
+                    if dataset == "daily-bars"
+                    else now - datetime.fromisoformat(last["completed_at"]) < timedelta(days=30)
+                )
+                if checked:
+                    state["last_symbol"] = symbol
+                    continue
+                start = date(day.year - 5, 1, 1)
+                if dataset == "daily-bars":
+                    bounds = container.market_data.bar_coverage([symbol]).get(symbol, {})
+                    day = date.fromisoformat(state["bar_day"])
+                    start = bounds.get("last_day") or day - timedelta(days=365)
+                    if start >= day:
+                        state["last_symbol"] = symbol
+                        continue
+                result = container.data_sync.sync(
+                    dataset,
+                    symbols=[symbol],
+                    start_day=start,
+                    end_day=day,
+                    force=True,
+                    source_keys={"eastmoney"} & sources if sources is not None else {"eastmoney"},
+                )
+                state["records"] += int(result.get("record_count", 0))
+                checkpoints[key] = {"completed_at": now.isoformat(), "bar_day": state["bar_day"]}
                 state["last_symbol"] = symbol
+                break  # 单个有网络的标的完成即让出worker；已新鲜标的可在同一领取中跳过100个。
         else:
             result = container.data_sync.sync(
                 dataset,
@@ -211,6 +222,10 @@ def collect(container, job, enabled_sources):
                 ).isoformat()
             done = True
         state["retries"] = 0
+    except StorageFailure:
+        raise
+    except SQLAlchemyError as error:
+        raise storage_failure(error, f"collection.{dataset}") from error
     except Exception as error:
         if container.database_session is not None:
             container.database_session.rollback()
@@ -240,8 +255,11 @@ def collect(container, job, enabled_sources):
             state["records"],
             state.get("failed_count", 0),
         )
-        if not state["retries"] and not state.get("had_failure"):
-            checkpoints[checkpoint_key] = {"completed_at": now.isoformat()}
+        if not state["retries"] and not state.get("had_failure") and not fresh and sources != set():
+            checkpoints[checkpoint_key] = {
+                "completed_at": now.isoformat(),
+                "bar_day": state["bar_day"],
+            }
         state.update(unit=state["unit"] + 1, page=1, last_symbol="", retries=0)
         state.pop("matched", None)
         state.pop("page_fingerprints", None)
@@ -250,7 +268,8 @@ def collect(container, job, enabled_sources):
         state.pop("expected", None)
         state.pop("pages", None)
     return JobContinuation(
-        summary(state, work, "串行采集中；每次请求至少间隔5秒"), now + timedelta(seconds=5)
+        summary(state, work, "串行采集中；每次请求至少间隔5秒"),
+        container.authentication.clock.now(),
     )
 
 

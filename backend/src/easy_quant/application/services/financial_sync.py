@@ -47,7 +47,7 @@ def sync_financial(
             added, same = save_financial_rows(service.store, dataset, rows, source, fetched)
             saved += added
             unchanged += same
-        except Exception as error:
+        except (AcquisitionFailed, ValueError) as error:
             if isinstance(error, AcquisitionFailed):
                 failed_attempts = error.details.get("attempts", [])
                 if isinstance(failed_attempts, list):
@@ -76,7 +76,11 @@ def save_financial_rows(store, dataset, rows, source, fetched):
     grouped = {}
     for row in rows:
         grouped.setdefault(row["symbol"], []).append(row)
-    versions = store.list_record_versions(dataset, list(grouped))
+    versions = store.list_record_versions(
+        dataset,
+        list(grouped),
+        periods=sorted({str(row.get("report_period") or "") for row in rows}),
+    )
     all_incoming = []
     for symbol, rows in grouped.items():
         existing = versions.get(symbol, [])
@@ -141,5 +145,5 @@ def save_financial_rows(store, dataset, rows, source, fetched):
         # 单只股票的响应先完整校验；无效响应不能留下半张报表。
         all_incoming.extend(incoming)
         saved += len(incoming)
-    store.upsert_records(dataset, all_incoming)
+    store.upsert_records(dataset, all_incoming, count_overwritten=False)
     return saved, unchanged

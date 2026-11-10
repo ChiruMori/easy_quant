@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from datetime import date, time, timedelta
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
+
+from easy_quant.application.ports.storage_errors import StorageFailure
 from easy_quant.application.services.acquisition import _safe_source_error
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.indices import INDEX_CATALOG
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import ValidationError
+from easy_quant.infrastructure.persistence.recovery import log_database_error, storage_failure
 from easy_quant.worker.registry import JobHandlerRegistry
 
 
@@ -96,6 +101,27 @@ def register_market_data_handlers(
                     else {}
                 ),
             )
+        except (StorageFailure, SQLAlchemyError) as error:
+            failure = (
+                error
+                if isinstance(error, StorageFailure)
+                else storage_failure(error, "manual-acquisition")
+            )
+            if task is not None:
+                task.update(status="failed", message=str(failure), error_code=failure.code)
+                task.pop("retry_at", None)
+                try:
+                    container.state.acquisitions[task_id] = task
+                except (StorageFailure, SQLAlchemyError) as save_error:
+                    log_database_error(
+                        logging.getLogger(__name__),
+                        save_error,
+                        "acquisition.failure-status",
+                        task_id=task_id,
+                    )
+            if failure is error:
+                raise
+            raise failure from error
         except Exception as error:
             if container.database_session is not None:
                 container.database_session.rollback()
@@ -179,6 +205,8 @@ def register_market_data_handlers(
             try:
                 result = acquire(Job(job.id, "market-data-acquisition", task_id, payload, now))
                 count += int(str(result.get("record_count", 0)))
+            except (StorageFailure, SQLAlchemyError):
+                raise
             except Exception as error:
                 failures.append({"symbol": symbol, "message": str(error)})
         if failures:

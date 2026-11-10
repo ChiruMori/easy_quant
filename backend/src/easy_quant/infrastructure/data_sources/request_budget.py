@@ -18,14 +18,22 @@ class RequestBudget:
     interval: float = 5.0
     last: Any = None
 
+    release: Any = None
+    check_wait: Any = None
+
     def before_request(self):
-        self.check()
+        if self.release is not None:
+            self.release()
+        if self.check_wait is not None:
+            self.check_wait()
         if self.last is not None:
             remaining = self.interval - (self.clock.now() - self.last).total_seconds()
             while remaining > 0:
                 self.sleeper.sleep(min(remaining, 1.0))
-                self.check()
+                if self.check_wait is not None:
+                    self.check_wait()
                 remaining = self.interval - (self.clock.now() - self.last).total_seconds()
+        self.check()
         self.last = self.clock.now()
 
 

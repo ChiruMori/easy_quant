@@ -8,6 +8,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.ports.storage_errors import StorageFailure
+from easy_quant.application.services.acquisition import AcquisitionFailed
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.entities import SemanticRequest
 from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
@@ -327,6 +329,8 @@ class MarketDataSyncService:
                     ),
                     None,
                 )
+            except StorageFailure:
+                raise
             except (DomainError, ValueError, InvalidOperation) as error:
                 details = getattr(error, "details", {})
                 attempts.extend(
@@ -453,7 +457,7 @@ class MarketDataSyncService:
                         SemanticRequest("daily-bars", parameters, "validation"),
                         json.dumps(value).encode(),
                     )
-            except Exception as error:
+            except (AcquisitionFailed, ValueError) as error:
                 if not is_index(symbol):
                     raise
                 details = getattr(error, "details", {})
@@ -498,8 +502,6 @@ class MarketDataSyncService:
             ]
         )
         if failures:
-            from easy_quant.application.services.acquisition import AcquisitionFailed
-
             raise AcquisitionFailed(
                 "部分指数同步失败，请检查来源并重试失败标的",
                 {

@@ -45,6 +45,9 @@ class InMemoryJobRepository:
     def get(self, job_id: str) -> Job | None:
         return self.items.get(job_id)
 
+    def is_claim_current(self, job_id, worker_id, attempt, now):
+        return self._owns(self.items.get(job_id), worker_id, attempt, now)
+
     def claim_due(self, worker_id: str, now: datetime, lease_until: datetime) -> Job | None:
         with self._lock:
             job = next((item for item in self.items.values() if item.can_be_claimed(now)), None)
@@ -136,6 +139,17 @@ class SqlAlchemyJobRepository:
         with self._operation() as session:
             row = session.get(JobModel, job_id)
             return self._to_domain(row) if row else None
+
+    def is_claim_current(self, job_id, worker_id, attempt, now):
+        with self._operation() as session:
+            return (
+                session.scalar(
+                    select(JobModel.id)
+                    .where(*self._claim_predicate(job_id, worker_id, attempt, now))
+                    .limit(1)
+                )
+                is not None
+            )
 
     def claim_due(self, worker_id: str, now: datetime, lease_until: datetime) -> Job | None:
         with self._operation() as session:

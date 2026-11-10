@@ -5,9 +5,11 @@ from collections.abc import ItemsView, Iterator, MutableMapping, ValuesView
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
 from easy_quant.infrastructure.persistence.models.runtime_state import RuntimeDocumentModel
+from easy_quant.infrastructure.persistence.recovery import idempotent_operation
 
 
 class SqlJsonDict(MutableMapping[str, dict[str, Any]]):
@@ -26,6 +28,19 @@ class SqlJsonDict(MutableMapping[str, dict[str, Any]]):
         if row is None:
             raise KeyError(key)
         return json.loads(row.payload_json)
+
+    def get_many(self, keys):
+        if not keys:
+            return {}
+        return {
+            key: json.loads(payload)
+            for key, payload in self.session.execute(
+                select(RuntimeDocumentModel.key, RuntimeDocumentModel.payload_json).where(
+                    RuntimeDocumentModel.namespace == self.namespace,
+                    RuntimeDocumentModel.key.in_(keys),
+                )
+            )
+        }
 
     def __setitem__(self, key: str, value: dict[str, Any]) -> None:
         self.session.merge(
@@ -105,6 +120,30 @@ class SqlJsonDict(MutableMapping[str, dict[str, Any]]):
             "page": page,
             "page_size": size,
         }
+
+
+class SqlCollectionCheckpoints(SqlJsonDict):
+    """采集检查点为独立、幂等的短写入，不读取旧JSON。"""
+
+    @idempotent_operation("collection-checkpoint.get")
+    def __getitem__(self, key):
+        return super().__getitem__(key)
+
+    @idempotent_operation("collection-checkpoint.get-many")
+    def get_many(self, keys):
+        return super().get_many(keys)
+
+    @idempotent_operation("collection-checkpoint.put")
+    def __setitem__(self, key, value):
+        statement = insert(RuntimeDocumentModel).values(
+            namespace=self.namespace,
+            key=key,
+            payload_json=json.dumps(value, ensure_ascii=False, default=str),
+        )
+        self.session.execute(
+            statement.on_duplicate_key_update(payload_json=statement.inserted.payload_json)
+        )
+        self.session.commit()
 
 
 class SqlJsonList:

@@ -42,6 +42,7 @@ from easy_quant.infrastructure.persistence.repositories.runtime import (
     SqlAlchemyMarketDataStore,
 )
 from easy_quant.infrastructure.persistence.repositories.runtime_documents import (
+    SqlCollectionCheckpoints,
     SqlJsonDict,
     SqlJsonList,
 )
@@ -329,7 +330,7 @@ def build_container(settings: Settings | None = None) -> Container:
     )
 
     container.resource_lifecycle = SqlResourceLifecycleStore(create_session_factory(engine))
-    raw_cache = SqlAlchemyCompressedRawCache(session)
+    raw_cache = SqlAlchemyCompressedRawCache(session, create_session_factory(engine))
     container.data_sync = _build_market_data_sync(container, raw_cache)
     import httpx
 
@@ -404,7 +405,7 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
     container.financial_bulk = EastMoneyBulkFinancialSource(
         data_client(timeout=20.0, trust_env=False)
     )
-    container.collection_checkpoints = SqlJsonDict(
+    container.collection_checkpoints = SqlCollectionCheckpoints(
         container.database_session, "collection_checkpoints"
     )
     clock, sleeper = SystemClock(), SystemSleeper()
