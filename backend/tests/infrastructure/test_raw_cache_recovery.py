@@ -16,7 +16,7 @@ def test_cache_write_failure_rolls_back_session(fixed_now) -> None:
     class FailedSession:
         rolled_back = False
 
-        def merge(self, _row):
+        def execute(self, _row):
             return None
 
         def commit(self):

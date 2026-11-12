@@ -47,6 +47,30 @@ export const getInstrument = (symbol: string, readOnly = false) =>
     `/${readOnly ? "market-data" : "admin/market-data"}/instruments/${encodeURIComponent(symbol)}`,
   )
 
+export type FundamentalRecord = Record<string, unknown> & {
+  record_key: string
+  report_period?: string
+  report_type?: string
+  source?: string
+  available_at: string
+  raw_fields?: Record<string, unknown>
+  field_labels?: Record<string, string>
+}
+export interface FundamentalsOverview {
+  symbol: string
+  as_of: string
+  fields: Record<string, { label: string; unit: string }>
+  datasets: { key: string; name: string; count: number }[]
+}
+export const getFundamentals = (symbol: string) =>
+  apiRequest<FundamentalsOverview>(
+    `/market-data/instruments/${encodeURIComponent(symbol)}/fundamentals`,
+  )
+export const getFundamentalRecords = (symbol: string, dataset: string, page: number) =>
+  apiRequest<{ items: FundamentalRecord[]; total: number; page: number; page_size: number }>(
+    `/market-data/instruments/${encodeURIComponent(symbol)}/fundamentals/${encodeURIComponent(dataset)}?page=${page}&page_size=5`,
+  )
+
 export const updateInstrumentStatus = (
   symbol: string,
   status: "active" | "suspended",

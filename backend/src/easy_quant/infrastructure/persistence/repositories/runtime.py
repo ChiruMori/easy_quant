@@ -15,6 +15,7 @@ from sqlalchemy import Table, case, delete, func, or_, select, tuple_
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
+from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.domain.strategies.entities import StrategyState
@@ -34,6 +35,7 @@ from easy_quant.infrastructure.persistence.models.market_data_records import (
     TradingDayModel,
     provenance,
 )
+from easy_quant.infrastructure.persistence.recovery import idempotent_operation
 from easy_quant.infrastructure.persistence.repositories.jobs import SqlAlchemyJobRepository
 from easy_quant.infrastructure.persistence.repositories.strategies import (
     SqlAlchemyStrategyRepository,
@@ -264,6 +266,19 @@ class InMemoryMarketDataStore:
     def list_instruments(self):
         return list(self.instruments.values())
 
+    def instrument_candidates(self, after, dataset, limit=100):
+        return [
+            row
+            for row in sorted(self.instruments.values(), key=lambda row: row["symbol"])
+            if str(row["symbol"]) > after
+            and row.get("status") != "delisted"
+            and (dataset != "daily-bars" or row.get("status") != "suspended")
+            and (dataset != "business-compositions" or len(str(row["symbol"])) == 6)
+        ][:limit]
+
+    def instrument_symbols(self):
+        return set(self.instruments)
+
     def get_instrument(self, symbol: str):
         return self.instruments.get(symbol)
 
@@ -338,13 +353,31 @@ class InMemoryMarketDataStore:
     def upsert_trading_days(self, days: list[date]) -> None:
         self.trading_days.update(day.isoformat() for day in days)
 
-    def upsert_records(self, dataset_key: str, rows: list[dict[str, Any]]) -> int:
+    def upsert_records(
+        self, dataset_key: str, rows: list[dict[str, Any]], *, count_overwritten=True
+    ) -> int:
         overwritten = 0
         for row in rows:
             key = str(row["record_key"])
             overwritten += int((dataset_key, key) in self.market_records)
-            self.market_records[(dataset_key, key)] = row
+            if (
+                dataset_key not in FINANCIAL_DATASETS
+                or (dataset_key, key) not in self.market_records
+            ):
+                self.market_records[(dataset_key, key)] = row
         return overwritten
+
+    def list_record_versions(self, dataset_key, symbols, periods=None):
+        wanted = set(symbols)
+        result = {}
+        for (dataset, _), row in self.market_records.items():
+            if (
+                dataset == dataset_key
+                and row.get("symbol") in wanted
+                and (periods is None or str(row.get("report_period") or "") in periods)
+            ):
+                result.setdefault(str(row["symbol"]), []).append(row)
+        return result
 
     def list_records(self, dataset_key: str, symbol: str | None = None):
         return [
@@ -352,6 +385,25 @@ class InMemoryMarketDataStore:
             for (dataset, _), row in self.market_records.items()
             if dataset == dataset_key and (symbol is None or row.get("symbol") == symbol)
         ]
+
+    def record_counts(self, symbol: str, as_of: datetime):
+        counts: dict[str, int] = {}
+        for (dataset, _), row in self.market_records.items():
+            if (
+                row.get("symbol") == symbol
+                and datetime.fromisoformat(str(row["available_at"])) <= as_of
+            ):
+                counts[dataset] = counts.get(dataset, 0) + 1
+        return counts
+
+    def record_page(self, dataset: str, symbol: str, as_of: datetime, page: int, size: int):
+        rows = [
+            row
+            for row in self.list_records(dataset, symbol)
+            if datetime.fromisoformat(str(row["available_at"])) <= as_of
+        ]
+        rows.sort(key=lambda row: (str(row["available_at"]), str(row["record_key"])), reverse=True)
+        return rows[(page - 1) * size : page * size]
 
 
 class SqlAlchemyMarketDataStore:
@@ -457,28 +509,40 @@ class SqlAlchemyMarketDataStore:
             raise RuntimeError("日线来源引用缺失，拒绝推断复权口径")
         return _single_bar_adjustment(symbol, adjustments)
 
+    @idempotent_operation("instruments.upsert")
     def upsert_instruments(self, rows: list[dict[str, Any]]) -> None:
-        suspended_symbols = set(
-            self.session.scalars(
-                select(InstrumentModel.symbol).where(InstrumentModel.status == "suspended")
-            )
+        statement = insert(InstrumentModel)
+        statement = statement.on_duplicate_key_update(
+            name=statement.inserted.name,
+            exchange=statement.inserted.exchange,
+            listed_on=statement.inserted.listed_on,
+            status=case(
+                (
+                    (InstrumentModel.status == "suspended")
+                    & (statement.inserted.status == "active"),
+                    "suspended",
+                ),
+                else_=statement.inserted.status,
+            ),
         )
-        for item in rows:
-            listed_on = item.get("listed_on")
-            symbol = str(item["symbol"])
-            status = str(item.get("status", "active"))
-            if symbol in suspended_symbols and status == "active":
-                status = "suspended"
-            self.session.merge(
-                InstrumentModel(
-                    symbol=symbol,
-                    name=str(item.get("name", "")),
-                    exchange=str(item["exchange"]),
-                    listed_on=date.fromisoformat(str(listed_on)) if listed_on else None,
-                    status=status,
-                )
+        for offset in range(0, len(rows), 500):
+            self.session.execute(
+                statement,
+                [
+                    {
+                        "symbol": str(item["symbol"]),
+                        "name": str(item.get("name", "")),
+                        "exchange": str(item["exchange"]),
+                        "listed_on": date.fromisoformat(str(item["listed_on"]))
+                        if item.get("listed_on")
+                        else None,
+                        "status": str(item.get("status", "active")),
+                    }
+                    for item in rows[offset : offset + 500]
+                ],
             )
         self.session.commit()
+        self.session.expire_all()
 
     def set_instrument_status(self, symbol: str, status: str) -> bool:
         row = self.session.get(InstrumentModel, symbol)
@@ -675,6 +739,26 @@ class SqlAlchemyMarketDataStore:
             for row in self.session.scalars(select(InstrumentModel))
         ]
 
+    @idempotent_operation("collection.instrument-candidates")
+    def instrument_candidates(self, after, dataset, limit=100):
+        statement = select(InstrumentModel.symbol).where(
+            InstrumentModel.symbol > after, InstrumentModel.status != "delisted"
+        )
+        if dataset == "daily-bars":
+            statement = statement.where(InstrumentModel.status != "suspended")
+        else:
+            statement = statement.where(func.length(InstrumentModel.symbol) == 6)
+        return [
+            {"symbol": symbol}
+            for symbol in self.session.scalars(
+                statement.order_by(InstrumentModel.symbol).limit(limit)
+            )
+        ]
+
+    @idempotent_operation("collection.instrument-symbols")
+    def instrument_symbols(self):
+        return set(self.session.scalars(select(InstrumentModel.symbol)))
+
     def get_instrument(self, symbol: str):
         row = self.session.get(InstrumentModel, symbol)
         return (
@@ -811,6 +895,7 @@ class SqlAlchemyMarketDataStore:
     def list_trading_days(self) -> set[date]:
         return set(self.session.scalars(select(TradingDayModel.trading_day)))
 
+    @idempotent_operation("trading-days.upsert")
     def upsert_trading_days(self, days: list[date]) -> None:
         values = sorted(set(days))
         statement = insert(cast(Table, TradingDayModel.__table__))
@@ -821,30 +906,119 @@ class SqlAlchemyMarketDataStore:
             )
         self.session.commit()
 
-    def upsert_records(self, dataset_key: str, rows: list[dict[str, Any]]) -> int:
+    @idempotent_operation("market-records.upsert")
+    def upsert_records(
+        self, dataset_key: str, rows: list[dict[str, Any]], *, count_overwritten=True
+    ) -> int:
         overwritten = 0
-        for item in rows:
-            key = str(item["record_key"])
-            overwritten += int(
-                self.session.get(JsonMarketRecordModel, (dataset_key, key)) is not None
-            )
-            self.session.merge(
-                JsonMarketRecordModel(
-                    dataset_key=dataset_key,
-                    record_key=key,
-                    payload_json=json.dumps(item, ensure_ascii=False, default=str),
-                    available_at=datetime.fromisoformat(str(item["available_at"])),
+        for offset in range(0, len(rows), 500):
+            batch = rows[offset : offset + 500]
+            keys = [str(item["record_key"]) for item in batch]
+            if count_overwritten:
+                overwritten += int(
+                    self.session.scalar(
+                        select(func.count())
+                        .select_from(JsonMarketRecordModel)
+                        .where(
+                            JsonMarketRecordModel.dataset_key == dataset_key,
+                            JsonMarketRecordModel.record_key.in_(keys),
+                        )
+                    )
+                    or 0
                 )
+            statement = insert(JsonMarketRecordModel)
+            if dataset_key in FINANCIAL_DATASETS:
+                statement = statement.on_duplicate_key_update(
+                    record_key=statement.inserted.record_key
+                )
+            else:
+                statement = statement.on_duplicate_key_update(
+                    symbol=statement.inserted.symbol,
+                    payload_json=statement.inserted.payload_json,
+                    available_at=statement.inserted.available_at,
+                )
+            self.session.execute(
+                statement,
+                [
+                    {
+                        "dataset_key": dataset_key,
+                        "record_key": str(item["record_key"]),
+                        "symbol": str(item["symbol"]) if item.get("symbol") else None,
+                        "payload_json": json.dumps(item, ensure_ascii=False, default=str),
+                        "available_at": datetime.fromisoformat(str(item["available_at"])),
+                    }
+                    for item in batch
+                ],
             )
         self.session.commit()
         return overwritten
 
+    @idempotent_operation("financial-version-metadata.read")
+    def list_record_versions(self, dataset_key, symbols, periods=None):
+        Record = JsonMarketRecordModel
+        names = (
+            "source",
+            "report_period",
+            "statement_scope",
+            "category",
+            "item_name",
+            "record_date",
+        )
+        fields = {
+            name: func.nullif(
+                func.json_unquote(func.json_extract(Record.payload_json, f"$.{name}")), "null"
+            ).label(name)
+            for name in names
+        }
+        result = {}
+        for offset in range(0, len(symbols), 100):
+            statement = select(
+                Record.symbol, Record.record_key, Record.available_at, *fields.values()
+            ).where(
+                Record.dataset_key == dataset_key, Record.symbol.in_(symbols[offset : offset + 100])
+            )
+            if periods is not None:
+                statement = statement.where(func.coalesce(fields["report_period"], "").in_(periods))
+            for record in self.session.execute(statement):
+                row = dict(record._mapping)
+                row["available_at"] = row["available_at"].isoformat()
+                result.setdefault(str(row["symbol"]), []).append(row)
+        return result
+
     def list_records(self, dataset_key: str, symbol: str | None = None):
+        statement = select(JsonMarketRecordModel).where(
+            JsonMarketRecordModel.dataset_key == dataset_key
+        )
+        if symbol is not None:
+            statement = statement.where(JsonMarketRecordModel.symbol == symbol)
         rows = self.session.scalars(
-            select(JsonMarketRecordModel).where(JsonMarketRecordModel.dataset_key == dataset_key)
+            statement.order_by(JsonMarketRecordModel.available_at, JsonMarketRecordModel.record_key)
         )
         values = [json.loads(row.payload_json) for row in rows]
         return [row for row in values if symbol is None or row.get("symbol") == symbol]
+
+    def record_counts(self, symbol: str, as_of: datetime):
+        Record = JsonMarketRecordModel
+        return dict(
+            self.session.execute(
+                select(Record.dataset_key, func.count())
+                .where(Record.symbol == symbol, Record.available_at <= as_of)
+                .group_by(Record.dataset_key)
+            ).all()
+        )
+
+    def record_page(self, dataset: str, symbol: str, as_of: datetime, page: int, size: int):
+        Record = JsonMarketRecordModel
+        statement = (
+            select(Record)
+            .where(
+                Record.symbol == symbol, Record.dataset_key == dataset, Record.available_at <= as_of
+            )
+            .order_by(Record.available_at.desc(), Record.record_key.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        return [json.loads(row.payload_json) for row in self.session.scalars(statement)]
 
 
 class InMemoryBacktestStore:

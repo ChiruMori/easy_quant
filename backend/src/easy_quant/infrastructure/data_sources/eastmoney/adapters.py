@@ -22,17 +22,7 @@ class EastMoneySource:
         parameters = dict(request.parameters)
         path = "api/qt/clist/get"
         if request.dataset_key == "securities":
-            parameters = {
-                "pn": parameters.get("page", 1),
-                "pz": parameters.get("page_size", 10000),
-                "po": 1,
-                "np": 1,
-                "fltt": 2,
-                "invt": 2,
-                "fid": "f3",
-                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-                "fields": "f12,f14,f26",
-            }
+            return self._stock_list("f12,f14,f26")
         elif request.dataset_key == "daily-bars":
             symbol = str(parameters["symbol"])
             market = (
@@ -66,21 +56,56 @@ class EastMoneySource:
                 "fields": "f2,f12,f14",
             }
         elif request.dataset_key == "market-values":
-            path = "api/qt/clist/get"
-            parameters = {
-                "pn": 1,
-                "pz": 10000,
-                "po": 1,
-                "np": 1,
-                "fltt": 2,
-                "fid": "f3",
-                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-                "fields": "f9,f12,f14,f20,f21,f23",
-            }
+            return self._stock_list("f9,f12,f14,f20,f21,f23")
         else:
             raise ValueError(f"东方财富不支持数据集 {request.dataset_key}")
         data = self.client.get_json(path, parameters)
         return json.dumps(data, ensure_ascii=False, sort_keys=True).encode(), "application/json"
+
+    def _stock_list(self, fields: str) -> tuple[bytes, str]:
+        rows, seen = [], set()
+        expected = None
+        for page in range(1, 1001):
+            payload = self.client.get_json(
+                "api/qt/clist/get",
+                {
+                    "pn": page,
+                    "pz": 100,
+                    "po": 1,
+                    "np": 1,
+                    "fltt": 2,
+                    "invt": 2,
+                    "fid": "f12",
+                    "fs": "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23,m:0 t:81 s:2048",
+                    "fields": fields,
+                },
+            )
+            data = payload.get("data")
+            if not isinstance(data, dict) or payload.get("rc", 0) != 0:
+                raise ValueError("证券/估值清单响应无效")
+            total, batch = int(data["total"]), data.get("diff")
+            if (
+                not isinstance(batch, list)
+                or total <= 0
+                or (expected is not None and total != expected)
+            ):
+                raise ValueError("证券/估值清单分页结构或总数变化")
+            expected = total
+            for row in batch:
+                if not isinstance(row, dict):
+                    raise ValueError("证券/估值清单记录无效")
+                code = str(row.get("f12", ""))
+                if len(code) != 6 or not code.isdigit() or code in seen:
+                    raise ValueError("证券/估值清单代码无效或分页重复")
+                seen.add(code)
+            rows.extend(batch)
+            if len(rows) == expected:
+                return json.dumps(
+                    {"data": {"total": expected, "diff": rows}}, ensure_ascii=False
+                ).encode(), "application/json"
+            if not batch or len(rows) > expected:
+                raise ValueError("证券/估值清单不完整")
+        raise ValueError("证券/估值清单分页超过安全上限")
 
     def _suspensions(self, day: date) -> tuple[bytes, str]:
         """只接受指定交易日的整日停牌证据，预计复牌日不作为恢复依据。"""

@@ -17,10 +17,11 @@ import {
 } from "@/components/ui/select"
 import { localizedLabel } from "@/lib/labels"
 
-import { getAcquisition, startAcquisition } from "../api"
+import { getAcquisition, startAcquisition, useDatasets } from "../api"
 import type { Acquisition } from "../types"
 
 export function AcquisitionsPage() {
+  const datasets = useDatasets()
   const [message, setMessage] = useState("尚未运行")
   const [running, setRunning] = useState(false)
   const [singleSymbol, setSingleSymbol] = useState("")
@@ -52,7 +53,7 @@ export function AcquisitionsPage() {
     <div className="flex max-w-2xl flex-col gap-6">
       <PageHeader
         title="范围拉取"
-        description="按数据类型与日期区间同步真实数据。指数在数据管理的指数 Tab 中维护。"
+        description="此入口用于异常补采。日常数据由定时任务中的盘后综合计划自动采集，包含三大财报与基本面。指数也可在数据管理的指数 Tab 中维护。"
       />
       <Card>
         <CardHeader>
@@ -99,7 +100,7 @@ export function AcquisitionsPage() {
         <CardHeader>
           <CardTitle>按范围同步策略数据</CardTitle>
           <CardDescription>
-            多个股票代码使用英文逗号分隔。系统随机选择来源，失败时自动切换。
+            多个股票代码使用英文逗号分隔。财务数据优先直连东方财富，失败切换新浪（支持的数据集）。日期筛选报告期；缺少记录不会补零。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -133,11 +134,30 @@ export function AcquisitionsPage() {
                       <SelectItem value="daily-bars">日线 K 线</SelectItem>
                       <SelectItem value="market-values">估值与市值</SelectItem>
                       <SelectItem value="pledge-ratios">股票质押率</SelectItem>
-                      <SelectItem value="financial-indicators">财务指标</SelectItem>
+                      {(datasets.data ?? [])
+                        .filter(
+                          (item) =>
+                            ![
+                              "daily-bars",
+                              "market-values",
+                              "pledge-ratios",
+                              "securities",
+                              "trading-calendar",
+                              "trading-status",
+                              "security-status",
+                              "sw-industry-memberships",
+                            ].includes(item.key),
+                        )
+                        .map((item) => (
+                          <SelectItem value={item.key} key={item.key}>
+                            {item.name}
+                          </SelectItem>
+                        ))}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
+              {datasets.error && <p role="alert">数据集目录加载失败：{datasets.error.message}</p>}
               <Field>
                 <FieldLabel htmlFor="symbols">证券代码（指数加 sh/sz 前缀）</FieldLabel>
                 <Input id="symbols" name="symbols" placeholder="000001,600000,sh000300" required />
@@ -166,6 +186,16 @@ export function AcquisitionsPage() {
           : message}
       </p>
       {taskQuery.error && <p role="alert">任务状态刷新失败：{taskQuery.error.message}</p>}
+      {currentTask?.failed_symbols?.length ? (
+        <div role="alert" className="flex flex-col gap-2 text-sm">
+          <p>以下股票同步失败，其他已完成数据已保留，可按这些代码重新提交：</p>
+          {currentTask.failed_symbols.map((item) => (
+            <p key={item.symbol} className="[overflow-wrap:anywhere]">
+              {item.symbol} · {item.message}
+            </p>
+          ))}
+        </div>
+      ) : null}
       {currentTask?.attempts?.length ? (
         <Card>
           <CardHeader>
@@ -175,6 +205,7 @@ export function AcquisitionsPage() {
           <CardContent className="flex flex-col gap-2 text-sm">
             {currentTask.attempts.map((attempt, index) => (
               <p className="break-words" key={`${attempt.source_key}-${attempt.attempt}-${index}`}>
+                {attempt.symbol ? `${attempt.symbol} · ` : ""}
                 {attempt.source_key} · 第 {attempt.attempt || "缓存"} 次 ·{" "}
                 {localizedLabel(attempt.status)}
                 {attempt.message ? ` · ${attempt.message}` : ""}

@@ -11,6 +11,7 @@ from time import monotonic
 
 from easy_quant.application.ports.core import Clock, Sleeper
 from easy_quant.application.ports.market_data import DataSource, RawCache, RetryPolicy
+from easy_quant.application.ports.storage_errors import StorageFailure
 from easy_quant.domain.market_data.entities import (
     AttemptStatus,
     RawEnvelope,
@@ -108,6 +109,8 @@ class AcquisitionService:
                 try:
                     if self.validate:
                         self.validate(request, cached.payload)
+                except StorageFailure:
+                    raise
                 except Exception as error:
                     message = f"{type(error).__name__}: {_safe_source_error(error)}"
                     attempts.append(SourceAttempt(source.key, 0, AttemptStatus.FAILED, message))
@@ -123,7 +126,7 @@ class AcquisitionService:
                     )
                     return cached, attempts
             started = monotonic()
-            logger.info(
+            logger.debug(
                 "数据来源请求 dataset=%s source=%s attempt=%s max_attempts=%s",
                 request.dataset_key,
                 source.key,
@@ -138,6 +141,8 @@ class AcquisitionService:
                 envelope = RawEnvelope(
                     cache_identity, source.key, payload, content_type, now, now + self.freshness
                 )
+            except StorageFailure:
+                raise
             except Exception as error:
                 message = f"{type(error).__name__}: {_safe_source_error(error)}"
                 attempts.append(SourceAttempt(source.key, attempt, AttemptStatus.FAILED, message))
@@ -157,7 +162,7 @@ class AcquisitionService:
             # Persistence failures are infrastructure failures, not a reason to refetch.
             self.cache.put(envelope)
             attempts.append(SourceAttempt(source.key, attempt, AttemptStatus.SUCCEEDED))
-            logger.info(
+            logger.debug(
                 "数据来源成功 dataset=%s source=%s attempt=%s seconds=%.3f",
                 request.dataset_key,
                 source.key,

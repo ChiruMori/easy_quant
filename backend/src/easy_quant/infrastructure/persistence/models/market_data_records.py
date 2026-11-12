@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Column, Computed, Date, Index, Numeric, String, Table, UniqueConstraint
+from sqlalchemy import Column, Computed, Date, Index, Numeric, String, Table, Text, UniqueConstraint
 from sqlalchemy.dialects.mysql import INTEGER, VARBINARY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -90,7 +90,11 @@ class TradingDayModel(Base):
 
 class JsonMarketRecordModel(Base):
     __tablename__ = "market_records"
+    __table_args__ = (
+        Index("ix_market_records_symbol_dataset_at", "symbol", "dataset_key", "available_at"),
+    )
     dataset_key: Mapped[str] = mapped_column(String(80), primary_key=True)
     record_key: Mapped[str] = mapped_column(String(180), primary_key=True)
-    payload_json: Mapped[str] = mapped_column(String(8000), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(20), nullable=True)
     available_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)

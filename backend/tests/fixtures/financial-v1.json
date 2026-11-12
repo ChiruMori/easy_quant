@@ -1,0 +1,9 @@
+{
+  "statement": {"SECURITY_CODE":"000001","REPORT_DATE":"2025-12-31 00:00:00","NOTICE_DATE":"2026-03-20 00:00:00","UPDATE_DATE":"2026-03-21 00:00:00","TOTAL_ASSETS":"1,234,567.89","TOTAL_OPERATE_INCOME":"3000.12","NETCASH_OPERATE":"-20.55","BANK_SPECIFIC_ITEM":"456.00"},
+  "indicators": {"SECURITY_CODE":"000001","REPORT_DATE":"2025-12-31","NOTICE_DATE":"2026-03-20","UPDATE_DATE":"2026-03-21","ROEJQ":"8.07","EPSJB":"1.23","XSMLL":null,"ZCFZL":"92.5"},
+  "profile": {"SECURITY_CODE":"000001","ORG_NAME":"测试股份有限公司","REG_CAPITAL":"123.45","TOTAL_NUM":"200","MAIN_BUSINESS":"银行业务","ORG_PROFILE":"测试公司介绍","ORG_TEL":"不得缓存的联系方式","ORG_EMAIL":"不得缓存的邮箱","CHAIRMAN":"不采集人员"},
+  "dividends": {"SECURITY_CODE":"000001","REPORT_DATE":"2025-12-31","NOTICE_DATE":"2026-03-20","PRETAX_BONUS_RMB":"1.25","BONUS_RATIO":"0","IMPL_PLAN_PROFILE":"10派1.25元","EQUITY_RECORD_DATE":"2026-06-01","EX_DIVIDEND_DATE":"2026-06-02"},
+  "holders": {"SECURITY_CODE":"000001","END_DATE":"2026-06-30","HOLD_NOTICE_DATE":"2026-08-20","HOLDER_NUM":"30000","TOTAL_A_SHARES":"1234567890","AVG_HOLD_NUM":"41152.263"},
+  "business": {"REPORT_DATE":"2025-12-31","MAINOP_TYPE":"2","ITEM_NAME":"银行业务","MAIN_BUSINESS_INCOME":"123.45","MBI_RATIO":"0.125","GROSS_RPOFIT_RATIO":"0.5"},
+  "sina": {"rType":"合并期末","rCurrency":"CNY","publish_date":"20260320","update_time":1774022400,"data":[{"item_field":"TOTASSET","item_title":"资产总计","item_value":"1234567.89"},{"item_field":"BIZINCO","item_title":"营业收入","item_value":"3000.12"},{"item_field":"MANANETR","item_title":"经营活动现金净额","item_value":"-20.55"},{"item_field":"ROEWEIGHTED","item_title":"加权净资产收益率(%)","item_value":"8.070000"},{"item_field":"TOTASSET","item_title":"重复分组字段","item_value":"999"}]}
+}

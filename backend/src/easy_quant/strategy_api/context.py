@@ -7,6 +7,7 @@ from datetime import datetime
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
+from easy_quant.domain.market_data.fundamentals import FIELD_METADATA
 from easy_quant.domain.market_data.indices import is_index
 from easy_quant.factors.context import FactorContext
 from easy_quant.factors.registry import build_default_registry
@@ -59,6 +60,7 @@ class SnapshotGateway:
                 "net_profit",
                 "adjusted_net_profit",
                 "pledge_ratio",
+                *FIELD_METADATA,
             ):
                 if item.get(name) not in (None, "", "-"):
                     item[name] = decimal_value(item[name])

@@ -22,6 +22,18 @@ class InMemoryJobRepository:
         self._lock = RLock()
 
     def enqueue(self, job: Job) -> Job:
+        if job.job_type == "market-data-collection":
+            active = next(
+                (
+                    item
+                    for item in self.items.values()
+                    if item.job_type in {"market-data-nightly", "market-data-collection"}
+                    and item.status in {JobStatus.QUEUED, JobStatus.RUNNING}
+                ),
+                None,
+            )
+            if active:
+                return active
         existing = next(
             (item for item in self.items.values() if item.business_key == job.business_key), None
         )
@@ -32,6 +44,9 @@ class InMemoryJobRepository:
 
     def get(self, job_id: str) -> Job | None:
         return self.items.get(job_id)
+
+    def is_claim_current(self, job_id, worker_id, attempt, now):
+        return self._owns(self.items.get(job_id), worker_id, attempt, now)
 
     def claim_due(self, worker_id: str, now: datetime, lease_until: datetime) -> Job | None:
         with self._lock:
@@ -101,6 +116,17 @@ class SqlAlchemyJobRepository:
 
     def enqueue(self, job: Job, *, commit: bool = True) -> Job:
         with self._operation(commit=commit) as session:
+            if job.job_type == "market-data-collection":
+                active = session.scalar(
+                    select(JobModel)
+                    .where(
+                        JobModel.job_type.in_(["market-data-nightly", "market-data-collection"]),
+                        JobModel.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                    )
+                    .limit(1)
+                )
+                if active:
+                    return self._to_domain(active)
             existing = session.scalar(
                 select(JobModel).where(JobModel.business_key == job.business_key)
             )
@@ -113,6 +139,17 @@ class SqlAlchemyJobRepository:
         with self._operation() as session:
             row = session.get(JobModel, job_id)
             return self._to_domain(row) if row else None
+
+    def is_claim_current(self, job_id, worker_id, attempt, now):
+        with self._operation() as session:
+            return (
+                session.scalar(
+                    select(JobModel.id)
+                    .where(*self._claim_predicate(job_id, worker_id, attempt, now))
+                    .limit(1)
+                )
+                is not None
+            )
 
     def claim_due(self, worker_id: str, now: datetime, lease_until: datetime) -> Job | None:
         with self._operation() as session:
@@ -175,6 +212,7 @@ class SqlAlchemyJobRepository:
                 .where(*self._claim_predicate(job.id, worker_id, job.attempt_count, now))
                 .values(
                     status=job.status.value,
+                    available_at=job.available_at,
                     lease_owner=None,
                     lease_until=None,
                     payload_json=json.dumps(job.payload, ensure_ascii=False, default=str),

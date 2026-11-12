@@ -173,6 +173,8 @@ def run_schedule(schedule_id: str):
         "live-analysis",
     }:
         raise ValidationError("不支持的任务类型")
+    if task_type == "market-data-nightly":
+        task_type = "market-data-collection"
     payload = dict(item.get("configuration", {}))
     if task_type == "market-data-acquisition" and payload.get("mode") == "daily-update":
         calendar = TradingCalendar(container.market_data.list_trading_days() or None)
@@ -199,6 +201,11 @@ def run_schedule(schedule_id: str):
             now,
         )
     )
+    if task_type == "market-data-collection" and job.id != job_id:
+        original = {key: value for key, value in job.payload.items() if key != "collection"}
+        if job.status.value not in {"queued", "running"} and original != payload:
+            raise StateConflictError("幂等键已用于其他配置，请使用新的执行请求")
+        return success({"id": job.id, "status": job.status.value}, status=202)
     if job.job_type != task_type or job.payload != payload:
         raise StateConflictError("幂等键已用于其他配置，请使用新的执行请求")
     if job.id != job_id:

@@ -126,7 +126,12 @@ def extract_factor_dependencies(source_code: str) -> set[str]:
     from easy_quant.factors.registry import build_default_registry
 
     factor_datasets = {item.key: item.datasets for item in build_default_registry().list()}
-    library_datasets = {"market.daily-bars": ("daily-bars",), "market.value": ("market-values",)}
+    from easy_quant.platform_library.catalog import build_library_registry
+
+    library_datasets = {item.key: item.datasets for item in build_library_registry().list()}
+    library_datasets.update(
+        {"market.daily-bars": ("daily-bars",), "market.value": ("market-values",)}
+    )
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue

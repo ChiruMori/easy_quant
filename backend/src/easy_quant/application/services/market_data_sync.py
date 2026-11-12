@@ -8,8 +8,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.ports.storage_errors import StorageFailure
+from easy_quant.application.services.acquisition import AcquisitionFailed
 from easy_quant.domain.market_data.calendar import TradingCalendar
 from easy_quant.domain.market_data.entities import SemanticRequest
+from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
 from easy_quant.domain.market_data.indices import INDEX_CATALOG, index_instruments, is_index
 from easy_quant.domain.market_data.quotes import normalize_live_quotes
 from easy_quant.domain.shared.errors import DomainError, StateConflictError
@@ -48,6 +51,31 @@ def _rows(payload: bytes) -> object:
     return json.loads(payload.decode("utf-8"))
 
 
+def validate_securities_response(request: SemanticRequest, payload: bytes) -> None:
+    value = _rows(payload)
+    if isinstance(value, dict):
+        data = value.get("data")
+        if not isinstance(data, dict):
+            raise ValueError("证券清单结构无效")
+        rows = data.get("diff")
+        if not isinstance(rows, list) or len(rows) != int(data["total"]):
+            raise ValueError("证券清单不完整，拒绝缓存并切换来源")
+    else:
+        rows = value
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("证券清单为空，拒绝缓存并切换来源")
+    codes = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("证券记录格式无效")
+        raw = row.get("code") or row.get("代码") or row.get("f12")
+        code = str(raw).zfill(6) if raw is not None else ""
+        name = row.get("name") or row.get("名称") or row.get("f14")
+        if len(code) != 6 or not code.isdigit() or code in codes or not name:
+            raise ValueError("证券清单代码、名称无效或重复")
+        codes.add(code)
+
+
 class MarketDataSyncService:
     """把真实来源的原始响应归一化写入平台仓储。"""
 
@@ -80,16 +108,23 @@ class MarketDataSyncService:
             if not symbols or start_day is None or end_day is None:
                 raise ValueError("同步日线需要股票、开始日期和结束日期")
             return self._sync_daily_bars(symbols, start_day, end_day, force, source_keys)
+        if dataset_key in FINANCIAL_DATASETS:
+            from easy_quant.application.services.financial_sync import sync_financial
+
+            if end_day is None or (start_day and start_day > end_day):
+                raise ValueError("财务同步需要有效的起止日期")
+            if any(is_index(symbol) for symbol in symbols or []):
+                raise ValueError("指数没有公司财报")
+            return sync_financial(
+                self, dataset_key, symbols or [], start_day, end_day, force, source_keys
+            )
         if dataset_key in {
             "market-values",
             "pledge-ratios",
-            "financial-indicators",
             "sw-industry-memberships",
         }:
             if end_day is None:
                 raise ValueError("同步基本面数据需要结束日期作为数据时点")
-            if dataset_key == "financial-indicators" and not symbols:
-                raise ValueError("同步财务指标需要指定股票")
             return self._sync_generic(
                 dataset_key, symbols or [], start_day, end_day, force, source_keys
             )
@@ -294,6 +329,8 @@ class MarketDataSyncService:
                     ),
                     None,
                 )
+            except StorageFailure:
+                raise
             except (DomainError, ValueError, InvalidOperation) as error:
                 details = getattr(error, "details", {})
                 attempts.extend(
@@ -420,7 +457,7 @@ class MarketDataSyncService:
                         SemanticRequest("daily-bars", parameters, "validation"),
                         json.dumps(value).encode(),
                     )
-            except Exception as error:
+            except (AcquisitionFailed, ValueError) as error:
                 if not is_index(symbol):
                     raise
                 details = getattr(error, "details", {})
@@ -465,8 +502,6 @@ class MarketDataSyncService:
             ]
         )
         if failures:
-            from easy_quant.application.services.acquisition import AcquisitionFailed
-
             raise AcquisitionFailed(
                 "部分指数同步失败，请检查来源并重试失败标的",
                 {
@@ -501,12 +536,7 @@ class MarketDataSyncService:
         source_keys: set[str] | None,
     ) -> dict[str, object]:
         requests: list[dict[str, object]]
-        if dataset_key == "financial-indicators":
-            requests = [
-                {"symbol": str(symbol).zfill(6), "start_year": str((start_day or end_day).year)}
-                for symbol in symbols
-            ]
-        elif dataset_key == "pledge-ratios":
+        if dataset_key == "pledge-ratios":
             requests = [{"date": end_day.strftime("%Y%m%d")}]
         else:
             requests = [{"date": end_day.isoformat()}]
@@ -558,24 +588,6 @@ class MarketDataSyncService:
                     f"{symbol}|{available_day.isoformat()}|{index}|{serialized}".encode()
                 ).hexdigest()
                 mapped = dict(row)
-                if dataset_key == "financial-indicators":
-                    mapped["report_period"] = str(row.get("报告期") or row.get("日期") or "")[:10]
-                    mapped["publication_time_known"] = bool(announced)
-                    for target, aliases in {
-                        "roe": ("roe", "净资产收益率(%)"),
-                        "adjusted_net_profit": (
-                            "adjusted_net_profit",
-                            "扣除非经常性损益后的净利润(元)",
-                        ),
-                        "net_profit": ("net_profit", "净利润(元)"),
-                    }.items():
-                        raw_number = next(
-                            (row[name] for name in aliases if row.get(name) not in (None, "", "-")),
-                            None,
-                        )
-                        mapped[target] = (
-                            str(Decimal(str(raw_number))) if raw_number is not None else None
-                        )
                 if dataset_key == "market-values":
                     mapped.update(
                         pe_ratio=row.get("f9"),
