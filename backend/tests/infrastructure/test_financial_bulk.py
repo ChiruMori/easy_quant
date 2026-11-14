@@ -64,3 +64,23 @@ def test_incomplete_bulk_page_is_rejected_before_persistence(result):
         pytest.raises(ValueError),
     ):
         EastMoneyBulkFinancialSource(client).page("balance-sheets", "2025-12-31", 1, {"000001"})
+
+
+def test_invalid_stock_does_not_discard_other_stocks_and_exposes_context():
+    rows = [
+        FIXTURE["indicators"],
+        {**FIXTURE["indicators"], "SECURITY_CODE": "000002", "ROEJQ": "NaN"},
+    ]
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, json={"success": True, "result": {"count": 2, "pages": 1, "data": rows}}
+            )
+        )
+    ) as client:
+        page = EastMoneyBulkFinancialSource(client).page(
+            "financial-indicators", "2025-12-31", 1, {"000001", "000002"}
+        )
+    assert len(page.rows) == 1
+    assert page.failures[0]["symbol"] == "000002"
+    assert "2025-12-31" in page.failures[0]["message"]

@@ -100,12 +100,25 @@ def ensure_dataset_catalog(datasets: Any) -> list[dict[str, Any]]:
         if dataset["key"] not in keys:
             datasets.append(dataset)
             rows.append(dataset)
-        elif dataset["key"] in {"financial-indicators", "pledge-ratios"}:
+        elif dataset["key"] in {
+            "financial-indicators",
+            "pledge-ratios",
+            "securities",
+            "security-status",
+            "market-values",
+        }:
             current = next(row for row in rows if row["key"] == dataset["key"])
             original_sources = current["sources"]
             legacy_enabled = any(source.get("enabled", True) for source in original_sources)
             current["sources"] = [
-                source for source in original_sources if source["key"] != "akshare"
+                source
+                for source in original_sources
+                if source["key"]
+                not in (
+                    {"eastmoney", "akshare"}
+                    if dataset["key"] in {"securities", "security-status", "market-values"}
+                    else {"akshare"}
+                )
             ]
             present = {row["key"] for row in current["sources"]}
             additions = [
@@ -142,19 +155,13 @@ def _default_datasets() -> list[dict[str, Any]]:
             "key": "security-status",
             "name": "证券风险状态",
             "description": "随证券清单同步的 ST、上市日期及交易状态快照",
-            "sources": [
-                {"key": "eastmoney", "name": "东方财富", "enabled": True},
-                {"key": "akshare", "name": "AKShare", "enabled": True},
-            ],
+            "sources": [{"key": "sina", "name": "新浪财经（直连）", "enabled": True}],
         },
         {
             "key": "securities",
             "name": "证券列表",
             "description": "沪深股票代码、名称与交易所",
-            "sources": [
-                {"key": "eastmoney", "name": "东方财富", "enabled": True},
-                {"key": "akshare", "name": "AKShare", "enabled": True},
-            ],
+            "sources": [{"key": "sina", "name": "新浪财经（直连）", "enabled": True}],
         },
         {
             "key": "daily-bars",
@@ -176,7 +183,7 @@ def _default_datasets() -> list[dict[str, Any]]:
             "key": "market-values",
             "name": "估值与市值",
             "description": "市盈率、市净率、总市值与流通市值",
-            "sources": [{"key": "eastmoney", "name": "东方财富", "enabled": True}],
+            "sources": [{"key": "sina", "name": "新浪财经（直连）", "enabled": True}],
         },
         {
             "key": "pledge-ratios",
@@ -411,28 +418,9 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
     clock, sleeper = SystemClock(), SystemSleeper()
     eastmoney = EastMoneySource(EastMoneyClient(data_client(timeout=20.0)))
 
-    def akshare_securities(**_: object):
-        sh_main = ak.stock_info_sh_name_code(symbol="主板A股").rename(
-            columns={"证券代码": "code", "证券简称": "name", "上市日期": "listed_on"}
-        )
-        sh_star = ak.stock_info_sh_name_code(symbol="科创板").rename(
-            columns={"证券代码": "code", "证券简称": "name", "上市日期": "listed_on"}
-        )
-        sz = ak.stock_info_sz_name_code().rename(
-            columns={"A股代码": "code", "A股简称": "name", "A股上市日期": "listed_on"}
-        )
-        bj = ak.stock_info_bj_name_code().rename(
-            columns={"证券代码": "code", "证券简称": "name", "上市日期": "listed_on"}
-        )
-        if any(frame.empty for frame in (sh_main, sh_star, sz, bj)):
-            raise ValueError("证券清单缺少交易所数据")
-        columns = ["code", "name", "listed_on"]
-        return pd.concat(
-            [frame.reindex(columns=columns) for frame in (sh_main, sh_star, sz, bj)],
-            ignore_index=True,
-        )
+    from easy_quant.infrastructure.data_sources.sina_market import SinaMarketSource
 
-    securities_ak = AkShareSource({"securities": akshare_securities})
+    sina_market = SinaMarketSource(data_client(timeout=20.0, trust_env=False))
     ak_stocks = AkShareSource(
         {
             "daily-bars": lambda **parameters: ak.stock_zh_a_hist(
@@ -476,7 +464,6 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
     pledge_em = EastMoneyPledgeSource(data_client(timeout=20.0, trust_env=False))
 
     def industry_memberships(**_parameters):
-        import pandas as pd
 
         rows = []
         before_data_request()
@@ -559,12 +546,12 @@ def _build_market_data_sync(container: Container, raw_cache: Any) -> MarketDataS
 
     return MarketDataSyncService(
         {
-            "securities": acquisition([securities_ak, eastmoney], securities=True),
+            "securities": acquisition([sina_market], securities=True),
             "trading-status": acquisition([eastmoney]),
             "daily-bars": acquisition([daily_ak, eastmoney, daily_tencent], daily=True),
             "trading-calendar": acquisition([calendar_ak]),
             "live-quotes": quotes_acquisition,
-            "market-values": acquisition([eastmoney]),
+            "market-values": acquisition([sina_market]),
             "pledge-ratios": acquisition([pledge_em]),
             **financial_acquisitions,
             "sw-industry-memberships": acquisition([industry_ak]),

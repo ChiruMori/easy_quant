@@ -183,37 +183,15 @@ def test_runtime_container_always_uses_configured_database(monkeypatch, fixed_no
     assert automatic["next_run_at"] == fixed_now.isoformat()
 
 
-def test_security_catalog_includes_both_shanghai_boards(monkeypatch) -> None:
-    import akshare as ak
-    import pandas as pd
-
+def test_security_catalog_uses_direct_sina_market_for_securities_and_values() -> None:
     from tests.fakes.platform import make_test_container
 
-    seen: list[str] = []
-
-    def sh_board(*, symbol: str):
-        seen.append(symbol)
-        code = "600001" if symbol == "主板A股" else "688001"
-        return pd.DataFrame([{"证券代码": code, "证券简称": symbol}])
-
-    monkeypatch.setattr(ak, "stock_info_sh_name_code", sh_board)
-    monkeypatch.setattr(
-        ak,
-        "stock_info_sz_name_code",
-        lambda: pd.DataFrame([{"A股代码": "000001", "A股简称": "深市"}]),
-    )
-    monkeypatch.setattr(
-        ak,
-        "stock_info_bj_name_code",
-        lambda: pd.DataFrame([{"证券代码": "830001", "证券简称": "北交所"}]),
-    )
     container = make_test_container()
     service = bootstrap._build_market_data_sync(container, object())
-    source = cast(Any, service.acquisitions["securities"]).sources[0]
-    rows = source.functions["securities"]()
-
-    assert seen == ["主板A股", "科创板"]
-    assert set(rows["code"]) == {"600001", "688001", "000001", "830001"}
+    for dataset in ("securities", "market-values"):
+        assert [source.key for source in cast(Any, service.acquisitions[dataset]).sources] == [
+            "sina"
+        ]
 
 
 def test_akshare_daily_bars_use_requested_adjustment(monkeypatch) -> None:

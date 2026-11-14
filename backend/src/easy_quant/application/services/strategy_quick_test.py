@@ -111,7 +111,9 @@ def _execute_strategy_tick(
         )
     generic_records: dict[str, list[dict[str, object]]] = {}
     for dataset in dependencies - {"daily-bars"}:
-        rows = container.market_data.list_records(dataset)
+        rows = container.market_data.list_records(
+            dataset, as_of=datetime.combine(trading_day, time.max, tzinfo=ZoneInfo("Asia/Shanghai"))
+        )
         if not rows:
             raise StateConflictError(
                 f"策略运行依赖的数据集 {dataset} 尚未同步",

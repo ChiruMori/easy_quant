@@ -66,6 +66,10 @@ export const getFundamentals = (symbol: string) =>
   apiRequest<FundamentalsOverview>(
     `/market-data/instruments/${encodeURIComponent(symbol)}/fundamentals`,
   )
+export const getReportSeries = (symbol: string, dataset: string, source: string) =>
+  apiRequest<{ items: FundamentalRecord[]; source: string; sources: string[]; as_of: string }>(
+    `/market-data/instruments/${encodeURIComponent(symbol)}/reports/${encodeURIComponent(dataset)}?source=${encodeURIComponent(source)}`,
+  )
 export const getFundamentalRecords = (symbol: string, dataset: string, page: number) =>
   apiRequest<{ items: FundamentalRecord[]; total: number; page: number; page_size: number }>(
     `/market-data/instruments/${encodeURIComponent(symbol)}/fundamentals/${encodeURIComponent(dataset)}?page=${page}&page_size=5`,

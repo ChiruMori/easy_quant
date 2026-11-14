@@ -37,6 +37,53 @@ def setup_collection():
     return container, calls, registry, job
 
 
+def test_old_completed_reports_do_not_refetch_when_thirty_days_expire():
+    container, calls, registry, job = setup_collection()
+    handler = registry.get(job.job_type)
+    handler(job)
+    work = units(date(2026, 9, 28))
+    index = next(
+        i
+        for i, unit in enumerate(work)
+        if unit == {"dataset": "balance-sheets", "period": "2024-12-31"}
+    )
+    job.payload["collection"]["unit"] = index
+    checkpoint = {
+        "completed_at": (container.authentication.clock.now() - timedelta(days=90)).isoformat()
+    }
+    container.collection_checkpoints["balance-sheets:2024-12-31"] = checkpoint.copy()
+    handler(job)
+    assert job.payload["collection"]["unit"] == index + 1
+    assert container.collection_checkpoints["balance-sheets:2024-12-31"] == checkpoint
+    assert len(calls) == 1
+
+
+def test_daily_collection_fills_internal_gap_even_with_current_last_bar():
+    container, calls, registry, job = setup_collection()
+    handler = registry.get(job.job_type)
+    handler(job)
+    state = job.payload["collection"]
+    state["bar_day"] = "2026-09-28"
+    state["unit"] = next(
+        i for i, unit in enumerate(units(date(2026, 9, 28))) if unit["dataset"] == "daily-bars"
+    )
+    container.market_data.instruments.clear()
+    container.market_data.upsert_instruments([{"symbol": "000001"}])
+    container.market_data.upsert_trading_days([date(2026, 9, day) for day in (24, 25, 28)])
+    for day in (24, 28):
+        container.market_data.daily_bars[("000001", f"2026-09-{day}")] = {
+            "symbol": "000001",
+            "trading_day": f"2026-09-{day}",
+        }
+    handler(job)
+    assert calls[-1][0] == "daily-bars"
+    assert calls[-1][1]["start_day"] == date(2026, 9, 25)
+    assert calls[-1][1]["end_day"] == date(2026, 9, 28)
+    assert container.collection_checkpoints["daily-bars:000001"]["missing_checked"] == {
+        "2026-09-25": "2026-09-28"
+    }
+
+
 def test_nightly_keeps_one_resumable_job_and_never_fans_out():
     container, calls, registry, job = setup_collection()
     container.jobs.enqueue(job)

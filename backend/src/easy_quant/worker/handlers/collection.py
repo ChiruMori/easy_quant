@@ -90,7 +90,7 @@ def collect(container, job, enabled_sources):
     checkpoint_key = f"{dataset}:{period}"
     checkpoints = container.collection_checkpoints
     previous = checkpoints.get(checkpoint_key)
-    # 最新两个季度每日复查；旧报告30天、概况7天、主营30天复查。
+    # 近期报告每日复查；旧报告完成后保留检查点，概况7天、主营30天复查。
     recent = period and (day - date.fromisoformat(period)).days <= 190
     ttl = timedelta(
         days=1
@@ -99,10 +99,14 @@ def collect(container, job, enabled_sources):
         if dataset == "company-profiles"
         else 30
     )
+    historical_complete = bool(period and not recent and previous)
     fresh = previous and (
-        previous.get("bar_day") == state["bar_day"]
-        if dataset == "daily-bars"
-        else now - datetime.fromisoformat(previous["completed_at"]) < ttl
+        historical_complete
+        or (
+            previous.get("bar_day") == state["bar_day"]
+            if dataset == "daily-bars"
+            else now - datetime.fromisoformat(previous["completed_at"]) < ttl
+        )
     )
     done = False
     candidates, symbol = [], ""
@@ -123,6 +127,11 @@ def collect(container, job, enabled_sources):
                 raise ValueError("证券清单为空，不能确认批量财务覆盖")
             response = container.financial_bulk.page(dataset, period, state["page"], symbols)
             rows, pages, count = response
+            failures = getattr(response, "failures", [])
+            if failures:
+                state["failed_count"] = state.get("failed_count", 0) + len(failures)
+                state["failed"] = [*state["failed"], *failures][:20]
+                state["had_failure"] = True
             if state["page"] > 1 and state.get("expected") != count:
                 raise ValueError("来源分页总量变化；保留已保存记录，等待重试")
             fingerprint = getattr(response, "fingerprint", None)
@@ -136,11 +145,20 @@ def collect(container, job, enabled_sources):
             ):
                 raise ValueError("批量来源分页重复或回退，不能确认完整覆盖")
             matched = state.get("matched", 0) + len(rows)
-            if state["page"] >= pages and count > 0 and matched == 0:
+            if (
+                state["page"] >= pages
+                and count > 0
+                and matched == 0
+                and not state.get("had_failure")
+            ):
                 raise ValueError("来源有记录但未匹配已知股票，不能确认覆盖")
             state["matched"] = matched
             added, same = save_financial_rows(
-                container.market_data, dataset, rows, "eastmoney", now
+                container.market_data,
+                dataset,
+                rows,
+                "eastmoney",
+                container.authentication.clock.now(),
             )
             state["records"] += added
             state["unchanged"] += same
@@ -175,11 +193,32 @@ def collect(container, job, enabled_sources):
                     state["last_symbol"] = symbol
                     continue
                 start = date(day.year - 5, 1, 1)
+                missing_checks = dict((last or {}).get("missing_checked", {}))
                 if dataset == "daily-bars":
                     bounds = container.market_data.bar_coverage([symbol]).get(symbol, {})
                     day = date.fromisoformat(state["bar_day"])
+                    missing = []
+                    first = bounds.get("first_day")
                     start = bounds.get("last_day") or day - timedelta(days=365)
-                    if start >= day:
+                    if first:
+                        # 仅检查已有历史覆盖内的真实交易日缺口；上市前不要求日线。
+                        begin = max(first, date(day.year - 5, 1, 1))
+                        missing = container.market_data.missing_bar_days(symbol, begin, day)
+                        # 已尝试但来源无数据的旧缺口30天后再查；近期缺口每日复查。
+                        missing = [
+                            value
+                            for value in missing
+                            if value >= day - timedelta(days=7)
+                            or value.isoformat() not in missing_checks
+                            or (day - date.fromisoformat(missing_checks[value.isoformat()])).days
+                            >= 30
+                        ]
+                        if missing:
+                            start = missing[0]
+                            missing_checks.update(
+                                {value.isoformat(): day.isoformat() for value in missing}
+                            )
+                    if start >= day and not (first and missing):
                         state["last_symbol"] = symbol
                         continue
                 result = container.data_sync.sync(
@@ -191,7 +230,11 @@ def collect(container, job, enabled_sources):
                     source_keys={"eastmoney"} & sources if sources is not None else {"eastmoney"},
                 )
                 state["records"] += int(result.get("record_count", 0))
-                checkpoints[key] = {"completed_at": now.isoformat(), "bar_day": state["bar_day"]}
+                checkpoints[key] = {
+                    "completed_at": now.isoformat(),
+                    "bar_day": state["bar_day"],
+                    **({"missing_checked": missing_checks} if dataset == "daily-bars" else {}),
+                }
                 state["last_symbol"] = symbol
                 break  # 单个有网络的标的完成即让出worker；已新鲜标的可在同一领取中跳过100个。
         else:
@@ -203,9 +246,7 @@ def collect(container, job, enabled_sources):
                 else now.astimezone(ZoneInfo("Asia/Shanghai")).date()
                 if dataset in {"market-values", "sw-industry-memberships"}
                 else day,
-                source_keys=({"eastmoney"} & sources if sources is not None else {"eastmoney"})
-                if dataset == "securities"
-                else sources,
+                source_keys=sources,
                 **(
                     {"confirmation_source_keys": {"eastmoney"}}
                     if dataset == "trading-status"
@@ -238,7 +279,12 @@ def collect(container, job, enabled_sources):
         state["failed_count"] = state.get("failed_count", 0) + 1
         state["failed"] = state["failed"][:19]
         state["failed"].append(
-            {**unit, "symbol": symbol or state["last_symbol"], "message": _safe_source_error(error)}
+            {
+                **unit,
+                "symbol": symbol or state["last_symbol"],
+                "message": _safe_source_error(error),
+                "attempts": getattr(error, "details", {}).get("attempts", []),
+            }
         )
         if dataset in {"daily-bars", "business-compositions"} and candidates:
             state["last_symbol"] = symbol

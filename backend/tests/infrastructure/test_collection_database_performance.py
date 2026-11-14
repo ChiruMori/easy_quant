@@ -72,6 +72,51 @@ def test_financial_versions_project_only_metadata_and_current_period():
     assert "json_extract" in str(compiled)
 
 
+def test_missing_bar_query_only_projects_missing_dates_and_does_not_load_calendar_or_ohlc():
+    statements = []
+
+    class SessionFake:
+        def scalars(self, statement):
+            statements.append(statement)
+            return [date(2026, 9, 25)]
+
+    store = SqlAlchemyMarketDataStore(cast(Session, SessionFake()))
+    assert store.missing_bar_days("000001", date(2026, 9, 24), date(2026, 9, 28)) == [
+        date(2026, 9, 25)
+    ]
+    sql = str(
+        statements[0].compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+    assert len(statements[0].selected_columns) == 1
+    assert "LEFT OUTER JOIN" in sql and "symbol = '000001'" in sql
+    assert "2026-09-24" in sql and "2026-09-28" in sql and "IS NULL" in sql
+
+
+def test_status_snapshot_latest_read_is_bounded_per_symbol_batch_and_only_decodes_latest():
+    import json
+
+    statements = []
+    payload = {
+        "symbol": "000001",
+        "record_key": "first",
+        "available_at": "2026-09-01T00:00:00+00:00",
+        "status": "active",
+    }
+
+    class SessionFake:
+        def scalars(self, statement):
+            statements.append(statement)
+            return [json.dumps(payload)]
+
+    store = SqlAlchemyMarketDataStore(cast(Session, SessionFake()))
+    assert store.latest_records("security-status", ["000001"])["000001"] == payload
+    sql = str(
+        statements[0].compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+    assert "row_number() OVER (PARTITION BY" in sql and "position = 1" in sql
+    assert "IN ('000001')" in sql and "security-status" in sql
+
+
 def test_instrument_cursor_and_lease_check_select_only_required_columns(fixed_now):
     statements = []
 

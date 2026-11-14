@@ -13,6 +13,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 import { getInstrument, getInstrumentDailyBars, updateInstrumentStatus } from "../api"
 import { aggregateCandles, type CandlePeriod } from "../candles"
+import { FinancialReportsPanel } from "../components/financial-reports-panel"
 import { FundamentalsPanel } from "../components/fundamentals-panel"
 
 const CandlestickChart = lazy(() =>
@@ -208,7 +209,13 @@ export function InstrumentDetailPage({ readOnly = false }: { readOnly?: boolean 
           )}
         </CardContent>
       </Card>
-      {!isIndex && <FundamentalsPanel key={symbol} symbol={symbol} />}
+      {!isIndex && (
+        <>
+          <FinancialReportsPanel key={`${symbol}-reports`} symbol={symbol} />
+          <FinancialReportsPanel key={`${symbol}-business`} symbol={symbol} business />
+          <FundamentalsPanel key={symbol} symbol={symbol} />
+        </>
+      )}
     </div>
   )
 }

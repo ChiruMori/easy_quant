@@ -3,7 +3,7 @@
 import hashlib
 import json
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from math import ceil
 from typing import Any
@@ -29,6 +29,7 @@ class BulkPage:
     fingerprint: str
     first_code: str
     last_code: str
+    failures: list[dict] = field(default_factory=list)
 
     def __iter__(self) -> Iterator[Any]:
         yield self.rows
@@ -76,7 +77,7 @@ class EastMoneyBulkFinancialSource:
             or len(rows) != min(500, max(0, count - (page - 1) * 500))
         ):
             raise ValueError("批量财务分页数量不完整")
-        normalized, identities = [], set()
+        normalized, identities, failures = [], set(), []
         for row in rows:
             symbol = str(row["SECURITY_CODE"]).zfill(6)
             identity = json.dumps(row, sort_keys=True, default=str)
@@ -85,9 +86,19 @@ class EastMoneyBulkFinancialSource:
             identities.add(identity)
             if symbol not in symbols:
                 continue
-            normalized.append(
-                {**normalize_financial(dataset, symbol, row), "source_format": "bulk-v1"}
-            )
+            try:
+                normalized.append(
+                    {**normalize_financial(dataset, symbol, row), "source_format": "bulk-v1"}
+                )
+            except ValueError as error:
+                failures.append(
+                    {
+                        "dataset": dataset,
+                        "period": period,
+                        "symbol": symbol,
+                        "message": f"{dataset} {symbol} {period}：{error}",
+                    }
+                )
         codes = [str(row["SECURITY_CODE"]).zfill(6) for row in rows]
         if codes != sorted(codes):
             raise ValueError("批量来源未按股票代码稳定排序")
@@ -98,4 +109,5 @@ class EastMoneyBulkFinancialSource:
             hashlib.sha256(json.dumps(rows, sort_keys=True, default=str).encode()).hexdigest(),
             codes[0] if codes else "",
             codes[-1] if codes else "",
+            failures,
         )

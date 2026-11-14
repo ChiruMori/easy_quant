@@ -590,10 +590,10 @@ class MarketDataSyncService:
                 mapped = dict(row)
                 if dataset_key == "market-values":
                     mapped.update(
-                        pe_ratio=row.get("f9"),
-                        pb_ratio=row.get("f23"),
-                        market_cap=row.get("f20"),
-                        circulating_market_cap=row.get("f21"),
+                        pe_ratio=row.get("pe_ratio", row.get("f9")),
+                        pb_ratio=row.get("pb_ratio", row.get("f23")),
+                        market_cap=row.get("market_cap", row.get("f20")),
+                        circulating_market_cap=row.get("circulating_market_cap", row.get("f21")),
                     )
                 normalized.append(
                     {

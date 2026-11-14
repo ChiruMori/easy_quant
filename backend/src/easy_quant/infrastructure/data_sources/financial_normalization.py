@@ -118,8 +118,9 @@ def normalize_financial(dataset: str, symbol: str, row: dict, labels: dict | Non
                 value = number(value)
             cleaned[str(key)] = str(value)
         output["raw_fields"] = cleaned
-    if period and published and period > published[:10]:
-        raise ValueError("财报公告早于报告期，拒绝倒填时间")
+    # 分红预案可以提前公告；其他财报保留来源原值，但不据此倒灌历史。
+    if period and published and period > published[:10] and dataset != "dividend-plans":
+        output["time_warning"] = f"{symbol} {dataset} {period}：公告早于报告期，按采集时点可见"
     output["field_labels"] = labels or {}
     output["field_units"] = {
         key: item[1] for key, item in FIELD_METADATA.items() if output.get(key) is not None

@@ -207,7 +207,7 @@ def _analyze_live_instance(
     checkpoint("records")
     records: dict[str, dict[str, list[dict[str, object]]]] = {}
     for dataset in dependencies - {"daily-bars"}:
-        dataset_rows = container.market_data.list_records(dataset)
+        dataset_rows = container.market_data.list_records(dataset, as_of=cutoff)
         if not dataset_rows:
             raise StateConflictError(
                 f"实盘分析依赖的数据集 {dataset} 尚未同步",

@@ -110,7 +110,7 @@ def _execute_backtest(
     generic_missing = [
         dataset
         for dataset in sorted(dependencies - {"daily-bars"})
-        if not container.market_data.list_records(dataset)
+        if not container.market_data.has_records(dataset)
     ]
     if generic_missing:
         raise StateConflictError(
@@ -216,7 +216,9 @@ def _execute_backtest(
     generic_records = {
         dataset: [
             row
-            for row in container.market_data.list_records(dataset)
+            for row in container.market_data.list_records(
+                dataset, as_of=datetime.combine(end_day, time.max, tzinfo=UTC)
+            )
             if str(row.get("symbol", "")) not in excluded
         ]
         for dataset in dependencies - {"daily-bars"}
