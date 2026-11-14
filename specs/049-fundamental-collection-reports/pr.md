@@ -1,6 +1,6 @@
 # fix(data): 优化基本面批量采集与存储并新增股票报表
 
-目标：master；来源：fix/fundamental-collection-reports。状态：未创建 PR，GitHub 连接器403，浏览器工具因当前 Firefox 不支持 URL 策略而停止。
+目标：master；来源：fix/fundamental-collection-reports。状态：提交1f29185已推送；本轮创建草稿PR再次返回 GitHub 连接器403，PR未创建。此前浏览器工具因当前 Firefox 不支持 URL 策略而停止。
 
 证券清单及估值采集失败、提前分红公告导致整页拒收、重复证券状态和宽 JSON 存储使基本面采集难以持续运行。本次改为经过只读探测的新浪直连证券/估值分页，修正时间语义与增量检查点，并在股票详情提供财报和主营图表及单股报告期补采。
 
