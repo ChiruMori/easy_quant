@@ -148,15 +148,14 @@ def test_fresh_stock_batch_skips_100_in_one_claim_without_waiting_or_rescanning_
     handler(job)
     state = job.payload["collection"]
     state["unit"] = next(
-        i
-        for i, unit in enumerate(units(date(2026, 9, 28)))
-        if unit["dataset"] == "business-compositions"
+        i for i, unit in enumerate(units(date(2026, 9, 28))) if unit["dataset"] == "daily-bars"
     )
     now = container.authentication.clock.now()
     container.market_data.upsert_instruments([{"symbol": f"{i:06d}"} for i in range(250)])
     for i in range(250):
-        container.collection_checkpoints[f"business-compositions:{i:06d}"] = {
-            "completed_at": now.isoformat()
+        container.collection_checkpoints[f"daily-bars:{i:06d}"] = {
+            "completed_at": now.isoformat(),
+            "bar_day": state["bar_day"],
         }
 
     def unexpected():

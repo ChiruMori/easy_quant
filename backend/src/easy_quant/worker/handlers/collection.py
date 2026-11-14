@@ -48,9 +48,10 @@ def units(day):
             "market-values",
             "pledge-ratios",
             "sw-industry-memberships",
-            "business-compositions",
         )
     )
+    # 保持已有范围的索引不变，兼容升级前正在续传的任务。
+    result.extend({"dataset": "business-compositions", "period": period} for period in periods)
     return result
 
 
@@ -86,6 +87,18 @@ def collect(container, job, enabled_sources):
         return result
     unit = work[state["unit"]]
     dataset, period = unit["dataset"], unit["period"]
+    if dataset == "business-compositions" and not state.get("business_bulk_version"):
+        # 旧任务的逐股游标不代表任何批量页；仅在首次切换时重置该范围。
+        state.update(business_bulk_version=1, page=1, last_symbol="", retries=0)
+        for key in (
+            "matched",
+            "page_fingerprints",
+            "page_last_code",
+            "had_failure",
+            "expected",
+            "pages",
+        ):
+            state.pop(key, None)
     state.update(dataset_key=dataset, report_period=period)
     checkpoint_key = f"{dataset}:{period}"
     checkpoints = container.collection_checkpoints
@@ -94,7 +107,7 @@ def collect(container, job, enabled_sources):
     recent = period and (day - date.fromisoformat(period)).days <= 190
     ttl = timedelta(
         days=1
-        if recent or dataset not in FINANCIAL_DATASETS
+        if (recent and dataset != "business-compositions") or dataset not in FINANCIAL_DATASETS
         else 7
         if dataset == "company-profiles"
         else 30
@@ -115,7 +128,7 @@ def collect(container, job, enabled_sources):
         sources = enabled_sources(dataset)
         if sources == set() or (fresh and state["page"] == 1 and not state["last_symbol"]):
             done = True
-        elif dataset in FINANCIAL_DATASETS and dataset != "business-compositions":
+        elif dataset in FINANCIAL_DATASETS:
             if sources is not None and "eastmoney" not in sources:
                 raise ValueError("批量采集需要启用东方财富来源；未自动回退逐股洪泛")
             symbols = {
@@ -168,7 +181,7 @@ def collect(container, job, enabled_sources):
             state["expected"], state["pages"] = count, pages
             state["page"] += 1
             done = state["page"] > pages
-        elif dataset in {"daily-bars", "business-compositions"}:
+        elif dataset == "daily-bars":
             if sources is not None and "eastmoney" not in sources:
                 raise ValueError("串行自动采集需要启用受请求预算控制的东方财富来源")
             candidates = container.market_data.instrument_candidates(state["last_symbol"], dataset)
@@ -184,43 +197,36 @@ def collect(container, job, enabled_sources):
                 symbol = str(candidate["symbol"])
                 key = f"{dataset}:{symbol}"
                 last = recent_checks.get(key)
-                checked = last and (
-                    last.get("bar_day") == state["bar_day"]
-                    if dataset == "daily-bars"
-                    else now - datetime.fromisoformat(last["completed_at"]) < timedelta(days=30)
-                )
+                checked = last and last.get("bar_day") == state["bar_day"]
                 if checked:
                     state["last_symbol"] = symbol
                     continue
-                start = date(day.year - 5, 1, 1)
                 missing_checks = dict((last or {}).get("missing_checked", {}))
-                if dataset == "daily-bars":
-                    bounds = container.market_data.bar_coverage([symbol]).get(symbol, {})
-                    day = date.fromisoformat(state["bar_day"])
-                    missing = []
-                    first = bounds.get("first_day")
-                    start = bounds.get("last_day") or day - timedelta(days=365)
-                    if first:
-                        # 仅检查已有历史覆盖内的真实交易日缺口；上市前不要求日线。
-                        begin = max(first, date(day.year - 5, 1, 1))
-                        missing = container.market_data.missing_bar_days(symbol, begin, day)
-                        # 已尝试但来源无数据的旧缺口30天后再查；近期缺口每日复查。
-                        missing = [
-                            value
-                            for value in missing
-                            if value >= day - timedelta(days=7)
-                            or value.isoformat() not in missing_checks
-                            or (day - date.fromisoformat(missing_checks[value.isoformat()])).days
-                            >= 30
-                        ]
-                        if missing:
-                            start = missing[0]
-                            missing_checks.update(
-                                {value.isoformat(): day.isoformat() for value in missing}
-                            )
-                    if start >= day and not (first and missing):
-                        state["last_symbol"] = symbol
-                        continue
+                bounds = container.market_data.bar_coverage([symbol]).get(symbol, {})
+                day = date.fromisoformat(state["bar_day"])
+                missing = []
+                first = bounds.get("first_day")
+                start = bounds.get("last_day") or day - timedelta(days=365)
+                if first:
+                    # 仅检查已有历史覆盖内的真实交易日缺口；上市前不要求日线。
+                    begin = max(first, date(day.year - 5, 1, 1))
+                    missing = container.market_data.missing_bar_days(symbol, begin, day)
+                    # 已尝试但来源无数据的旧缺口30天后再查；近期缺口每日复查。
+                    missing = [
+                        value
+                        for value in missing
+                        if value >= day - timedelta(days=7)
+                        or value.isoformat() not in missing_checks
+                        or (day - date.fromisoformat(missing_checks[value.isoformat()])).days >= 30
+                    ]
+                    if missing:
+                        start = missing[0]
+                        missing_checks.update(
+                            {value.isoformat(): day.isoformat() for value in missing}
+                        )
+                if start >= day and not (first and missing):
+                    state["last_symbol"] = symbol
+                    continue
                 result = container.data_sync.sync(
                     dataset,
                     symbols=[symbol],
@@ -233,7 +239,7 @@ def collect(container, job, enabled_sources):
                 checkpoints[key] = {
                     "completed_at": now.isoformat(),
                     "bar_day": state["bar_day"],
-                    **({"missing_checked": missing_checks} if dataset == "daily-bars" else {}),
+                    "missing_checked": missing_checks,
                 }
                 state["last_symbol"] = symbol
                 break  # 单个有网络的标的完成即让出worker；已新鲜标的可在同一领取中跳过100个。
@@ -286,7 +292,7 @@ def collect(container, job, enabled_sources):
                 "attempts": getattr(error, "details", {}).get("attempts", []),
             }
         )
-        if dataset in {"daily-bars", "business-compositions"} and candidates:
+        if dataset == "daily-bars" and candidates:
             state["last_symbol"] = symbol
             state["retries"] = 0
             state["had_failure"] = True

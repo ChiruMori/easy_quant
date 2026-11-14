@@ -170,15 +170,13 @@ def test_active_collection_is_reused_for_new_schedule_trigger():
     assert len(container.jobs.list_all()) == 1
 
 
-def test_fallback_failure_does_not_skip_remaining_stocks_or_create_child_jobs():
+def test_daily_failure_does_not_skip_remaining_stocks_or_create_child_jobs():
     container, _, registry, job = setup_collection()
     handler = registry.get(job.job_type)
     handler(job)
     state = job.payload["collection"]
     state["unit"] = next(
-        i
-        for i, unit in enumerate(units(date(2026, 9, 28)))
-        if unit["dataset"] == "business-compositions"
+        i for i, unit in enumerate(units(date(2026, 9, 28))) if unit["dataset"] == "daily-bars"
     )
     calls = []
 
@@ -235,3 +233,96 @@ def test_cross_day_collection_does_not_discard_current_snapshot_as_future_data()
     handler(job)
     assert calls[-1][1]["end_day"] == clock.now().astimezone(ZoneInfo("Asia/Shanghai")).date()
     assert state["day"] == "2026-09-28"
+
+
+def test_business_upgrade_resets_legacy_stock_cursor_then_resumes_pages_without_stock_requests():
+    container, calls, registry, job = setup_collection()
+    handler = registry.get(job.job_type)
+    handler(job)
+    state = job.payload["collection"]
+    work = units(date(2026, 9, 28))
+    index = next(i for i, unit in enumerate(work) if unit["dataset"] == "business-compositions")
+    state.update(unit=index, last_symbol="000025", retries=2)
+    seen = []
+
+    class Bulk:
+        def page(self, dataset, period, page, symbols):
+            seen.append((dataset, period, page))
+            return (
+                [
+                    {
+                        "schema_version": "financial-v1",
+                        "symbol": "000001",
+                        "report_period": period,
+                        "item_name": f"项目{page}",
+                        "category": "2",
+                    }
+                ],
+                2,
+                501,
+            )
+
+    container.financial_bulk = Bulk()
+    # 旧的逐股/全范围检查点不能误认为新报告期已批量完成。
+    container.collection_checkpoints["business-compositions:"] = {
+        "completed_at": container.authentication.clock.now().isoformat()
+    }
+    handler(job)
+    assert state["page"] == 2 and state["last_symbol"] == ""
+    assert f"business-compositions:{work[index]['period']}" not in container.collection_checkpoints
+    handler(job)
+    assert [item[2] for item in seen] == [1, 2]
+    assert state["unit"] == index + 1
+    assert f"business-compositions:{work[index]['period']}" in container.collection_checkpoints
+    assert len(calls) == 1  # 仅初始化时的交易日历，未调用逐股同步。
+    assert not container.jobs.list_all()
+
+
+@pytest.mark.parametrize(
+    ("period", "age", "should_fetch"),
+    [("2024-12-31", 400, False), ("2026-06-30", 29, False), ("2026-06-30", 31, True)],
+)
+def test_business_refresh_uses_period_checkpoints_and_thirty_day_recent_ttl(
+    period, age, should_fetch
+):
+    container, _, registry, job = setup_collection()
+    handler = registry.get(job.job_type)
+    handler(job)
+    state = job.payload["collection"]
+    state["unit"] = units(date(2026, 9, 28)).index(
+        {"dataset": "business-compositions", "period": period}
+    )
+    container.collection_checkpoints[f"business-compositions:{period}"] = {
+        "completed_at": (container.authentication.clock.now() - timedelta(days=age)).isoformat()
+    }
+    seen = []
+
+    class Bulk:
+        def page(self, *args):
+            seen.append(args)
+            return [], 0, 0
+
+    container.financial_bulk = Bulk()
+    handler(job)
+    assert bool(seen) == should_fetch
+
+
+def test_failed_business_page_does_not_checkpoint_and_continues_other_report_periods():
+    container, _, registry, job = setup_collection()
+    handler = registry.get(job.job_type)
+    handler(job)
+    state = job.payload["collection"]
+    work = units(date(2026, 9, 28))
+    index = next(i for i, unit in enumerate(work) if unit["dataset"] == "business-compositions")
+    state["unit"] = index
+
+    class Broken:
+        def page(self, *args):
+            raise ValueError("unavailable")
+
+    container.financial_bulk = Broken()
+    for _ in range(3):
+        handler(job)
+    assert state["unit"] == index + 1
+    assert f"business-compositions:{work[index]['period']}" not in container.collection_checkpoints
+    assert state["failed"][0]["period"] == work[index]["period"]

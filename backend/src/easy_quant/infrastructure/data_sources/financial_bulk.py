@@ -18,7 +18,15 @@ REPORTS = {
     "company-profiles": "RPT_F10_ORG_BASICINFO",
     "dividend-plans": "RPT_SHAREBONUS_DET",
     "shareholder-counts": "RPT_HOLDERNUM_DET",
+    "business-compositions": "RPT_F10_FN_MAINOP",
 }
+
+# 与逐股 F10 返回的科目保持一致，避免仅因批量接口多出的元数据产生新版本。
+BUSINESS_COLUMNS = (
+    "SECURITY_CODE,SECUCODE,REPORT_DATE,MAINOP_TYPE,ITEM_NAME,MAIN_BUSINESS_INCOME,"
+    "MAIN_BUSINESS_COST,MAIN_BUSINESS_RPOFIT,MBI_RATIO,MBC_RATIO,MBR_RATIO,"
+    "GROSS_RPOFIT_RATIO,RANK"
+)
 
 
 @dataclass
@@ -43,7 +51,8 @@ class EastMoneyBulkFinancialSource:
 
     def page(self, dataset, period, page, symbols):
         condition = '(SECURITY_TYPE_CODE in ("058001001","058001008"))'
-        if dataset in {"dividend-plans", "shareholder-counts"}:
+        business = dataset == "business-compositions"
+        if dataset in {"dividend-plans", "shareholder-counts", "business-compositions"}:
             condition = ""
         if period:
             field = "END_DATE" if dataset == "shareholder-counts" else "REPORT_DATE"
@@ -52,12 +61,14 @@ class EastMoneyBulkFinancialSource:
             "https://datacenter.eastmoney.com/securities/api/data/v1/get",
             params={
                 "reportName": REPORTS[dataset],
-                "columns": "ALL",
+                "columns": BUSINESS_COLUMNS if business else "ALL",
                 "filter": condition,
                 "pageSize": 500,
                 "pageNumber": page,
-                "sortColumns": "SECURITY_CODE",
-                "sortTypes": "1",
+                "sortColumns": "SECURITY_CODE,MAINOP_TYPE,ITEM_NAME"
+                if business
+                else "SECURITY_CODE",
+                "sortTypes": "1,1,1" if business else "1",
                 "source": "WEB",
                 "client": "WEB",
             },
@@ -87,9 +98,10 @@ class EastMoneyBulkFinancialSource:
             if symbol not in symbols:
                 continue
             try:
-                normalized.append(
-                    {**normalize_financial(dataset, symbol, row), "source_format": "bulk-v1"}
-                )
+                item = normalize_financial(dataset, symbol, row)
+                if not business:
+                    item["source_format"] = "bulk-v1"
+                normalized.append(item)
             except ValueError as error:
                 failures.append(
                     {
