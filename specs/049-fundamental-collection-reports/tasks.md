@@ -4,7 +4,8 @@
 - [x] T002 来源接入、时间语义与上下文回归
 - [x] T003 存储去重、增量补缺与性能回归
 - [x] T004 报表及补采入口、权限与宽窄屏验证
-- [x] T005 当前文档、门禁、提交推送 PR
+- [x] T005 当前文档、门禁、提交推送
+- [ ] T006 创建 PR：GitHub 连接器返回403（Resource not accessible by integration）；Windows Firefox 的浏览器 URL 策略不受支持，工具停止自动化。分支已推送，标题与描述保存在 pr.md，等待可用的创建入口。
 
 
 验证：2026-11-14 pnpm check通过（842条后端、58条前端、Ruff/Pyright/TypeScript及生产构建）；pnpm test:e2e完整47条通过，含1440/360px报表、缺失、分类、提交/任务失败重试及普通用户权限。已检查宽窄屏截图。pre-commit全文件检查通过。
