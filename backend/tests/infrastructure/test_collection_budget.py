@@ -81,3 +81,36 @@ def test_cancel_signal_is_not_swallowed_by_source_exception_handlers():
 
     with pytest.raises(CollectionCancelled):
         RequestBudget(None, None, cancelled).before_request()
+
+
+@pytest.mark.parametrize(
+    ("response_seconds", "processing_seconds", "expected_gap"), [(2, 1, 5), (6, 2, 8), (0, 5, 5)]
+)
+def test_budget_counts_response_and_processing_time_from_previous_request_start(
+    fixed_now, response_seconds, processing_seconds, expected_gap
+):
+    clock = FixedClock(fixed_now)
+    starts, waited = [], []
+
+    class Sleeper:
+        def sleep(self, seconds):
+            waited.append(seconds)
+            clock.advance(timedelta(seconds=seconds))
+
+    def send(request):
+        starts.append(clock.now())
+        clock.advance(timedelta(seconds=response_seconds))
+        return httpx.Response(200)
+
+    budget = RequestBudget(clock, Sleeper(), lambda: None)
+    with (
+        request_budget(budget),
+        httpx.Client(
+            transport=httpx.MockTransport(send), event_hooks={"request": [before_data_request]}
+        ) as client,
+    ):
+        client.get("https://fixture.invalid/first")
+        clock.advance(timedelta(seconds=processing_seconds))
+        client.get("https://fixture.invalid/second")
+    assert (starts[1] - starts[0]).total_seconds() == expected_gap
+    assert sum(waited) == max(0, 5 - response_seconds - processing_seconds)

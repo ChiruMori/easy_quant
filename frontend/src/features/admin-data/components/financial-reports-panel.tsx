@@ -5,6 +5,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { useAuthentication } from "@/app/providers"
 import { ErrorState, LoadingState } from "@/components/app-shell"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldLabel } from "@/components/ui/field"
@@ -26,7 +27,16 @@ import {
 } from "@/components/ui/table"
 
 import { getAcquisition, getReportSeries, startAcquisition } from "../api"
-import { chartNumber, reportMetrics, reportPeriods, reportPoints } from "./report-data"
+import { BusinessFlowChart } from "./business-flow-chart"
+import { businessFields } from "./business-flow-data"
+import {
+  reportCoverage,
+  reportMetrics,
+  reportPeriods,
+  reportPoints,
+  reportTypes,
+  reportYearGroups,
+} from "./report-data"
 
 function Choice({
   label,
@@ -37,7 +47,7 @@ function Choice({
   label: string
   value: string
   onChange: (value: string) => void
-  choices: { value: string; label: string }[]
+  choices: { value: string; label: string; badge?: string }[]
 }) {
   return (
     <Field className="min-w-0 flex-1 basis-40">
@@ -51,6 +61,11 @@ function Choice({
             {choices.map((item) => (
               <SelectItem key={item.value} value={item.value}>
                 {item.label}
+                {item.badge && (
+                  <Badge variant={item.badge === "已有数据" ? "secondary" : "outline"}>
+                    {item.badge}
+                  </Badge>
+                )}
               </SelectItem>
             ))}
           </SelectGroup>
@@ -64,53 +79,89 @@ function ValueChart({
   points,
   label,
   unit,
+  grouped = false,
 }: {
   points: { period: string; value: number | null }[]
   label: string
   unit: string
+  grouped?: boolean
 }) {
+  const years = grouped ? reportYearGroups(points) : []
   return (
     <>
       <div
-        className="h-72 w-full min-w-0"
+        className="w-full min-w-0 overflow-x-auto"
         role="img"
-        aria-label={`${label}报表图，单位${unit}，缺失值留空`}
+        aria-label={`${label}${grouped ? "年度分组" : ""}报表图，单位${unit}，缺失值留空`}
       >
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart
-            data={points}
-            margin={{ top: 12, right: 12, bottom: 12, left: 0 }}
-            accessibilityLayer
-          >
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-            <XAxis
-              dataKey="period"
-              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-              minTickGap={20}
-            />
-            <YAxis width={56} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} />
-            <Tooltip
-              contentStyle={{
-                background: "var(--card)",
-                color: "var(--card-foreground)",
-                borderColor: "var(--border)",
-              }}
-              formatter={(value: number) => [
-                value.toLocaleString("zh-CN", { maximumFractionDigits: 4 }),
-                `${label}（${unit}）`,
-              ]}
-            />
-            <Bar
-              dataKey="value"
-              name={label}
-              fill="var(--primary)"
-              radius={[3, 3, 0, 0]}
-              maxBarSize={48}
-              isAnimationActive={false}
-            />
-          </BarChart>
-        </ResponsiveContainer>
+        <div
+          className="h-72 w-full"
+          style={{ minWidth: grouped ? years.length * 84 + 72 : undefined }}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={grouped ? years : points}
+              margin={{ top: 12, right: 12, bottom: 12, left: 0 }}
+              accessibilityLayer
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+              <XAxis
+                dataKey={grouped ? "year" : "period"}
+                tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                minTickGap={20}
+              />
+              <YAxis width={56} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} />
+              <Tooltip
+                contentStyle={{
+                  background: "var(--card)",
+                  color: "var(--card-foreground)",
+                  borderColor: "var(--border)",
+                }}
+                formatter={(value: number, name: string) => [
+                  value.toLocaleString("zh-CN", { maximumFractionDigits: 4 }),
+                  `${grouped ? `${name} · ` : ""}${label}（${unit}）`,
+                ]}
+              />
+              {(grouped ? reportTypes : [{ key: "value", label, color: "var(--primary)" }]).map(
+                (series) => (
+                  <Bar
+                    key={series.key}
+                    dataKey={series.key}
+                    name={series.label}
+                    fill={series.color}
+                    radius={[3, 3, 0, 0]}
+                    maxBarSize={48}
+                    isAnimationActive={false}
+                  />
+                ),
+              )}
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       </div>
+      {grouped && (
+        <ul
+          aria-label="报告类型图例"
+          className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted-foreground"
+        >
+          {reportTypes.map((type) => (
+            <li key={type.key} className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className="size-2.5 rounded-sm"
+                style={{ background: type.color }}
+              />
+              {type.label}
+            </li>
+          ))}
+        </ul>
+      )}
+      {grouped && (
+        <p className="text-sm text-muted-foreground">
+          按年份并列一季报、中报、三季报和年报，保留累计 /
+          时点值，不相加；缺失柱留空。窄屏可在图内横向滚动。
+        </p>
+      )}
       <details>
         <summary className="cursor-pointer text-sm">查看图表数值与缺失项</summary>
         <Table>
@@ -155,7 +206,6 @@ export function FinancialReportsPanel({
   const [reportFilter, setReportFilter] = useState("12-31")
   const [selectedPeriod, setSelectedPeriod] = useState("")
   const [category, setCategory] = useState("")
-  const [businessMetric, setBusinessMetric] = useState("business_revenue")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [taskId, setTaskId] = useState("")
@@ -184,7 +234,9 @@ export function FinancialReportsPanel({
       ["queued", "running"].includes(query.state.data?.status ?? "queued") ? 2000 : false,
   })
   const periods = useMemo(() => reportPeriods(reports.data?.as_of ?? ""), [reports.data?.as_of])
-  const rows = reports.data?.items ?? []
+  const rows = (reports.data?.items ?? []).filter(
+    (row) => !row.statement_scope || row.statement_scope === "合并",
+  )
   const latestAvailable = rows
     .map((row) => row.report_period ?? "")
     .sort()
@@ -193,27 +245,16 @@ export function FinancialReportsPanel({
   const periodRows = rows.filter((row) => row.report_period === period)
   const categories = [...new Set(periodRows.map((row) => String(row.category ?? "未分类")))].sort()
   const activeCategory = categories.includes(category) ? category : (categories[0] ?? "")
-  const businessFields = [
-    { value: "business_revenue", label: "主营收入" },
-    { value: "business_cost", label: "主营成本" },
-    { value: "business_profit", label: "主营利润" },
-  ]
-  const label = business
-    ? businessFields.find((item) => item.value === businessMetric)!.label
-    : info.label
-  const points = business
-    ? periodRows
-        .filter((row) => String(row.category ?? "未分类") === activeCategory)
-        .map((row) => ({
-          period: String(row.item_name ?? "未命名项目"),
-          value: chartNumber(row[businessMetric]),
-        }))
-    : reportPoints(
-        rows,
-        periods.filter((period) => reportFilter === "all" || period.endsWith(reportFilter)),
-        metric,
-        info.scale,
-      )
+  const businessRows = periodRows.filter(
+    (row) => String(row.category ?? "未分类") === activeCategory,
+  )
+  const label = business ? "主营收支" : info.label
+  const points = reportPoints(
+    rows,
+    periods.filter((period) => reportFilter === "all" || period.endsWith(reportFilter)),
+    metric,
+    info.scale,
+  )
   const missing = points.filter((point) => point.value === null)
   const canSubmit =
     !busy &&
@@ -248,26 +289,20 @@ export function FinancialReportsPanel({
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-4">
         <div className="flex min-w-0 flex-wrap items-end gap-3">
-          <Choice
-            label={business ? "主营指标" : "财务指标"}
-            value={business ? businessMetric : metric}
-            onChange={
-              business
-                ? setBusinessMetric
-                : (value) => {
-                    setMetric(value)
-                    setSource("")
-                  }
-            }
-            choices={
-              business
-                ? businessFields
-                : Object.entries(reportMetrics).map(([value, item]) => ({
-                    value,
-                    label: item.label,
-                  }))
-            }
-          />
+          {!business && (
+            <Choice
+              label="财务指标"
+              value={metric}
+              onChange={(value) => {
+                setMetric(value)
+                setSource("")
+              }}
+              choices={Object.entries(reportMetrics).map(([value, item]) => ({
+                value,
+                label: item.label,
+              }))}
+            />
+          )}
           {!business && (
             <Choice
               label="报告类型"
@@ -298,7 +333,16 @@ export function FinancialReportsPanel({
               label={business ? "主营报告期" : "补采报告期"}
               value={period}
               onChange={setSelectedPeriod}
-              choices={[...periods].reverse().map((value) => ({ value, label: value }))}
+              choices={[...periods].reverse().map((value) => ({
+                value,
+                label: value,
+                badge: reportCoverage(
+                  rows,
+                  value,
+                  business ? businessFields.map(({ key }) => key) : [metric],
+                  reports.isError ? "error" : reports.isLoading ? "loading" : "ready",
+                ),
+              }))}
             />
           )}
           {business && categories.length > 0 && (
@@ -330,10 +374,26 @@ export function FinancialReportsPanel({
             <p className="text-sm text-muted-foreground">
               {label} · {business ? "亿元" : info.unit} ·{" "}
               {business ? period : "报告期累计 / 时点口径"} ·{" "}
-              {missing.length ? `${missing.length} 项数据缺失` : "缺失项目以空白表示"}
+              {business
+                ? "收入、成本与利润同图展示"
+                : missing.length
+                  ? `${missing.length} 项数据缺失`
+                  : "缺失项目以空白表示"}
             </p>
-            {points.some((point) => point.value !== null) ? (
-              <ValueChart points={points} label={label} unit={business ? "亿元" : info.unit} />
+            {(business || user?.role === "admin") && (
+              <p className="text-sm text-muted-foreground">
+                报告期标记按当前股票、数据集和来源判断；指标缺失表示已有报表但所选指标为空，已有数据仍可补采。
+              </p>
+            )}
+            {business ? (
+              <BusinessFlowChart rows={businessRows} />
+            ) : points.some((point) => point.value !== null) ? (
+              <ValueChart
+                points={points}
+                label={label}
+                unit={info.unit}
+                grouped={reportFilter === "all"}
+              />
             ) : (
               <p className="text-muted-foreground">
                 所选报告暂无可展示数据，缺失值不补零。
