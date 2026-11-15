@@ -112,6 +112,30 @@ def test_missing_revision_is_only_visible_after_fetch_and_partial_success_is_ret
     assert isinstance(failures, list) and failures[0]["symbol"] == "000002"
 
 
+def test_early_report_date_is_retained_but_not_visible_before_observation():
+    store = InMemoryMarketDataStore({}, {}, set())
+    row = report(NOTICE_DATE="2025-11-01", UPDATE_DATE="2025-11-02")
+    feed = Feed([row])
+    service = MarketDataSyncService({"financial-indicators": feed}, store)
+    service.sync("financial-indicators", symbols=["000001"], end_day=date(2026, 9, 30))
+    saved = store.list_records("financial-indicators")[0]
+    assert saved["available_at"] == feed.now.isoformat()
+    assert saved["availability_basis"] == "observed"
+    assert saved["published_at"].startswith("2025-11-01")
+
+
+def test_latest_revision_compares_instants_across_source_and_observed_timezones():
+    from easy_quant.platform_library.financials import visible_versions
+
+    original = {
+        "report_period": "2025-12-31",
+        "available_at": "2026-08-01T23:59:59+08:00",
+        "revenue": "100",
+    }
+    revision = {**original, "available_at": "2026-08-01T17:00:00+00:00", "revenue": "200"}
+    assert visible_versions([revision, original])[0]["revenue"] == "200"
+
+
 def test_invalid_batch_never_partially_writes_a_stock():
     store = InMemoryMarketDataStore({}, {}, set())
     service = MarketDataSyncService(

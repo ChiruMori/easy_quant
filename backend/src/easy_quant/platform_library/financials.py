@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from easy_quant.domain.shared.errors import ValidationError
 
 
@@ -9,7 +11,7 @@ def visible_versions(rows, period="all"):
     for row in sorted(
         rows,
         key=lambda row: (
-            row["available_at"],
+            datetime.fromisoformat(str(row["available_at"])),
             row.get("source") == "eastmoney",
             str(row.get("record_key", "")),
         ),
@@ -32,7 +34,7 @@ def visible_versions(rows, period="all"):
             selected.values(),
             key=lambda row: (
                 str(row.get("report_period") or ""),
-                row["available_at"],
+                datetime.fromisoformat(str(row["available_at"])),
                 str(row.get("item_name", "")),
             ),
         )

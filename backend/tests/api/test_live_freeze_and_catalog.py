@@ -152,7 +152,9 @@ def test_missing_catalog_is_repaired_without_resetting_source_preferences():
     original = deepcopy(rows[0])
     ensure_dataset_catalog(rows)
     ensure_dataset_catalog(rows)
-    assert len(rows) == len(_default_datasets()) and rows[0] == original
+    assert len(rows) == len(_default_datasets())
+    assert rows[0]["name"] == original["name"]
+    assert rows[0]["sources"] == [{"key": "sina", "name": "新浪财经（直连）", "enabled": False}]
     assert {row["key"] for row in rows} >= {"daily-bars", "trading-calendar"}
 
 

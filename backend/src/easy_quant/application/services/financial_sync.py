@@ -2,7 +2,7 @@ import hashlib
 import json
 from datetime import date, datetime
 
-from easy_quant.application.services.acquisition import AcquisitionFailed
+from easy_quant.application.services.acquisition import AcquisitionFailed, _safe_source_error
 from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
 
 
@@ -53,7 +53,7 @@ def sync_financial(
                 if isinstance(failed_attempts, list):
                     attempts.extend({**item, "symbol": symbol} for item in failed_attempts)
             failures.append(
-                {"symbol": symbol, "message": "财务数据采集或保存失败，请查看来源尝试并重试"}
+                {"symbol": symbol, "message": f"{dataset} {symbol}：{_safe_source_error(error)}"}
             )
     result = {
         "record_count": saved,
@@ -102,7 +102,7 @@ def save_financial_rows(store, dataset, rows, source, fetched):
             # 无可核实版本时间的数据只在采集后可见，不能按报告期倒填。
             available = (
                 max(datetime.fromisoformat(value) for value in (publication, revision) if value)
-                if publication and revision
+                if publication and revision and not raw.get("time_warning")
                 else fetched
             )
             logical = (
@@ -125,7 +125,11 @@ def save_financial_rows(store, dataset, rows, source, fetched):
                 )
                 == logical
             ]
-            basis = "source_revision" if publication and revision else "observed"
+            basis = (
+                "source_revision"
+                if publication and revision and not raw.get("time_warning")
+                else "observed"
+            )
             if previous and available <= max(
                 datetime.fromisoformat(str(row["available_at"])) for row in previous
             ):

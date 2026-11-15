@@ -16,10 +16,12 @@ from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
 from easy_quant.domain.market_data.fundamentals import FINANCIAL_DATASETS
+from easy_quant.domain.market_data.status_history import same_status, status_changes
 from easy_quant.domain.scheduling.entities import Job
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.domain.strategies.entities import StrategyState
 from easy_quant.infrastructure.persistence.bar_storage import BAR_STORAGE
+from easy_quant.infrastructure.persistence.market_record_codec import decode_record, encode_record
 from easy_quant.infrastructure.persistence.models.backtesting import (
     BacktestMetricModel,
     BacktestPeriodModel,
@@ -160,6 +162,16 @@ class InMemoryMarketDataStore:
             self.trading_days.add(str(row["trading_day"]))
         return overwritten
 
+    def missing_bar_days(self, symbol: str, start: date, end: date):
+        existing = {
+            str(row["trading_day"]) for row in self.daily_bars.values() if row["symbol"] == symbol
+        }
+        return sorted(
+            date.fromisoformat(day)
+            for day in self.trading_days
+            if start.isoformat() <= day <= end.isoformat() and day not in existing
+        )
+
     def bar_coverage(self, symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
         wanted = set(symbols) if symbols is not None else None
@@ -195,6 +207,8 @@ class InMemoryMarketDataStore:
                 and row.get("status", "active") == "active"
             ):
                 row = {**row, "status": "suspended"}
+            if not row.get("listed_on") and self.instruments.get(symbol, {}).get("listed_on"):
+                row = {**row, "listed_on": self.instruments[symbol]["listed_on"]}
             self.instruments[symbol] = row
 
     def set_instrument_status(self, symbol: str, status: str) -> bool:
@@ -357,6 +371,16 @@ class InMemoryMarketDataStore:
         self, dataset_key: str, rows: list[dict[str, Any]], *, count_overwritten=True
     ) -> int:
         overwritten = 0
+        if dataset_key == "security-status":
+            latest = self.latest_records(dataset_key, sorted({row["symbol"] for row in rows}))
+            changed = []
+            for row in rows:
+                if row["symbol"] in latest and same_status(latest[row["symbol"]], row):
+                    overwritten += 1
+                else:
+                    changed.append(row)
+                    latest[row["symbol"]] = row
+            rows = changed
         for row in rows:
             key = str(row["record_key"])
             overwritten += int((dataset_key, key) in self.market_records)
@@ -366,6 +390,16 @@ class InMemoryMarketDataStore:
             ):
                 self.market_records[(dataset_key, key)] = row
         return overwritten
+
+    def has_records(self, dataset: str):
+        return any(key[0] == dataset for key in self.market_records)
+
+    def latest_records(self, dataset: str, symbols: list[str]):
+        latest = {}
+        for row in self.list_records(dataset):
+            if row["symbol"] in symbols:
+                latest[row["symbol"]] = row
+        return latest
 
     def list_record_versions(self, dataset_key, symbols, periods=None):
         wanted = set(symbols)
@@ -379,12 +413,26 @@ class InMemoryMarketDataStore:
                 result.setdefault(str(row["symbol"]), []).append(row)
         return result
 
-    def list_records(self, dataset_key: str, symbol: str | None = None):
-        return [
+    def list_records(
+        self, dataset_key: str, symbol: str | None = None, *, as_of: datetime | None = None
+    ):
+        values = [
             row
             for (dataset, _), row in self.market_records.items()
-            if dataset == dataset_key and (symbol is None or row.get("symbol") == symbol)
+            if dataset == dataset_key
+            and (symbol is None or row.get("symbol") == symbol)
+            and (as_of is None or datetime.fromisoformat(row["available_at"]) <= as_of)
         ]
+
+        return status_changes(values) if dataset_key == "security-status" else values
+
+    def record_series(self, dataset: str, symbol: str, as_of: datetime):
+        return [
+            row
+            for row in self.list_records(dataset, symbol)
+            if datetime.fromisoformat(row["available_at"]) <= as_of
+            and str(row.get("report_period", "")) >= f"{as_of.year - 5}-01-01"
+        ][:5001]
 
     def record_counts(self, symbol: str, as_of: datetime):
         counts: dict[str, int] = {}
@@ -394,6 +442,11 @@ class InMemoryMarketDataStore:
                 and datetime.fromisoformat(str(row["available_at"])) <= as_of
             ):
                 counts[dataset] = counts.get(dataset, 0) + 1
+        if counts.get("security-status"):
+            counts["security-status"] = sum(
+                datetime.fromisoformat(row["available_at"]) <= as_of
+                for row in self.list_records("security-status", symbol)
+            )
         return counts
 
     def record_page(self, dataset: str, symbol: str, as_of: datetime, page: int, size: int):
@@ -480,6 +533,18 @@ class SqlAlchemyMarketDataStore:
         self.session.commit()
         return overwritten
 
+    def missing_bar_days(self, symbol: str, start: date, end: date):
+        Bar = self.storage.physical
+        Day = TradingDayModel.trading_day
+        return list(
+            self.session.scalars(
+                select(Day)
+                .outerjoin(Bar, (Bar.symbol == symbol) & (Bar.trading_day == Day))
+                .where(Day >= start, Day <= end, Bar.symbol.is_(None))
+                .order_by(Day)
+            )
+        )
+
     def bar_coverage(self, symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
         statement = bar_coverage_statement(Bar=self.storage.physical)
         if symbols is not None:
@@ -515,7 +580,7 @@ class SqlAlchemyMarketDataStore:
         statement = statement.on_duplicate_key_update(
             name=statement.inserted.name,
             exchange=statement.inserted.exchange,
-            listed_on=statement.inserted.listed_on,
+            listed_on=func.coalesce(statement.inserted.listed_on, InstrumentModel.listed_on),
             status=case(
                 (
                     (InstrumentModel.status == "suspended")
@@ -911,6 +976,17 @@ class SqlAlchemyMarketDataStore:
         self, dataset_key: str, rows: list[dict[str, Any]], *, count_overwritten=True
     ) -> int:
         overwritten = 0
+        if dataset_key == "security-status" and rows:
+            latest = self.latest_records(dataset_key, sorted({row["symbol"] for row in rows}))
+            changed = []
+            for row in rows:
+                prior = latest.get(row["symbol"])
+                if prior and same_status(prior, row):
+                    overwritten += 1
+                else:
+                    changed.append(row)
+                    latest[row["symbol"]] = row
+            rows = changed
         for offset in range(0, len(rows), 500):
             batch = rows[offset : offset + 500]
             keys = [str(item["record_key"]) for item in batch]
@@ -944,7 +1020,7 @@ class SqlAlchemyMarketDataStore:
                         "dataset_key": dataset_key,
                         "record_key": str(item["record_key"]),
                         "symbol": str(item["symbol"]) if item.get("symbol") else None,
-                        "payload_json": json.dumps(item, ensure_ascii=False, default=str),
+                        "payload_json": encode_record(item),
                         "available_at": datetime.fromisoformat(str(item["available_at"])),
                     }
                     for item in batch
@@ -952,6 +1028,45 @@ class SqlAlchemyMarketDataStore:
             )
         self.session.commit()
         return overwritten
+
+    def has_records(self, dataset: str):
+        return (
+            self.session.scalar(
+                select(JsonMarketRecordModel.record_key)
+                .where(JsonMarketRecordModel.dataset_key == dataset)
+                .limit(1)
+            )
+            is not None
+        )
+
+    def latest_records(self, dataset: str, symbols: list[str]):
+        Record = JsonMarketRecordModel
+        result = {}
+        for offset in range(0, len(symbols), 100):
+            ranked = (
+                select(
+                    Record.record_key,
+                    func.row_number()
+                    .over(
+                        partition_by=Record.symbol,
+                        order_by=(Record.available_at.desc(), Record.record_key.desc()),
+                    )
+                    .label("position"),
+                )
+                .where(
+                    Record.dataset_key == dataset, Record.symbol.in_(symbols[offset : offset + 100])
+                )
+                .subquery()
+            )
+            statement = (
+                select(Record.payload_json)
+                .join(ranked, Record.record_key == ranked.c.record_key)
+                .where(Record.dataset_key == dataset, ranked.c.position == 1)
+            )
+            for payload in self.session.scalars(statement):
+                row = decode_record(payload)
+                result[row["symbol"]] = row
+        return result
 
     @idempotent_operation("financial-version-metadata.read")
     def list_record_versions(self, dataset_key, symbols, periods=None):
@@ -985,29 +1100,65 @@ class SqlAlchemyMarketDataStore:
                 result.setdefault(str(row["symbol"]), []).append(row)
         return result
 
-    def list_records(self, dataset_key: str, symbol: str | None = None):
+    def list_records(
+        self, dataset_key: str, symbol: str | None = None, *, as_of: datetime | None = None
+    ):
         statement = select(JsonMarketRecordModel).where(
             JsonMarketRecordModel.dataset_key == dataset_key
         )
         if symbol is not None:
             statement = statement.where(JsonMarketRecordModel.symbol == symbol)
+        if as_of is not None:
+            statement = statement.where(JsonMarketRecordModel.available_at <= as_of)
         rows = self.session.scalars(
-            statement.order_by(JsonMarketRecordModel.available_at, JsonMarketRecordModel.record_key)
+            statement.order_by(
+                JsonMarketRecordModel.available_at, JsonMarketRecordModel.record_key
+            ).execution_options(yield_per=500)
         )
-        values = [json.loads(row.payload_json) for row in rows]
-        return [row for row in values if symbol is None or row.get("symbol") == symbol]
+        values = [decode_record(row.payload_json) for row in rows]
+        values = [row for row in values if symbol is None or row.get("symbol") == symbol]
+        return status_changes(values) if dataset_key == "security-status" else values
+
+    def record_series(self, dataset: str, symbol: str, as_of: datetime):
+        Record = JsonMarketRecordModel
+        statement = (
+            select(Record.payload_json)
+            .where(
+                Record.dataset_key == dataset,
+                Record.symbol == symbol,
+                Record.available_at <= as_of,
+                func.json_unquote(func.json_extract(Record.payload_json, "$.report_period"))
+                >= f"{as_of.year - 5}-01-01",
+            )
+            .order_by(Record.available_at.desc(), Record.record_key.desc())
+            .limit(5001)
+        )
+        return [decode_record(payload) for payload in self.session.scalars(statement)]
 
     def record_counts(self, symbol: str, as_of: datetime):
         Record = JsonMarketRecordModel
-        return dict(
+        counts = dict(
             self.session.execute(
                 select(Record.dataset_key, func.count())
                 .where(Record.symbol == symbol, Record.available_at <= as_of)
                 .group_by(Record.dataset_key)
             ).all()
         )
+        if counts.get("security-status"):
+            counts["security-status"] = sum(
+                datetime.fromisoformat(row["available_at"]) <= as_of
+                for row in self.list_records("security-status", symbol)
+            )
+        return counts
 
     def record_page(self, dataset: str, symbol: str, as_of: datetime, page: int, size: int):
+        if dataset == "security-status":
+            rows = [
+                row
+                for row in self.list_records(dataset, symbol)
+                if datetime.fromisoformat(row["available_at"]) <= as_of
+            ]
+            return list(reversed(rows))[(page - 1) * size : page * size]
         Record = JsonMarketRecordModel
         statement = (
             select(Record)
@@ -1018,7 +1169,7 @@ class SqlAlchemyMarketDataStore:
             .offset((page - 1) * size)
             .limit(size)
         )
-        return [json.loads(row.payload_json) for row in self.session.scalars(statement)]
+        return [decode_record(row.payload_json) for row in self.session.scalars(statement)]
 
 
 class InMemoryBacktestStore:

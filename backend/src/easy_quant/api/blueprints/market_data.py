@@ -48,6 +48,44 @@ DETAIL_DATASETS = {
 }
 
 
+@blueprint.get("/instruments/<symbol>/reports/<dataset>")
+@require_user
+def get_report_series(symbol: str, dataset: str):
+    from easy_quant.platform_library.financials import visible_versions
+
+    if dataset not in FINANCIAL_DATASETS or dataset == "company-profiles":
+        raise ValidationError("不支持的报表数据集")
+    container = get_container()
+    normalized = symbol.strip().lower().zfill(6)
+    if container.market_data.get_instrument(normalized) is None:
+        return success(None, status=404)
+    now = container.authentication.clock.now()
+    rows = container.market_data.record_series(dataset, normalized, now)
+    if len(rows) > 5000:
+        raise ValidationError("该股票报告版本过多，请使用记录分页查看")
+    sources = sorted({row.get("source", "") for row in rows})
+    source = request.args.get("source") or (
+        "eastmoney" if "eastmoney" in sources else next(iter(sources), "")
+    )
+    # 同一来源、逻辑记录仅使用当前可见版本；不混加来源和修订版本。
+    items = visible_versions([row for row in rows if row.get("source", "") == source])
+    return success(
+        {
+            "items": [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key not in {"raw_fields", "field_labels"}
+                }
+                for row in items
+            ],
+            "source": source,
+            "sources": sources,
+            "as_of": now.isoformat(),
+        }
+    )
+
+
 @blueprint.get("/instruments/<symbol>/fundamentals")
 @require_user
 def get_fundamentals(symbol: str):

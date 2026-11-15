@@ -3,7 +3,7 @@
 import hashlib
 import json
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from math import ceil
 from typing import Any
@@ -18,7 +18,15 @@ REPORTS = {
     "company-profiles": "RPT_F10_ORG_BASICINFO",
     "dividend-plans": "RPT_SHAREBONUS_DET",
     "shareholder-counts": "RPT_HOLDERNUM_DET",
+    "business-compositions": "RPT_F10_FN_MAINOP",
 }
+
+# 与逐股 F10 返回的科目保持一致，避免仅因批量接口多出的元数据产生新版本。
+BUSINESS_COLUMNS = (
+    "SECURITY_CODE,SECUCODE,REPORT_DATE,MAINOP_TYPE,ITEM_NAME,MAIN_BUSINESS_INCOME,"
+    "MAIN_BUSINESS_COST,MAIN_BUSINESS_RPOFIT,MBI_RATIO,MBC_RATIO,MBR_RATIO,"
+    "GROSS_RPOFIT_RATIO,RANK"
+)
 
 
 @dataclass
@@ -29,6 +37,7 @@ class BulkPage:
     fingerprint: str
     first_code: str
     last_code: str
+    failures: list[dict] = field(default_factory=list)
 
     def __iter__(self) -> Iterator[Any]:
         yield self.rows
@@ -42,7 +51,8 @@ class EastMoneyBulkFinancialSource:
 
     def page(self, dataset, period, page, symbols):
         condition = '(SECURITY_TYPE_CODE in ("058001001","058001008"))'
-        if dataset in {"dividend-plans", "shareholder-counts"}:
+        business = dataset == "business-compositions"
+        if dataset in {"dividend-plans", "shareholder-counts", "business-compositions"}:
             condition = ""
         if period:
             field = "END_DATE" if dataset == "shareholder-counts" else "REPORT_DATE"
@@ -51,12 +61,14 @@ class EastMoneyBulkFinancialSource:
             "https://datacenter.eastmoney.com/securities/api/data/v1/get",
             params={
                 "reportName": REPORTS[dataset],
-                "columns": "ALL",
+                "columns": BUSINESS_COLUMNS if business else "ALL",
                 "filter": condition,
                 "pageSize": 500,
                 "pageNumber": page,
-                "sortColumns": "SECURITY_CODE",
-                "sortTypes": "1",
+                "sortColumns": "SECURITY_CODE,MAINOP_TYPE,ITEM_NAME"
+                if business
+                else "SECURITY_CODE",
+                "sortTypes": "1,1,1" if business else "1",
                 "source": "WEB",
                 "client": "WEB",
             },
@@ -76,7 +88,7 @@ class EastMoneyBulkFinancialSource:
             or len(rows) != min(500, max(0, count - (page - 1) * 500))
         ):
             raise ValueError("批量财务分页数量不完整")
-        normalized, identities = [], set()
+        normalized, identities, failures = [], set(), []
         for row in rows:
             symbol = str(row["SECURITY_CODE"]).zfill(6)
             identity = json.dumps(row, sort_keys=True, default=str)
@@ -85,9 +97,20 @@ class EastMoneyBulkFinancialSource:
             identities.add(identity)
             if symbol not in symbols:
                 continue
-            normalized.append(
-                {**normalize_financial(dataset, symbol, row), "source_format": "bulk-v1"}
-            )
+            try:
+                item = normalize_financial(dataset, symbol, row)
+                if not business:
+                    item["source_format"] = "bulk-v1"
+                normalized.append(item)
+            except ValueError as error:
+                failures.append(
+                    {
+                        "dataset": dataset,
+                        "period": period,
+                        "symbol": symbol,
+                        "message": f"{dataset} {symbol} {period}：{error}",
+                    }
+                )
         codes = [str(row["SECURITY_CODE"]).zfill(6) for row in rows]
         if codes != sorted(codes):
             raise ValueError("批量来源未按股票代码稳定排序")
@@ -98,4 +121,5 @@ class EastMoneyBulkFinancialSource:
             hashlib.sha256(json.dumps(rows, sort_keys=True, default=str).encode()).hexdigest(),
             codes[0] if codes else "",
             codes[-1] if codes else "",
+            failures,
         )

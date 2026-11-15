@@ -111,11 +111,24 @@ export function JobsPage() {
                             {job.result_summary.failed_datasets.map((item, index) => {
                               const failure = item as Record<string, unknown>
                               return (
-                                <p key={index} className="mt-1 break-words">
-                                  {localizedLabel(String(failure.dataset ?? ""))}{" "}
-                                  {String(failure.period ?? "")} {String(failure.symbol ?? "")}：
-                                  {String(failure.message ?? "采集失败")}
-                                </p>
+                                <div key={index} className="mt-1 break-words">
+                                  <p>
+                                    {localizedLabel(String(failure.dataset ?? ""))}{" "}
+                                    {String(failure.period ?? "")} {String(failure.symbol ?? "")}：
+                                    {String(failure.message ?? "采集失败")}
+                                  </p>
+                                  {Array.isArray(failure.attempts) &&
+                                    failure.attempts.map((raw, attemptIndex) => {
+                                      const attempt = raw as Record<string, unknown>
+                                      return (
+                                        <p key={attemptIndex} className="text-sm">
+                                          {String(attempt.source_key ?? "")} ·{" "}
+                                          {String(attempt.symbol ?? "")} ·{" "}
+                                          {String(attempt.message ?? "来源失败")}
+                                        </p>
+                                      )
+                                    })}
+                                </div>
                               )
                             })}
                             <p>成功数据已保留，可在定时任务中重新运行补采。</p>

@@ -156,12 +156,20 @@ def test_nonfinite_financial_values_never_enter_cache(value):
         )
 
 
-def test_wrong_symbol_and_impossible_announcement_fail():
-    for changes in ({"SECURITY_CODE": "000002"}, {"NOTICE_DATE": "2025-12-30"}):
-        with pytest.raises(ValueError):
-            normalize_financial(
-                "financial-indicators", "000001", {**FIXTURE["indicators"], **changes}
-            )
+def test_wrong_symbol_fails_but_suspicious_announcement_is_retained_with_warning():
+    with pytest.raises(ValueError):
+        normalize_financial(
+            "financial-indicators", "000001", {**FIXTURE["indicators"], "SECURITY_CODE": "000002"}
+        )
+    row = normalize_financial(
+        "financial-indicators", "000001", {**FIXTURE["indicators"], "NOTICE_DATE": "2025-12-30"}
+    )
+    assert row["published_at"].startswith("2025-12-30")
+    assert "000001" in row["time_warning"]
+    dividend = normalize_financial(
+        "dividend-plans", "000001", {**FIXTURE["indicators"], "NOTICE_DATE": "2025-12-30"}
+    )
+    assert "time_warning" not in dividend
 
 
 @pytest.mark.parametrize("broken", [False, True])

@@ -59,6 +59,7 @@ const labels: Record<string, string> = {
   fetched_at: "采集时间",
   market_cap: "总市值（元）",
   float_market_cap: "流通市值（元）",
+  circulating_market_cap: "流通市值（元）",
   pe_ratio: "市盈率",
   pb_ratio: "市净率",
   pledge_ratio: "质押率（%）",
