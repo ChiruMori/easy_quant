@@ -18,3 +18,5 @@
 没有访问或修改真实数据库，没有执行迁移或真实采集，没有增加依赖。用户的未跟踪迁移与其他文件保留；格式化产生的纯换行差异经逐文件确认内容等价后刷新Git索引，不引入无关内容修改。
 
 提交前 `pre-commit run --all-files` 全部通过。为避免Ruff自动改写用户原有未跟踪迁移，仅在执行期间将该单文件加入本地Git排除，结束后恢复原排除内容，并逐字节确认迁移未变；未跳过钩子。
+
+交付分支 `fix/collection-upsert-report-flow` 已推送，PR：[#29](https://github.com/ChiruMori/easy_quant/pull/29)。GitHub连接器写入权限不足，改用本机已有Git认证调用REST创建；凭据未输出或写入文件。
