@@ -20,3 +20,11 @@
 提交前 `pre-commit run --all-files` 全部通过。为避免Ruff自动改写用户原有未跟踪迁移，仅在执行期间将该单文件加入本地Git排除，结束后恢复原排除内容，并逐字节确认迁移未变；未跳过钩子。
 
 交付分支 `fix/collection-upsert-report-flow` 已推送，PR：[#29](https://github.com/ChiruMori/easy_quant/pull/29)。GitHub连接器写入权限不足，改用本机已有Git认证调用REST创建；凭据未输出或写入文件。
+
+## 迁移多head修复
+
+用户删除原未跟踪合并脚本后，离线 `alembic heads` 确认存在两个0015 head，唯一head回归测试复现失败。按本轮授权恢复格式合规的 `8fdd8d82f252` 合并节点，两个父节点保持已发布revision不变，upgrade/downgrade均无DDL。保留原合并ID，避免可能已应用原脚本的环境出现未知版本。
+
+6条纯迁移图测试通过，覆盖0014、任一0015、两个0015均已应用和合并节点已应用时的升级计划，未加载env.py或执行迁移函数。离线heads仅返回 `8fdd8d82f252 (head)`。本轮原始 `pnpm check` 不带任何排除项完整通过：Ruff、Pyright、后端859条、前端67条及生产构建。上文排除迁移的限制已解除。本轮无前端改动，沿用前轮完整47条及最终3条Playwright验证。未连接真实数据库，未执行pnpm migrate。
+
+本轮 `pre-commit run --all-files` 不带排除项全部通过；首次因钩子运行期间更新验证文档被判定文件修改，固定文档后重跑成功，静态检查无错误。PR #29 标题与说明已更新，包含合并迁移、当前完整check结果及实际升级的维护要求。

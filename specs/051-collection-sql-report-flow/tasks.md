@@ -6,3 +6,4 @@
 - [x] T006 全部报告按年聚簇展示及宽窄屏回归
 - [x] T004 离线、宽窄屏、文档和全量门禁
 - [x] T005 提交推送并创建PR：[#29](https://github.com/ChiruMori/easy_quant/pull/29)
+- [x] T007 合并0015迁移分支、离线回归、完整check并更新PR
