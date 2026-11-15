@@ -576,7 +576,7 @@ class SqlAlchemyMarketDataStore:
 
     @idempotent_operation("instruments.upsert")
     def upsert_instruments(self, rows: list[dict[str, Any]]) -> None:
-        statement = insert(InstrumentModel)
+        statement = insert(cast(Table, InstrumentModel.__table__))
         statement = statement.on_duplicate_key_update(
             name=statement.inserted.name,
             exchange=statement.inserted.exchange,
@@ -591,20 +591,23 @@ class SqlAlchemyMarketDataStore:
             ),
         )
         for offset in range(0, len(rows), 500):
+            # CASE中的参数也必须绑定；PyMySQL executemany只格式化VALUES段，
+            # 会把更新后缀的命名占位符原样发送，触发MariaDB 1064。
             self.session.execute(
-                statement,
-                [
-                    {
-                        "symbol": str(item["symbol"]),
-                        "name": str(item.get("name", "")),
-                        "exchange": str(item["exchange"]),
-                        "listed_on": date.fromisoformat(str(item["listed_on"]))
-                        if item.get("listed_on")
-                        else None,
-                        "status": str(item.get("status", "active")),
-                    }
-                    for item in rows[offset : offset + 500]
-                ],
+                statement.values(
+                    [
+                        {
+                            "symbol": str(item["symbol"]),
+                            "name": str(item.get("name", "")),
+                            "exchange": str(item["exchange"]),
+                            "listed_on": date.fromisoformat(str(item["listed_on"]))
+                            if item.get("listed_on")
+                            else None,
+                            "status": str(item.get("status", "active")),
+                        }
+                        for item in rows[offset : offset + 500]
+                    ]
+                ),
             )
         self.session.commit()
         self.session.expire_all()

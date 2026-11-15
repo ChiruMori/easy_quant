@@ -64,3 +64,47 @@ export function reportPoints(
     value: chartNumber(reports.get(period)?.[metric], scale),
   }))
 }
+
+export const reportTypes = [
+  { key: "q1", suffix: "03-31", label: "一季报", color: "var(--chart-1)" },
+  { key: "half", suffix: "06-30", label: "中报", color: "var(--chart-2)" },
+  { key: "q3", suffix: "09-30", label: "三季报", color: "var(--chart-3)" },
+  { key: "annual", suffix: "12-31", label: "年报", color: "var(--chart-4)" },
+] as const
+
+export function reportYearGroups(points: { period: string; value: number | null }[]) {
+  const years = new Map<
+    string,
+    {
+      year: string
+      q1: number | null
+      half: number | null
+      q3: number | null
+      annual: number | null
+    }
+  >()
+  for (const point of points) {
+    const type = reportTypes.find(({ suffix }) => point.period.endsWith(suffix))
+    if (!type) continue
+    const year = point.period.slice(0, 4)
+    const group = years.get(year) ?? { year, q1: null, half: null, q3: null, annual: null }
+    group[type.key] = point.value
+    years.set(year, group)
+  }
+  return [...years.values()].sort((a, b) => a.year.localeCompare(b.year))
+}
+
+export function reportCoverage(
+  rows: FundamentalRecord[],
+  period: string,
+  fields: string[],
+  state: "ready" | "loading" | "error",
+) {
+  if (state === "loading") return "加载中"
+  if (state === "error") return "状态未知"
+  const current = rows.filter((row) => row.report_period === period)
+  if (!current.length) return "未采集"
+  const values = current.flatMap((row) => fields.map((field) => chartNumber(row[field])))
+  if (values.every((value) => value === null)) return "指标缺失"
+  return values.some((value) => value === null) ? "部分缺失" : "已有数据"
+}

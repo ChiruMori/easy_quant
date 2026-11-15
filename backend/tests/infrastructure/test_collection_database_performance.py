@@ -23,8 +23,8 @@ def test_securities_upsert_uses_500_row_writes_without_per_stock_selects():
     statements = []
 
     class SessionFake:
-        def execute(self, statement, rows):
-            statements.append((statement, rows))
+        def execute(self, statement):
+            statements.append(statement.compile(dialect=mysql.dialect()))
 
         def commit(self):
             pass
@@ -34,8 +34,9 @@ def test_securities_upsert_uses_500_row_writes_without_per_stock_selects():
 
     store = SqlAlchemyMarketDataStore(cast(Session, SessionFake()))
     store.upsert_instruments([{"symbol": f"{i:06d}", "exchange": "测试"} for i in range(5574)])
-    assert len(statements) == 12 and len(statements[-1][1]) == 74
-    sql = str(statements[0][0].compile(dialect=mysql.dialect()))
+    assert len(statements) == 12
+    assert sum(key.startswith("symbol_m") for key in statements[-1].params) == 74
+    sql = str(statements[0])
     assert "ON DUPLICATE KEY UPDATE" in sql and "CASE WHEN" in sql
     assert "status" in sql
 
@@ -212,12 +213,14 @@ def test_request_budget_crosses_claims_releases_read_session_and_does_not_poll_d
         def send(request):
             assert released
             requests.append(clock.now())
+            clock.advance(timedelta(seconds=2))
             return httpx.Response(200)
 
         with httpx.Client(
             transport=httpx.MockTransport(send), event_hooks={"request": [before_data_request]}
         ) as client:
             client.get("https://fixture.invalid/data")
+        clock.advance(timedelta(seconds=1))
         return JobContinuation({}, clock.now())
 
     registry.register("market-data-collection", handler)
