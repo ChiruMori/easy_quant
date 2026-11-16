@@ -58,30 +58,28 @@ def test_old_completed_reports_do_not_refetch_when_thirty_days_expire():
     assert len(calls) == 1
 
 
-def test_daily_collection_fills_internal_gap_even_with_current_last_bar():
+def test_retired_daily_slot_skips_old_cursor_without_network_or_gap_scan():
     container, calls, registry, job = setup_collection()
     handler = registry.get(job.job_type)
     handler(job)
     state = job.payload["collection"]
-    state["bar_day"] = "2026-09-28"
-    state["unit"] = next(
+    index = next(
         i for i, unit in enumerate(units(date(2026, 9, 28))) if unit["dataset"] == "daily-bars"
     )
-    container.market_data.instruments.clear()
-    container.market_data.upsert_instruments([{"symbol": "000001"}])
-    container.market_data.upsert_trading_days([date(2026, 9, day) for day in (24, 25, 28)])
-    for day in (24, 28):
-        container.market_data.daily_bars[("000001", f"2026-09-{day}")] = {
-            "symbol": "000001",
-            "trading_day": f"2026-09-{day}",
-        }
-    handler(job)
-    assert calls[-1][0] == "daily-bars"
-    assert calls[-1][1]["start_day"] == date(2026, 9, 25)
-    assert calls[-1][1]["end_day"] == date(2026, 9, 28)
-    assert container.collection_checkpoints["daily-bars:000001"]["missing_checked"] == {
-        "2026-09-25": "2026-09-28"
-    }
+    state.update(unit=index, last_symbol="000008", retries=2)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("退役日线范围不应访问股票或日线")
+
+    container.market_data.instrument_candidates = unexpected
+    container.market_data.bar_coverage = unexpected
+    container.market_data.missing_bar_days = unexpected
+    result = handler(job)
+    assert isinstance(result, JobContinuation)
+    assert result.resume_at == container.authentication.clock.now()
+    assert state["unit"] == index + 1 and state["last_symbol"] == "" and state["retries"] == 0
+    assert [dataset for dataset, _ in calls] == ["trading-calendar"]
+    assert "daily-bars:" not in container.collection_checkpoints
 
 
 def test_nightly_keeps_one_resumable_job_and_never_fans_out():
@@ -143,7 +141,7 @@ def test_failed_unit_backs_off_three_times_then_other_datasets_continue():
     handler = registry.get(job.job_type)
     first = handler(job)
     assert isinstance(first, JobContinuation)
-    assert first.resume_at == container.authentication.clock.now() + timedelta(minutes=5)
+    assert first.resume_at == container.authentication.clock.now() + timedelta(seconds=15)
     handler(job)
     handler(job)
     state = job.payload["collection"]
@@ -170,30 +168,22 @@ def test_active_collection_is_reused_for_new_schedule_trigger():
     assert len(container.jobs.list_all()) == 1
 
 
-def test_daily_failure_does_not_skip_remaining_stocks_or_create_child_jobs():
+def test_old_daily_failures_are_retired_but_financial_failures_remain():
     container, _, registry, job = setup_collection()
     handler = registry.get(job.job_type)
     handler(job)
     state = job.payload["collection"]
-    state["unit"] = next(
-        i for i, unit in enumerate(units(date(2026, 9, 28))) if unit["dataset"] == "daily-bars"
-    )
-    calls = []
-
-    class Sync:
-        def sync(self, dataset, **kwargs):
-            calls.append(kwargs["symbols"])
-            if kwargs["symbols"] == ["000000"]:
-                raise ValueError("temporary")
-            return {"record_count": 1}
-
-    container.data_sync = cast(Any, Sync())
-    for _ in range(4):
+    state.pop("tdx_daily_owner")
+    state["failed"] = [
+        {"dataset": "daily-bars", "symbol": "000008"},
+        {"dataset": "income-statements"},
+    ]
+    state["failed_count"] = 2
+    state["unit"] = len(units(date(2026, 9, 28)))
+    with pytest.raises(AcquisitionFailed):
         handler(job)
-    assert calls == [["000000"], ["000000"], ["000000"], ["000001"]]
-    assert state["last_symbol"] == "000001"
-    assert state["failed"][0]["symbol"] == "000000"
-    assert state["records"] == 1
+    assert state["failed"] == [{"dataset": "income-statements"}]
+    assert state["failed_count"] == 1
     assert not container.jobs.list_all()
 
 

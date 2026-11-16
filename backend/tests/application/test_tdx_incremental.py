@@ -71,6 +71,27 @@ def test_replay_is_idempotent_and_source_revision_updates_same_business_keys() -
     assert len(store.bars) == 2 and store.states[DAY].sha256 == "b" * 64
 
 
+def test_explicit_replay_repairs_external_overwrite_even_when_digest_is_unchanged():
+    feed, store = Feed(), Store()
+    updater = service(feed, store)
+    updater.update(start_day=DAY, end_day=DAY)
+    key, original = next(iter(store.bars.items()))
+    store.bars[key] = replace(original, volume=original.volume / 100, amount=None)
+    assert updater.update(start_day=DAY, end_day=DAY).unchanged_days == 1
+    assert store.bars[key] != original
+    repaired = updater.update(start_day=DAY, end_day=DAY, replay=True)
+    assert repaired.imported_rows == 2 and store.bars[key] == original
+    assert store.states[DAY].sha256 == feed.archive.sha256
+
+
+@pytest.mark.parametrize("bounds", [{}, {"start_day": DAY}, {"end_day": DAY}])
+def test_replay_requires_explicit_bounded_dates_before_accessing_store_or_feed(bounds):
+    feed = Feed()
+    with pytest.raises(ValueError, match="显式"):
+        service(feed).update(replay=True, **bounds)
+    assert feed.requested == []
+
+
 def test_failed_day_retries_even_when_later_days_already_succeeded() -> None:
     feed, store = Feed(), Store()
     store.states[DAY] = DayCheckpoint("failed")

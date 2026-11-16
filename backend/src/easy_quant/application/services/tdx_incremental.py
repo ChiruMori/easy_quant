@@ -73,8 +73,11 @@ class TdxDailyUpdateService:
         *,
         start_day: date | None = None,
         end_day: date | None = None,
+        replay: bool = False,
         progress: Callable[[DailyUpdateResult], None] = lambda _result: None,
     ) -> DailyUpdateResult:
+        if replay and (start_day is None or end_day is None):
+            raise ValueError("replay必须显式提供起止日期，不允许自动重写历史")
         current = self.now()
         if current.tzinfo is None:
             raise ValueError("更新时点必须包含时区")
@@ -140,6 +143,7 @@ class TdxDailyUpdateService:
                                 bar.validate()
                             if (
                                 prior
+                                and not replay
                                 and prior.status == "succeeded"
                                 and prior.sha256 == archive.sha256
                             ):

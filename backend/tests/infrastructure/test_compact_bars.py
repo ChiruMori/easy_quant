@@ -41,6 +41,13 @@ class CompactSession:
     def commit(self):
         self.commits += 1
 
+    def scalars(self, statement):
+        return [row[0] for row in self.execute(statement)]
+
+    def scalar(self, statement):
+        rows = self.execute(statement)
+        return rows[0][0] if rows else None
+
 
 def test_exact_provenance_dedup_and_missing_reference_refusal():
     session = CompactSession()
@@ -158,10 +165,10 @@ def test_compact_imports_keep_metadata_bars_and_checkpoint_transaction(kind, mis
             self.rolled_back = error is not None
             return False
 
-        def scalars(self, _statement):
+        def scalars(self, statement):
             return []
 
-        def scalar(self, _statement):
+        def scalar(self, statement):
             return None
 
         def execute(self, statement, values=None):

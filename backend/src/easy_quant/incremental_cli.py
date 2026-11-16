@@ -22,7 +22,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="通达信官方 A 股盘后增量更新与缺日恢复")
     parser.add_argument("--start-day", type=date.fromisoformat)
     parser.add_argument("--end-day", type=date.fromisoformat)
+    parser.add_argument(
+        "--replay", action="store_true", help="显式按日恢复官方数据，必须提供起止日期"
+    )
     args = parser.parse_args()
+    if args.replay and (args.start_day is None or args.end_day is None):
+        parser.error("--replay必须同时提供--start-day和--end-day")
     engine = create_database_engine(get_settings().database_url.get_secret_value())
     directory = BACKEND_ROOT / ".local-data/tdx/daily"
     stop_requested = False
@@ -47,6 +52,7 @@ def main() -> int:
             result = service.update(
                 start_day=args.start_day,
                 end_day=args.end_day,
+                replay=args.replay,
                 progress=progress,
             )
         report = {

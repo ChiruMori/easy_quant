@@ -413,6 +413,14 @@ class MarketDataSyncService:
         force: bool,
         source_keys: set[str] | None,
     ) -> dict[str, object]:
+        managed = self.store.tdx_managed_symbols(
+            [str(symbol).zfill(6) for symbol in symbols if not is_index(str(symbol))]
+        )
+        if managed:
+            raise StateConflictError(
+                "通达信股票日线使用官方整日增量包维护，请使用通达信增量或指定日期replay",
+                {"symbols": sorted(managed)[:20]},
+            )
         normalized: list[dict[str, object]] = []
         all_attempts: list[dict[str, object]] = []
         sources: set[str] = set()

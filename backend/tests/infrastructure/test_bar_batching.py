@@ -38,6 +38,13 @@ def test_large_upload_checks_keys_and_upserts_in_batches_without_get_merge():
         def get(self, *_args):
             raise AssertionError("禁止逐行查询")
 
+        def scalars(self, statement):
+            return [row[0] for row in self.execute(statement)]
+
+        def scalar(self, statement):
+            rows = self.execute(statement)
+            return rows[0][0] if rows else None
+
         def merge(self, *_args):
             raise AssertionError("禁止逐行 merge")
 
@@ -62,10 +69,11 @@ def test_large_upload_checks_keys_and_upserts_in_batches_without_get_merge():
     ]
     assert store.upsert_bars(rows) == 0
     statements = [str(statement.compile(dialect=mysql.dialect())) for statement, _ in session.calls]
-    assert sum(sql.startswith("SELECT") for sql in statements) == 5
+    # 每只股票增加一次小检查点查询和一次有界来源确认，不随1001条日线增长。
+    assert sum(sql.startswith("SELECT") for sql in statements) == 7
     assert sum("INSERT INTO daily_bars" in sql for sql in statements) == 3
     assert sum("INSERT INTO trading_days" in sql for sql in statements) == 3
-    assert len(session.calls) == 12 and session.commits == 1
+    assert len(session.calls) == 14 and session.commits == 1
     assert all("ON DUPLICATE KEY UPDATE" in sql for sql in statements if sql.startswith("INSERT"))
     session.calls.clear()
     dates = [start + timedelta(days=i) for i in range(1001)]
