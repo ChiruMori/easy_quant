@@ -15,3 +15,5 @@
 完整后端875条通过，Ruff及Pyright无错误。过程中修正了两个旧Session fake缺少scalars/scalar以及继承签名不一致的问题，未放宽检查或跳过测试。完整pnpm check不带排除项通过，前端67条、类型/lint/格式及生产构建成功；受影响Playwright 6条通过（automatic-collection、financial-fundamentals、job-pagination，覆盖1440px/360px及失败恢复）。没有前端实现改动。
 
 提交前pre-commit run --all-files全部通过，无跳过或排除。没有修改数据库、运行replay、执行迁移、全量重导或复权切换。只读核验与离线单测分开执行，原始官方ZIP未写入工作区或fixture。
+
+交付分支fix/tdx-daily-ownership已推送，PR [#30](https://github.com/ChiruMori/easy_quant/pull/30)。原PR #29已合并，因此新建本次修复PR。连接器写权限不足，使用本机已有Git认证创建，未输出或落盘凭据。
