@@ -2,6 +2,7 @@
 
 import logging
 from datetime import date, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -44,7 +45,7 @@ def units(day):
         {"dataset": key, "period": ""}
         for key in (
             "trading-status",
-            "daily-bars",
+            "daily-bars",  # 已退役占位；不可删除，避免旧游标错位。
             "market-values",
             "pledge-ratios",
             "sw-industry-memberships",
@@ -78,6 +79,15 @@ def collect(container, job, enabled_sources):
             "retries": 0,
         }
     state = job.payload["collection"]
+    if not state.get("tdx_daily_owner"):
+        # 已停用范围的旧失败不应令新版本最终仍报失败。
+        previous_failures = state["failed"]
+        state["failed"] = [
+            item for item in previous_failures if item.get("dataset") != "daily-bars"
+        ]
+        removed = len(previous_failures) - len(state["failed"])
+        state["failed_count"] = max(len(state["failed"]), state.get("failed_count", 0) - removed)
+        state["tdx_daily_owner"] = True
     day = date.fromisoformat(state["day"])
     work = units(day)
     if state["unit"] >= len(work):
@@ -122,10 +132,11 @@ def collect(container, job, enabled_sources):
         )
     )
     done = False
-    candidates, symbol = [], ""
+    symbol = ""
     sources = None
     try:
-        sources = enabled_sources(dataset)
+        # 保留旧unit索引，但不再发请求或扫描股票缺口。
+        sources = set() if dataset == "daily-bars" else enabled_sources(dataset)
         if sources == set() or (fresh and state["page"] == 1 and not state["last_symbol"]):
             done = True
         elif dataset in FINANCIAL_DATASETS:
@@ -181,68 +192,6 @@ def collect(container, job, enabled_sources):
             state["expected"], state["pages"] = count, pages
             state["page"] += 1
             done = state["page"] > pages
-        elif dataset == "daily-bars":
-            if sources is not None and "eastmoney" not in sources:
-                raise ValueError("串行自动采集需要启用受请求预算控制的东方财富来源")
-            candidates = container.market_data.instrument_candidates(state["last_symbol"], dataset)
-            keys = [f"{dataset}:{row['symbol']}" for row in candidates]
-            recent_checks = (
-                checkpoints.get_many(keys)
-                if hasattr(checkpoints, "get_many")
-                else {key: checkpoints.get(key) for key in keys}
-            )
-            if not candidates:
-                done = True
-            for candidate in candidates:
-                symbol = str(candidate["symbol"])
-                key = f"{dataset}:{symbol}"
-                last = recent_checks.get(key)
-                checked = last and last.get("bar_day") == state["bar_day"]
-                if checked:
-                    state["last_symbol"] = symbol
-                    continue
-                missing_checks = dict((last or {}).get("missing_checked", {}))
-                bounds = container.market_data.bar_coverage([symbol]).get(symbol, {})
-                day = date.fromisoformat(state["bar_day"])
-                missing = []
-                first = bounds.get("first_day")
-                start = bounds.get("last_day") or day - timedelta(days=365)
-                if first:
-                    # 仅检查已有历史覆盖内的真实交易日缺口；上市前不要求日线。
-                    begin = max(first, date(day.year - 5, 1, 1))
-                    missing = container.market_data.missing_bar_days(symbol, begin, day)
-                    # 已尝试但来源无数据的旧缺口30天后再查；近期缺口每日复查。
-                    missing = [
-                        value
-                        for value in missing
-                        if value >= day - timedelta(days=7)
-                        or value.isoformat() not in missing_checks
-                        or (day - date.fromisoformat(missing_checks[value.isoformat()])).days >= 30
-                    ]
-                    if missing:
-                        start = missing[0]
-                        missing_checks.update(
-                            {value.isoformat(): day.isoformat() for value in missing}
-                        )
-                if start >= day and not (first and missing):
-                    state["last_symbol"] = symbol
-                    continue
-                result = container.data_sync.sync(
-                    dataset,
-                    symbols=[symbol],
-                    start_day=start,
-                    end_day=day,
-                    force=True,
-                    source_keys={"eastmoney"} & sources if sources is not None else {"eastmoney"},
-                )
-                state["records"] += int(result.get("record_count", 0))
-                checkpoints[key] = {
-                    "completed_at": now.isoformat(),
-                    "bar_day": state["bar_day"],
-                    "missing_checked": missing_checks,
-                }
-                state["last_symbol"] = symbol
-                break  # 单个有网络的标的完成即让出worker；已新鲜标的可在同一领取中跳过100个。
         else:
             result = container.data_sync.sync(
                 dataset,
@@ -278,9 +227,15 @@ def collect(container, job, enabled_sources):
             container.database_session.rollback()
         state["retries"] += 1
         if state["retries"] < 3:
+            wait, limited = retry_delay(
+                error, state["retries"], container.authentication.clock.now()
+            )
+            message = (
+                f"{'来源限流' if limited else '来源失败'}，{wait:g}秒后重试（{state['retries']}/3）"
+            )
             return JobContinuation(
-                summary(state, work, "来源失败，限频退避后重试"),
-                now + timedelta(minutes=5 * state["retries"]),
+                {**summary(state, work, message), "retry_after_seconds": wait},
+                container.authentication.clock.now() + timedelta(seconds=wait),
             )
         state["failed_count"] = state.get("failed_count", 0) + 1
         state["failed"] = state["failed"][:19]
@@ -292,12 +247,7 @@ def collect(container, job, enabled_sources):
                 "attempts": getattr(error, "details", {}).get("attempts", []),
             }
         )
-        if dataset == "daily-bars" and candidates:
-            state["last_symbol"] = symbol
-            state["retries"] = 0
-            state["had_failure"] = True
-        else:
-            done = True
+        done = True
     if done:
         logger.info(
             "聚合采集范围已处理 job_id=%s dataset=%s period=%s records=%s failures=%s",
@@ -342,3 +292,25 @@ def summary(state, work, message):
         "failed_datasets": state["failed"],
         "failed_count": state.get("failed_count", 0),
     }
+
+
+def retry_delay(error, attempt, now):
+    response = getattr(error, "response", None)
+    details = getattr(error, "details", {}) or {}
+    limited = getattr(response, "status_code", None) == 429 or bool(details.get("rate_limited"))
+    if not limited:
+        return 15 * attempt, False
+    raw = (
+        response.headers.get("Retry-After") if response is not None else details.get("retry_after")
+    )
+    if raw:
+        try:
+            seconds = float(raw)
+        except (TypeError, ValueError):
+            try:
+                seconds = (parsedate_to_datetime(str(raw)) - now).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                seconds = 300 * attempt
+        if 0 <= seconds <= 3600:
+            return max(5, seconds), True
+    return 300 * attempt, True

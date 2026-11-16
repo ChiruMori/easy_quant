@@ -32,6 +32,7 @@ from easy_quant.infrastructure.persistence.models.backtesting import (
 )
 from easy_quant.infrastructure.persistence.models.market_data_records import (
     DailyBarModel,
+    HistoryImportStockModel,
     InstrumentModel,
     JsonMarketRecordModel,
     TradingDayModel,
@@ -135,6 +136,15 @@ def streamed_snapshot_chunks(payload: SnapshotSpool) -> Iterator[bytes]:
         del buffer[:60_000]
 
 
+def _protect_tdx_bars(store: Any, rows: list[dict[str, Any]]) -> None:
+    external = sorted({str(row["symbol"]) for row in rows if row.get("source") != "tdx-official"})
+    if external and (managed := store.tdx_managed_symbols(external)):
+        raise StateConflictError(
+            "通达信日线由官方整日包维护，拒绝其他来源覆盖；请使用通达信增量或显式日期replay",
+            {"symbols": sorted(managed)[:20]},
+        )
+
+
 class InMemoryMarketDataStore:
     def __init__(
         self,
@@ -149,6 +159,7 @@ class InMemoryMarketDataStore:
         self.market_records = market_records if market_records is not None else {}
 
     def upsert_bars(self, rows: list[dict[str, Any]]) -> int:
+        _protect_tdx_bars(self, rows)
         incoming = {str(row["symbol"]): str(row.get("adjustment", "unknown")) for row in rows}
         for existing in self.daily_bars.values():
             symbol = str(existing["symbol"])
@@ -198,6 +209,14 @@ class InMemoryMarketDataStore:
                 if str(row["symbol"]) == symbol
             },
         )
+
+    def tdx_managed_symbols(self, symbols: list[str]) -> set[str]:
+        wanted = set(symbols)
+        return {
+            str(row["symbol"])
+            for row in self.daily_bars.values()
+            if row["symbol"] in wanted and row.get("source") == "tdx-official"
+        }
 
     def upsert_instruments(self, rows: list[dict[str, Any]]) -> None:
         for row in rows:
@@ -464,7 +483,32 @@ class SqlAlchemyMarketDataStore:
         self.session = session
         self.storage = BAR_STORAGE
 
+    def tdx_managed_symbols(self, symbols: list[str]) -> set[str]:
+        if not symbols:
+            return set()
+        owned = set(
+            self.session.scalars(
+                select(HistoryImportStockModel.symbol)
+                .where(HistoryImportStockModel.symbol.in_(symbols))
+                .distinct()
+            )
+        )
+        # 基线后新上市股票没有全量检查点；只查其主键范围内首个TDX引用。
+        Bar = self.storage.logical
+        for symbol in set(symbols) - owned:
+            if (
+                self.session.scalar(
+                    select(Bar.symbol)
+                    .where(Bar.symbol == symbol, Bar.source == "tdx-official")
+                    .limit(1)
+                )
+                is not None
+            ):
+                owned.add(symbol)
+        return owned
+
     def upsert_bars(self, rows: list[dict[str, Any]]) -> int:
+        _protect_tdx_bars(self, rows)
         Bar = self.storage.logical
         PhysicalBar = self.storage.physical
         incoming = {str(row["symbol"]): str(row.get("adjustment", "unknown")) for row in rows}

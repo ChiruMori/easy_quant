@@ -143,7 +143,7 @@ def test_instrument_cursor_and_lease_check_select_only_required_columns(fixed_no
     assert list(statements[1].selected_columns.keys()) == ["id"]
 
 
-def test_fresh_stock_batch_skips_100_in_one_claim_without_waiting_or_rescanning_all_stocks():
+def test_retired_daily_scope_skips_entire_universe_without_rescanning_or_waiting():
     container, calls, registry, job = setup_collection()
     handler = registry.get(job.job_type)
     handler(job)
@@ -166,10 +166,11 @@ def test_fresh_stock_batch_skips_100_in_one_claim_without_waiting_or_rescanning_
     container.market_data.list_trading_days = unexpected
     result = handler(job)
     assert isinstance(result, JobContinuation) and result.resume_at == now
-    assert state["last_symbol"] == "000099"
+    assert state["last_symbol"] == ""
+    assert units(date(2026, 9, 28))[state["unit"]]["dataset"] == "market-values"
     assert len(calls) == 1
     handler(job)
-    assert state["last_symbol"] == "000199"
+    assert calls[-1][0] == "market-values"
 
 
 def test_skipping_fresh_history_does_not_extend_refresh_deadline():

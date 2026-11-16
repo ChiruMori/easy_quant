@@ -85,6 +85,9 @@ class AcquisitionService:
         source_keys: set[str] | None = None,
     ) -> tuple[RawEnvelope, list[SourceAttempt]]:
         attempts: list[SourceAttempt] = []
+        rate_limited = False
+        limited_sources: set[str] = set()
+        retry_after = None
         sources = [
             source for source in self.sources if source_keys is None or source.key in source_keys
         ]
@@ -103,6 +106,8 @@ class AcquisitionService:
             ]
         )
         for source, attempt in sequence:
+            if source.key in limited_sources:
+                continue  # 429留给外层可续传退避，不在同一轮立刻再打源站。
             cache_identity = hashlib.sha256(f"{source.key}:{request.identity}".encode()).hexdigest()
             cached = self.cache.get(cache_identity) if not force and attempt == 1 else None
             if cached and cached.is_valid() and cached.is_fresh(self.clock.now()):
@@ -144,6 +149,11 @@ class AcquisitionService:
             except StorageFailure:
                 raise
             except Exception as error:
+                response = getattr(error, "response", None)
+                if response is not None and getattr(response, "status_code", None) == 429:
+                    rate_limited = True
+                    limited_sources.add(source.key)
+                    retry_after = response.headers.get("Retry-After")
                 message = f"{type(error).__name__}: {_safe_source_error(error)}"
                 attempts.append(SourceAttempt(source.key, attempt, AttemptStatus.FAILED, message))
                 logger.warning(
@@ -154,8 +164,10 @@ class AcquisitionService:
                     monotonic() - started,
                     message,
                 )
-                if attempt < self.retry.max_attempts and (
-                    not self.retry_by_round or source is sources[-1]
+                if (
+                    source.key not in limited_sources
+                    and attempt < self.retry.max_attempts
+                    and (not self.retry_by_round or source is sources[-1])
                 ):
                     self.sleeper.sleep(self.retry.delay_seconds(attempt))
                 continue
@@ -180,6 +192,8 @@ class AcquisitionService:
             "所有数据来源均失败",
             details={
                 "dataset": request.dataset_key,
+                "rate_limited": rate_limited,
+                "retry_after": retry_after,
                 "attempts": [
                     {
                         "source_key": item.source_key,

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import cast
 
+import httpx
 import pytest
 
 from easy_quant.application.services.acquisition import (
@@ -37,6 +38,32 @@ class Source:
         if self.calls <= self.failures:
             raise RuntimeError("temporary")
         return self.payload, "application/json"
+
+
+def test_http_429_metadata_survives_source_exhaustion(fixed_now):
+    class LimitedSource(Source):
+        def fetch(self, request):
+            self.calls += 1
+            response = httpx.Response(
+                429,
+                headers={"Retry-After": "60"},
+                request=httpx.Request("GET", "https://fixture.invalid"),
+            )
+            raise httpx.HTTPStatusError("limited", request=response.request, response=response)
+
+    limited = LimitedSource("limited")
+    service = AcquisitionService(
+        [limited],
+        MemoryCache(),
+        FixedClock(fixed_now),
+        VirtualSleeper(),
+        ExponentialRetry(2),
+    )
+    with pytest.raises(AcquisitionFailed) as captured:
+        service.acquire(SemanticRequest("bars", {}, "identity"))
+    assert captured.value.details["rate_limited"] is True
+    assert captured.value.details["retry_after"] == "60"
+    assert limited.calls == 1
 
 
 def test_retry_then_stop_at_first_success(fixed_now) -> None:
