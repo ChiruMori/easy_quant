@@ -7,3 +7,4 @@
 - 财务回归覆盖TTM/单季/年度手算、同比报告季度、未来修订、旧报告新修订、缺期、币种/范围/来源、非正分母、截面并列与缺失成员、未来市值及未来报告期；相关50项测试通过。
 - Playwright：strategy-workspace与backtest-journey两个旅程通过（含360px布局）。既有E2E测试容器的预期失败路径产生未同步行情/通知handler日志，不影响两项断言通过。
 - 最终`pnpm check`通过：938项后端测试、67项前端测试、Ruff/Pyright、前端格式/ESLint/TypeScript及生产构建。`pre-commit run --all-files`通过。构建保留既有大chunk提示，本轮无前端代码变更。
+- 交付分支`feat/financial-factors-talib`，实现提交`d4ba5bd`，[PR #31](https://github.com/ChiruMori/easy_quant/pull/31)以master为目标。GitHub连接器创建PR返回403，随后使用已有本机Git认证创建成功。
