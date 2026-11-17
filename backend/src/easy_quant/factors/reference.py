@@ -2,12 +2,14 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import ROUND_FLOOR, Decimal, DecimalException
 from functools import partial
 
 from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.factors.alpha101 import ALPHA_NUMBERS, calculate_alpha
 from easy_quant.factors.alpha101_docs import ALPHA_EXPLANATIONS, alpha_description
+from easy_quant.factors.financial import references as financial_references
 from easy_quant.factors.series import (
     Unavailable,
     divide,
@@ -59,7 +61,11 @@ def calculate(
             records = context.read("market-values", s)
             if not records:
                 raise Unavailable("missing_market_value")
-            value = number(records[-1].get(field))
+            value = number(
+                max(records, key=lambda row: datetime.fromisoformat(str(row["available_at"]))).get(
+                    field
+                )
+            )
             if value <= 0:
                 raise Unavailable("non_positive_market_value")
             return -(value / Decimal(1000000)).ln()
@@ -385,6 +391,7 @@ def references() -> tuple[Reference, ...]:
     add("log_price", "Risk", "log_price", 1)
     for key in ("size", "float_size", "nl_size"):
         add(key, "Size", key, 1, datasets=("market-values",))
+    result.extend(financial_references())
     return tuple(result)
 
 

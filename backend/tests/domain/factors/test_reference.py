@@ -13,6 +13,7 @@ from easy_quant.factors.alpha101 import Frame
 from easy_quant.factors.reference import references
 from easy_quant.factors.series import Unavailable, number
 from easy_quant.strategy_api.context import RuntimeContext
+from tests.domain.factors.test_financial import financial_records
 
 
 @pytest.fixture(scope="module")
@@ -42,6 +43,7 @@ def context():
             "bars": bars,
             "decision_at": "2026-01-01T00:00:00+00:00",
             "records": {
+                **financial_records(),
                 "market-values": {
                     s: [
                         {
@@ -51,7 +53,7 @@ def context():
                         }
                     ]
                     for i, s in enumerate(("000001", "000002", "000003"))
-                }
+                },
             },
         }
     )
@@ -70,13 +72,11 @@ def test_each_reference_is_registered_evaluates_and_declares_full_prewarm(entry,
 
 def test_catalog_accounts_for_each_public_item_once():
     inventory = json.loads(
-        (Path(__file__).parents[4] / "specs/036-reference-factor-catalog/inventory.json").read_text(
-            encoding="utf-8"
-        )
+        (Path(__file__).parents[4] / "docs/factor-inventory.json").read_text(encoding="utf-8")
     )
     assert len(inventory) == len({item["name"] for item in inventory}) == 202
     implemented = {entry.key for entry in references()}
-    assert len(implemented) == 85
+    assert len(implemented) == 105
     assert {item["name"] for item in inventory if item["status"] == "implemented"} == implemented
     assert all(
         item["reason"] and item["required_changes"]
@@ -175,6 +175,9 @@ def test_wilder_rsi_is_not_simple_moving_average(context):
 
 def test_future_missing_fields_zero_denominator_and_universe_are_explicit(context):
     assert context.factor("alpha101_3", symbol="000001")["reason"] == "explicit_universe_required"
+    assert not context.factor("alpha101_33", symbol="000001", symbols=["000001", "000001"])[
+        "available"
+    ]
     runtime = RuntimeContext(
         {
             "bars": {"a": [{"close": "10", "available_at": "2026-03-01T00:00:00+00:00"}]},

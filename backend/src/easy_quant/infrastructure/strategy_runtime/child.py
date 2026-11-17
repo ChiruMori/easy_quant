@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
@@ -14,7 +15,15 @@ from pathlib import Path
 from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from easy_quant.infrastructure.strategy_runtime.numeric_modules import numeric_importer
 from easy_quant.strategy_api.context import RuntimeContext
+from easy_quant.strategy_api.imports import validate_numeric_imports
+
+
+def compile_strategy(source):
+    tree = ast.parse(source)
+    validate_numeric_imports(tree)
+    return compile(tree, "<strategy>", "exec")
 
 
 def _request_quotes(symbols):
@@ -31,7 +40,7 @@ def main() -> None:
     try:
         initialization_output = io.StringIO()
         with contextlib.redirect_stdout(initialization_output):
-            exec(compile(request["source_code"], "<strategy>", "exec"), namespace)
+            exec(compile_strategy(request["source_code"]), namespace)
         calls = request.get("calls")
         if isinstance(calls, list):
             results = []
@@ -65,7 +74,7 @@ def stream_main() -> None:
     """回测专用行协议；一次子进程只服务一个策略版本。"""
     try:
         initialization = json.loads(sys.stdin.readline())
-        compiled = compile(initialization["source_code"], "<strategy>", "exec")
+        compiled = compile_strategy(initialization["source_code"])
         parameters = initialization.get("parameters", {})
         _stream_reply({"ok": True, "ready": True})
     except Exception as error:
@@ -178,6 +187,7 @@ def _stream_reply(payload: dict[str, object]) -> None:
 
 def _safe_builtins() -> dict[str, object]:
     return {
+        "__import__": numeric_importer(),
         "Decimal": Decimal,
         "sorted": sorted,
         "set": set,

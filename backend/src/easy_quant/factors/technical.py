@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from easy_quant.factors.context import FactorContext
+from easy_quant.factors.series import ema
 
 
 def moving_average(context: FactorContext, parameters: dict[str, object]) -> object:
@@ -39,16 +40,10 @@ def moving_average_convergence_divergence(
     if len(closes) < slow + signal_window:
         return {"available": False, "required": slow + signal_window, "actual": len(closes)}
 
-    def ema(values: list[Decimal], window: int) -> list[Decimal]:
-        multiplier = Decimal(2) / Decimal(window + 1)
-        result = [values[0]]
-        for value in values[1:]:
-            result.append((value - result[-1]) * multiplier + result[-1])
-        return result
-
-    fast_values, slow_values = ema(closes, fast), ema(closes, slow)
+    fast_values = ema(closes, Decimal(2) / (fast + 1))
+    slow_values = ema(closes, Decimal(2) / (slow + 1))
     differences = [left - right for left, right in zip(fast_values, slow_values, strict=True)]
-    signal_values = ema(differences, signal_window)
+    signal_values = ema(differences, Decimal(2) / (signal_window + 1))
     return {
         "available": True,
         "dif": differences[-1],

@@ -197,7 +197,7 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
     symbol = str(parameters["symbol"])
     raw_symbols = parameters.get("symbols")
     if index not in SINGLE_SYMBOL and (
-        not isinstance(raw_symbols, list) or symbol not in raw_symbols or not raw_symbols
+        not isinstance(raw_symbols, list) or symbol not in raw_symbols or len(set(raw_symbols)) < 2
     ):
         return {"available": False, "reason": "explicit_universe_required"}
     symbols = (
