@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from easy_quant.domain.strategies.entities import StrategyRunStatus, StrategyVersion
 from easy_quant.infrastructure.strategy_runtime.runner import StreamingStrategyRunner
 
@@ -52,7 +54,7 @@ def test_complete_dated_bars_reach_factor_and_keep_availability(fixed_now):
             ],
         )
     assert result[-1].status is StrategyRunStatus.SUCCEEDED
-    assert result[-1].stdout == "1\n950\n"
+    assert [float(value) for value in result[-1].stdout.splitlines()] == pytest.approx([1, 950])
 
 
 def test_streaming_runner_reuses_history_but_resets_strategy_globals(fixed_now) -> None:

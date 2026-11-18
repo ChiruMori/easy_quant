@@ -418,6 +418,7 @@ def _execute_backtest(
                     slippage_rate=str(config.slippage_rate),
                     **inputs[phase],
                 )
+                container.factor_statistics.record(result.factor_event_id, result.factor_metrics)
                 profile.record_hook(day.isoformat(), phase, hook_started)
                 if result.status != "succeeded":
                     # 不把策略异常中的任意用户数据写入worker日志；完整失败详情由授权任务页查看。

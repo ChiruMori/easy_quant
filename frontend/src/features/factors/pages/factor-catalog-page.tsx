@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 
 import type { FactorDefinition } from "../api"
 import { listFactors } from "../api"
+import { FactorQuickTest } from "../factor-quick-test"
 
 export function FactorCatalogPage({ factors }: { factors?: FactorDefinition[] } = {}) {
   const [search, setSearch] = useState("")
@@ -55,6 +56,16 @@ export function FactorCatalogPage({ factors }: { factors?: FactorDefinition[] } 
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  策略调用 {factor.calls ?? 0} 次 · 总耗时 {(factor.total_ms ?? 0).toFixed(2)} ms ·
+                  平均{" "}
+                  {factor.average_ms === null || factor.average_ms === undefined
+                    ? "—"
+                    : `${factor.average_ms.toFixed(3)} ms`}
+                </p>
+                <FactorQuickTest factor={factor} />
+              </div>
               <section>
                 <h3 className="text-sm font-medium">参数</h3>
                 <dl className="mt-2 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm [overflow-wrap:anywhere]">

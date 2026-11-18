@@ -10,6 +10,60 @@
     "securitySchemes": {"cookieSession": {"type": "apiKey", "in": "cookie", "name": "session"}, "csrf": {"type": "apiKey", "in": "header", "name": "X-CSRF-Token"}}
   },
   "paths": {
+    "/factors/{key}/quick-test": {
+      "post": {
+        "operationId": "quickTestFactor",
+        "summary": "同步测试平台因子（真实数据，5秒预算）",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "trading_day",
+                  "parameters"
+                ],
+                "properties": {
+                  "trading_day": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "parameters": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "因子结果、输入行数、耗时及决策时点；不纳入策略调用统计"
+          },
+          "400": {
+            "description": "参数无效或超出输入上限"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "409": {
+            "description": "超时、计算失败或快测繁忙"
+          }
+        }
+      }
+    },
     "/market-data/instruments/{symbol}/fundamentals": {"get": {"operationId": "getInstrumentFundamentals", "summary": "已保存的股票数据覆盖与字段单位", "parameters": [{"name": "symbol", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "目录、版本条数与字段说明"}, "401": {"description": "需要登录"}, "404": {"description": "股票不存在"}}}},
     "/market-data/instruments/{symbol}/fundamentals/{dataset}": {"get": {"operationId": "getInstrumentFundamentalRecords", "summary": "按可获知时间倒序分页查看已保存的股票基本面版本", "parameters": [{"name": "symbol", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "dataset", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100000}}, {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50}}], "responses": {"200": {"description": "items、total、page、page_size；不触发采集"}, "401": {"description": "需要登录"}, "404": {"description": "股票不存在"}, "400": {"description": "无效分页或数据集"}}}},
     "/chart-comparisons/instruments": {"get": {"operationId": "searchComparisonInstruments", "description": "登录用户按代码/名称搜索已有股票与指数，最多20条，不访问外部网络", "parameters": [{"name": "search", "in": "query", "schema": {"type": "string"}}], "responses": {"200": {"description": "读取成功，不修改回测和实盘状态"}, "400": {"description": "请求不明确或数据缺失"}, "404": {"description": "资源不存在或无权限"}, "409": {"description": "缺少可比配置或行情"}}}},

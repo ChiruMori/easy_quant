@@ -1,5 +1,15 @@
 [
   {
+    "key": "history",
+    "name": "研究数据表",
+    "signature": "context.history(symbol, dataset='daily-bars')",
+    "description": "只读取决策时点可见数据，显式数值列转换为float64，日线按交易日升序；返回独立副本。",
+    "parameters": "symbol：证券代码；dataset：数据集，默认daily-bars。",
+    "output": "pandas.DataFrame；无记录为空表；证券代码保持字符串，缺失数值为NaN。",
+    "example": "bars = context.history(symbol)\nif not bars.empty:\n    print(bars['close'].rolling(5).mean().iloc[-1])",
+    "runtime": "盘前/盘中不读取当日收盘；数据依赖可静态提取，动态dataset须显式声明因子或库依赖。"
+  },
+  {
     "key": "universe",
     "name": "股票池",
     "signature": "context.universe()",
@@ -33,10 +43,10 @@
     "key": "financials",
     "name": "可见财务历史",
     "signature": "context.financials(symbol)",
-    "description": "读取各报告期在当前决策时点可见的最新财务指标版本，按报告期升序。标准数值为Decimal，roe为百分数，利润为报告币种元。",
+    "description": "读取各报告期在当前决策时点可见的最新财务指标版本，按报告期升序。标准数值为float64，roe为百分数，利润为报告币种元。",
     "parameters": "symbol：证券代码。",
-    "output": "记录序列；含 report_period、publication_time_known、available_at。缺失指标为 None。",
-    "example": "reports = context.financials(symbol)\nfor report in reports:\n    print(report.get('report_period'), report.get('adjusted_net_profit'))",
+    "output": "pandas.DataFrame；按报告期升序，数值列float64，缺失为NaN。",
+    "example": "reports = context.financials(symbol)\nprint(reports[['report_period', 'adjusted_net_profit']])",
     "runtime": "公告或来源修订时间未知时仅从采集时刻可见；不把累计利润当单季利润，不补造历史版本。完整三表及其他基本面使用 financial.* 平台库。"
   },
   {
@@ -45,7 +55,7 @@
     "signature": "context.valuation(symbol)",
     "description": "读取最新可见 PE、PB、总市值和流通市值；遵循来源口径。",
     "parameters": "symbol：证券代码。",
-    "output": "dict 或 None；标准数值字段为 Decimal。",
+    "output": "dict 或 None；标准数值字段为 float64。",
     "example": "value = context.valuation(symbol)\nif value and value.get('pe_ratio') is not None:\n    print(value['pe_ratio'])",
     "runtime": "盘前读昨晚同步的数据。PE 非正值或缺失需要由策略明确处理。"
   },
@@ -53,7 +63,7 @@
     "key": "factor",
     "name": "平台因子",
     "signature": "context.factor(key, **parameters)",
-    "description": "三个运行时调用唯一的平台因子实现。技术和统计计算使用 Decimal。",
+    "description": "三个运行时调用唯一的平台因子实现。技术和统计计算使用 float64。",
     "parameters": "key：因子 Key；其余参数见因子目录。",
     "output": "因子定义的结果；不足时 available=False 或 None。",
     "example": "ma30 = context.factor('technical.ma', symbol=symbol, window=30)\nif ma30['available']:\n    print(ma30['value'])",
@@ -76,7 +86,7 @@
     "description": "quotes 的单标的形式，适合判断价格条件。",
     "parameters": "symbol：证券代码。",
     "output": "Decimal 或 None。",
-    "example": "price = context.current_price(symbol)\nif price is not None and price <= Decimal('10.50'):\n    print('达到买点')",
+    "example": "price = context.current_price(symbol)\nif price is not None and price <= float(10.50):\n    print('达到买点')",
     "runtime": "只在盘中可调用；实盘仅每天统一时刻采样一次，不监控盘中路径。"
   },
   {
@@ -96,7 +106,7 @@
     "description": "买入比例基于单标的等额子仓位预算（组合权益/预计持股数），卖出基于该股持仓；保护可用资金、持仓和持股数上限。",
     "parameters": "expected_holdings：正整数，默认 10；ratio：(0,1]，10% 指子仓位的 10%；其余参数同信号契约。",
     "output": "带 quantity、ratio、ratio_basis、reason 的信号字典，需放入钩子返回列表；不足一手时数量为零。",
-    "example": "return [context.signal(symbol, 'buy', Decimal('0.10'), '符合买入规则', price=reference_price)]\n# 部分卖出\nreturn [context.signal(symbol, 'sell', Decimal('0.50'), '降低风险')]",
+    "example": "return [context.signal(symbol, 'buy', float(0.10), '符合买入规则', price=reference_price)]\n# 部分卖出\nreturn [context.signal(symbol, 'sell', float(0.50), '降低风险')]",
     "runtime": "同次调用自动预留费用及数量；实盘未处理建议跨轮锁定，同标的待买入时不重复建议；确认/修正/拒绝后释放，快测/回测模拟成交后推进。"
   },
   {
@@ -106,17 +116,17 @@
     "description": "保存候选股票、阈值及其他跨阶段和跨日信息。阶段失败不提交。",
     "parameters": "key：1–128 字符；value：JSON 值或有限 Decimal；状态最多 256 KiB。",
     "output": "get 返回独立副本；set/delete 无返回值。Decimal 持久化为字符串，读取时用 Decimal 恢复。",
-    "example": "context.store.set('candidates', symbols)\ncandidates = context.store.get('candidates', [])\ncontext.store.set('limit', Decimal('10.50'))\nlimit = Decimal(context.store.get('limit'))",
+    "example": "context.store.set('candidates', symbols)\ncandidates = context.store.get('candidates', [])\ncontext.store.set('limit', float(10.50))\nlimit = float(context.store.get('limit'))",
     "runtime": "快测和回测在单次运行内存保存；实盘按实例保存到 MariaDB，与阶段建议原子提交。源码全局变量不能替代 KV。"
   },
   {
     "key": "snapshot",
     "name": "阶段与数值工具",
-    "signature": "context.data / Decimal(value)",
-    "description": "读取 trading_day、phase、decision_at 与阶段快照；Decimal 在策略中直接可用，无需导入。",
-    "parameters": "Decimal 建议传十进制字符串，避免浮点误差。",
+    "signature": "context.data / float(value)",
+    "description": "读取trading_day、phase、decision_at与原始阶段快照；研究使用float与DataFrame，Decimal保留为账本兼容工具。",
+    "parameters": "研究参数显式使用float；原始快照可能含存储数字字符串，推荐history/financials读取研究表。",
     "output": "上下文独立副本；日期及时间使用带时区 ISO 字符串。",
-    "example": "ratio = Decimal(parameters.get('ratio', '0.10'))\nprint(context.data['trading_day'], context.data['phase'])",
+    "example": "ratio = float(parameters.get('ratio', 0.10))\nprint(context.data['trading_day'], context.data['phase'])",
     "runtime": "统一三个钩子 before_market/on_market/after_market；实盘盘后默认关闭。数据读取接口和 KV 在三个运行时相同。"
   },
   {

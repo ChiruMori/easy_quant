@@ -1,13 +1,15 @@
 """公开对标清单中可由现有平台数据支持的因子。"""
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import ROUND_FLOOR, Decimal, DecimalException
+from datetime import datetime
 from functools import partial
 
 from easy_quant.domain.shared.errors import ValidationError
 from easy_quant.factors.alpha101 import ALPHA_NUMBERS, calculate_alpha
 from easy_quant.factors.alpha101_docs import ALPHA_EXPLANATIONS, alpha_description
+from easy_quant.factors.financial import references as financial_references
 from easy_quant.factors.series import (
     Unavailable,
     divide,
@@ -50,7 +52,7 @@ def calculate(
     operation: str,
     window: int = 1,
     benchmark: str = "sh000300",
-) -> Decimal:
+) -> float:
     symbol = str(parameters["symbol"])
     rows = bars(context, symbol)
     if operation in {"size", "float_size", "nl_size"}:
@@ -59,10 +61,14 @@ def calculate(
             records = context.read("market-values", s)
             if not records:
                 raise Unavailable("missing_market_value")
-            value = number(records[-1].get(field))
+            value = number(
+                max(records, key=lambda row: datetime.fromisoformat(str(row["available_at"]))).get(
+                    field
+                )
+            )
             if value <= 0:
                 raise Unavailable("non_positive_market_value")
-            return -(value / Decimal(1000000)).ln()
+            return -math.log(value / 1000000)
 
         if operation != "nl_size":
             return size(
@@ -99,14 +105,12 @@ def calculate(
     if operation == "log_price":
         if c[-1] <= 0:
             raise Unavailable("non_positive_price")
-        return c[-1].ln()
+        return math.log(c[-1])
     if operation == "amount_ma":
         return mean(column(rows[-window:], "amount"))
     if operation == "abs_return_amount":
         r = returns(tail(c, window + 1))
-        return divide(
-            sum(map(abs, r), Decimal(0)), sum(column(rows[-window:], "amount"), Decimal(0))
-        )
+        return divide(sum(map(abs, r), float(0)), sum(column(rows[-window:], "amount"), float(0)))
     if operation == "price_position_ir":
         ratios = [
             divide(
@@ -119,26 +123,26 @@ def calculate(
     if operation in {"MACD", "dif", "dea"}:
         if len(c) < 35:
             raise Unavailable("insufficient_history")
-        fast, slow = ema(c, Decimal(2) / 13), ema(c, Decimal(2) / 27)
+        fast, slow = ema(c, float(2) / 13), ema(c, float(2) / 27)
         dif = [a - b for a, b in zip(fast, slow, strict=True)]
-        dea = ema(dif, Decimal(2) / 10)
+        dea = ema(dif, float(2) / 10)
         return {"MACD": 2 * (dif[-1] - dea[-1]), "dif": dif[-1], "dea": dea[-1]}[operation]
     if operation == "rsi":
         changes = [b - a for a, b in zip(c, c[1:], strict=False)]
         if len(changes) < 14:
             raise Unavailable("insufficient_history")
         # Wilder com=period-1, adjust=False, 首个变化为种子；不使用简单移动平均。
-        gain = ema([max(v, Decimal(0)) for v in changes], Decimal(1) / 14)[-1]
-        loss = ema([max(-v, Decimal(0)) for v in changes], Decimal(1) / 14)[-1]
+        gain = ema([max(v, float(0)) for v in changes], float(1) / 14)[-1]
+        loss = ema([max(-v, float(0)) for v in changes], float(1) / 14)[-1]
         if gain == loss == 0:
             raise Unavailable("zero_denominator")
-        return Decimal(100) if loss == 0 else 100 - 100 / (1 + gain / loss)
+        return float(100) if loss == 0 else 100 - 100 / (1 + gain / loss)
     if operation == "price_dist":
         price = c[-1]
         if price <= 0:
             raise Unavailable("non_positive_price")
         scaled = price / (1 if price < 10 else 10 if price < 100 else 100)
-        return scaled.to_integral_value(rounding=ROUND_FLOOR) + 1 - scaled
+        return math.floor(scaled) + 1 - scaled
     if operation == "days_down_up":
         if len(c) < 2:
             raise Unavailable("insufficient_history")
@@ -149,7 +153,7 @@ def calculate(
                 break
             up += int(sign > 0)
             down += int(sign < 0)
-        return Decimal(abs(up - down - 1))
+        return float(abs(up - down - 1))
     if operation == "days_beyond":
         # 每日滚动 Z 后再在窗口内计数，所需输入为 2w-1 条。
         samples = tail(c, 2 * window - 1)
@@ -160,7 +164,7 @@ def calculate(
             )
             for i in range(window)
         ]
-        return Decimal(sum(z > 1 for z in zs) - sum(z < -1 for z in zs))
+        return float(sum(z > 1 for z in zs) - sum(z < -1 for z in zs))
     if operation == "rsrs":
         sample = rows[-217:]
         if len(sample) < 217:
@@ -207,12 +211,12 @@ def execute(context, parameters, *, function):
         value = function(context, parameters)
         if isinstance(value, dict):
             return value
-        if not value.is_finite():
+        if not math.isfinite(value):
             raise Unavailable("non_finite_result")
         return {"available": True, "value": value}
     except Unavailable as error:
         return {"available": False, "reason": str(error)}
-    except DecimalException:
+    except (ArithmeticError, ValueError):
         return {"available": False, "reason": "undefined_numeric_result"}
 
 
@@ -385,6 +389,7 @@ def references() -> tuple[Reference, ...]:
     add("log_price", "Risk", "log_price", 1)
     for key in ("size", "float_size", "nl_size"):
         add(key, "Size", key, 1, datasets=("market-values",))
+    result.extend(financial_references())
     return tuple(result)
 
 
@@ -400,12 +405,12 @@ def definitions() -> tuple[FactorDefinition, ...]:
             description=item.description,
             parameters={"symbol": "证券代码", "symbols": "截面项必传的显式股票池；其余可省略"},
             defaults={"symbols": None},
-            output="{'available': True, 'value': Decimal} 或 {'available': False, 'reason': str}",
+            output="{'available': True, 'value': float} 或 {'available': False, 'reason': str}",
             example=(
                 f"context.factor('{item.key}', symbol='000001', "
                 "symbols=['000001', '000002', '000003'])"
             ),
-            output_example="{'available': True, 'value': Decimal('0.1')}",
+            output_example="{'available': True, 'value': 0.1}",
             function=partial(execute, function=item.function),
             datasets=item.datasets,
             required_history=item.history,

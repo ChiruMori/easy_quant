@@ -1,12 +1,11 @@
 """公开列出的 Alpha101 公式；平台内组合算子，不执行公式字符串。"""
 
+import math
 from collections.abc import Callable
-from decimal import Decimal, DecimalException
 from operator import add, mul, sub
 
 from easy_quant.factors.series import (
     Unavailable,
-    covariance,
     divide,
     mean,
     number,
@@ -15,41 +14,38 @@ from easy_quant.factors.series import (
 )
 from easy_quant.platform_library.context import FactorContext
 
-Value = Decimal | None
-
 
 class Frame:
-    def __init__(self, values: dict[str, list[Value]]) -> None:
-        self.values = values
+    """日期为行、证券为列的 float64 DataFrame；NaN 表示不可用。"""
+
+    def __init__(self, values) -> None:
+        import pandas as pd
+
+        self.data = pd.DataFrame(values, dtype="float64")
+
+    @property
+    def values(self):
+        return {
+            s: [None if not math.isfinite(v) else float(v) for v in self.data[s]]
+            for s in self.data.columns
+        }
 
     def unary(self, function: Callable) -> "Frame":
         def apply(value):
-            if value is None:
-                return None
+            if not math.isfinite(value):
+                return float("nan")
             try:
-                return function(value)
-            except (Unavailable, DecimalException):
-                return None
+                result = function(float(value))
+                return result if math.isfinite(result) else float("nan")
+            except (Unavailable, ArithmeticError, ValueError):
+                return float("nan")
 
-        return Frame({s: [apply(v) for v in vs] for s, vs in self.values.items()})
+        return Frame(self.data.map(apply))
 
     def binary(self, other: object, function: Callable) -> "Frame":
-        right = other if isinstance(other, Frame) else self.unary(lambda _: number(other))
-
-        def apply(a, b):
-            if a is None or b is None:
-                return None
-            try:
-                return function(a, b)
-            except (Unavailable, DecimalException):
-                return None
-
-        return Frame(
-            {
-                s: [apply(a, b) for a, b in zip(vs, right.values[s], strict=True)]
-                for s, vs in self.values.items()
-            }
-        )
+        right = other.data if isinstance(other, Frame) else number(other)
+        result = function(self.data, right) if function is not divide else self.data / right
+        return Frame(result.replace([float("inf"), -float("inf")], float("nan")))
 
     def __add__(self, other):
         return self.binary(other, add)
@@ -60,7 +56,7 @@ class Frame:
         return self.binary(other, sub)
 
     def __rsub__(self, other):
-        return self.unary(lambda v: number(other) - v)
+        return Frame(number(other) - self.data)
 
     def __mul__(self, other):
         return self.binary(other, mul)
@@ -71,90 +67,49 @@ class Frame:
         return self.binary(other, divide)
 
     def __pow__(self, exponent):
-        return self.unary(lambda v: v ** number(exponent))
+        return Frame(self.data ** number(exponent))
 
     def __neg__(self):
-        return self.unary(lambda v: -v)
+        return Frame(-self.data)
 
     def delay(self, window: int):
-        return Frame({s: ([None] * window + vs)[: len(vs)] for s, vs in self.values.items()})
+        return Frame(self.data.shift(window))
 
     def delta(self, window: int):
-        return self - self.delay(window)
+        return Frame(self.data.diff(window))
 
     def roll(self, window: int, function: Callable):
-        def calculate(values):
-            result: list[Value] = []
-            for end in range(1, len(values) + 1):
-                sample = values[max(0, end - window) : end]
-                if len(sample) < window or any(v is None for v in sample):
-                    result.append(None)
-                    continue
-                try:
-                    result.append(function(sample))
-                except (Unavailable, DecimalException):
-                    result.append(None)
-            return result
+        return Frame(
+            self.data.rolling(window, min_periods=window).apply(
+                lambda values: function(values.tolist()), raw=False
+            )
+        )
 
-        return Frame({s: calculate(vs) for s, vs in self.values.items()})
-
-    def pair_roll(self, other: "Frame", window: int, function: Callable):
-        result: dict[str, list[Value]] = {}
-        for symbol, values in self.values.items():
-            result[symbol] = []
-            for end in range(1, len(values) + 1):
-                a = values[max(0, end - window) : end]
-                b = other.values[symbol][max(0, end - window) : end]
-                if len(a) < window or any(v is None for v in (*a, *b)):
-                    result[symbol].append(None)
-                    continue
-                try:
-                    result[symbol].append(function(a, b))
-                except (Unavailable, DecimalException):
-                    result[symbol].append(None)
-        return Frame(result)
+    def cov(self, other, window):
+        return Frame(self.data.rolling(window, min_periods=window).cov(other.data, ddof=0))
 
     def rank(self):
-        result = {s: list(vs) for s, vs in self.values.items()}
-        for index in range(len(next(iter(result.values()), []))):
-            sample = [value for vs in self.values.values() if (value := vs[index]) is not None]
-            ordered = sorted(sample)
-            ranks: dict[Decimal, Decimal] = {}
-            start = 0
-            while start < len(ordered):
-                end = start + 1
-                while end < len(ordered) and ordered[end] == ordered[start]:
-                    end += 1
-                ranks[ordered[start]] = Decimal(start + 1 + end) / (2 * len(ordered))
-                start = end
-            for symbol, values in self.values.items():
-                value = values[index]
-                if value is not None:
-                    result[symbol][index] = ranks[value]
-        return Frame(result)
+        return Frame(self.data.rank(axis=1, method="average", pct=True))
 
     def sign(self):
-        return self.unary(lambda v: Decimal((v > 0) - (v < 0)))
+        return self.unary(lambda v: float((v > 0) - (v < 0)))
 
     def abs(self):
-        return self.unary(abs)
+        return Frame(self.data.abs())
 
     def ts_rank(self, window):
         return self.roll(window, lambda vs: percentile(vs[-1], vs))
 
     def corr(self, other, window):
-        return self.pair_roll(other, window, lambda a, b: divide(covariance(a, b), std(a) * std(b)))
+        # 与旧约定一致：完整窗口、总体相关系数，零方差不可用。
+        return Frame(
+            self.data.rolling(window, min_periods=window)
+            .corr(other.data)
+            .replace([float("inf"), -float("inf")], float("nan"))
+        )
 
     def choose(self, yes: "Frame", no: "Frame"):
-        result = {}
-        for symbol, values in self.values.items():
-            result[symbol] = [
-                None if condition is None else a if condition else b
-                for condition, a, b in zip(
-                    values, yes.values[symbol], no.values[symbol], strict=True
-                )
-            ]
-        return Frame(result)
+        return Frame(yes.data.where(self.data != 0, no.data).where(self.data.notna()))
 
 
 ALPHA_NUMBERS = (
@@ -197,7 +152,7 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
     symbol = str(parameters["symbol"])
     raw_symbols = parameters.get("symbols")
     if index not in SINGLE_SYMBOL and (
-        not isinstance(raw_symbols, list) or symbol not in raw_symbols or not raw_symbols
+        not isinstance(raw_symbols, list) or symbol not in raw_symbols or len(set(raw_symbols)) < 2
     ):
         return {"available": False, "reason": "explicit_universe_required"}
     symbols = (
@@ -232,16 +187,16 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
     d = c.delta(1)
 
     def conditional_delta(window):
-        positive = d.roll(window, min).unary(lambda x: Decimal(x > 0))
-        negative = d.roll(window, max).unary(lambda x: Decimal(x < 0))
+        positive = d.roll(window, min).unary(lambda x: float(x > 0))
+        negative = d.roll(window, max).unary(lambda x: float(x < 0))
         return positive.choose(d, negative.choose(d, -d))
 
     def formula():
         if index == 1:
-            x = r.unary(lambda x: Decimal(x < 0)).choose(r.roll(20, std), c)
-            return (x**2).roll(5, lambda vs: Decimal(vs.index(max(vs)) + 1)).rank() - Decimal(".5")
+            x = r.unary(lambda x: float(x < 0)).choose(r.roll(20, std), c)
+            return (x**2).roll(5, lambda vs: float(vs.index(max(vs)) + 1)).rank() - float(".5")
         if index == 2:
-            return -v.unary(lambda x: x.ln()).delta(2).rank().corr(((c - o) / o).rank(), 6)
+            return -v.unary(lambda x: math.log(x)).delta(2).rank().corr(((c - o) / o).rank(), 6)
         if index == 3:
             return -o.rank().corr(v.rank(), 10)
         if index == 4:
@@ -252,9 +207,7 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
             return -o.corr(v, 10)
         if index == 7:
             x = -c.delta(7).abs().ts_rank(60) * c.delta(7).sign()
-            return (
-                (v - adv).unary(lambda x: Decimal(x > 0)).choose(x, c.unary(lambda _: Decimal(-1)))
-            )
+            return (v - adv).unary(lambda x: float(x > 0)).choose(x, c.unary(lambda _: float(-1)))
         if index == 8:
             x = o.roll(5, sum) * r.roll(5, sum)
             return -x.delta(10).rank()
@@ -266,7 +219,7 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
         if index == 12:
             return v.delta(1).sign() * -d
         if index in (13, 16):
-            return -((c if index == 13 else h).rank().pair_roll(v.rank(), 5, covariance)).rank()
+            return -((c if index == 13 else h).rank().cov(v.rank(), 5)).rank()
         if index == 14:
             return -r.delta(3).rank() * o.corr(v, 10)
         if index == 15:
@@ -287,8 +240,8 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
         if index == 23:
             return (
                 (h - h.roll(20, mean))
-                .unary(lambda x: Decimal(x > 0))
-                .choose(-h.delta(2), c.unary(lambda _: Decimal(0)))
+                .unary(lambda x: float(x > 0))
+                .choose(-h.delta(2), c.unary(lambda _: float(0)))
             )
         if index == 25:
             return (-r * adv * vw * (h - c)).rank()
@@ -297,7 +250,7 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
         if index == 34:
             return (1 - (r.roll(2, std) / r.roll(5, std)).rank() + 1 - d.rank()).rank()
         if index == 41:
-            return (h * low).unary(lambda x: x.sqrt()) - vw
+            return (h * low).unary(lambda x: math.sqrt(x)) - vw
         if index == 52:
             x = low.roll(5, min)
             return (
@@ -310,9 +263,9 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
         if index == 54:
             return -(low - c) * (o**5) / ((low - h) * (c**5))
         if index == 57:
-            x = c.roll(30, lambda vs: Decimal(vs.index(max(vs)) + 1)).rank()
+            x = c.roll(30, lambda vs: float(vs.index(max(vs)) + 1)).rank()
             return -(c - vw) / x.roll(2, lambda vs: (vs[0] + 2 * vs[1]) / 3)
-        return (c - o) / (h - low + Decimal(".001"))
+        return (c - o) / (h - low + float(".001"))
 
     result = formula().values.get(symbol, [])
     value = result[-1] if result else None

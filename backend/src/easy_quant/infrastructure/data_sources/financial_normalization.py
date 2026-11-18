@@ -146,3 +146,14 @@ def validate_financial_response(request, payload: bytes) -> None:
         for key in FIELD_METADATA:
             if row.get(key) is not None:
                 number(row[key])
+
+
+def project_legacy_revenue(row):
+    """旧记录只从随记录保存的原始科目补新字段，保持available_at与身份不变。"""
+    output = dict(row)
+    raw = row.get("raw_fields") or {}
+    for name in ("operating_revenue", "total_operating_revenue"):
+        if output.get(name) is None:
+            value = next((raw[key] for key in ALIASES[name] if raw.get(key) not in MISSING), None)
+            output[name] = number(value)
+    return output

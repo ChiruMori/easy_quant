@@ -1,6 +1,5 @@
 import json
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
 
 import pytest
 
@@ -169,7 +168,7 @@ def test_invalid_financial_response_switches_source_before_caching(fixed_now):
     assert cache.value == envelope
 
 
-def test_financial_library_selects_report_versions_after_cutoff_and_uses_decimal(fixed_now):
+def test_financial_library_selects_report_versions_after_cutoff_and_uses_float64(fixed_now):
     records = [
         {**report(), "record_key": "original", "available_at": "2026-03-21T23:59:59+08:00"},
         {
@@ -199,13 +198,19 @@ def test_financial_library_selects_report_versions_after_cutoff_and_uses_decimal
     early = RuntimeContext({**data, "decision_at": "2026-03-20T23:59:59+08:00"})
     assert early.library("financial.financial-indicators", symbol="000001") == ()
     rows = context.library("financial.financial-indicators", symbol="000001")
-    assert [row["roe"] for row in rows] == [Decimal("7.99"), Decimal("9.01")]
-    assert context.library("financial.financial-indicators", symbol="000001", period="annual")[0][
-        "roe"
-    ] == Decimal("7.99")
-    assert context.library("fundamental.latest", symbol="000001", dataset="financial-indicators")[
-        "roe"
-    ] == Decimal("9.01")
+    assert [row["roe"] for row in rows] == [7.99, 9.01]
+    assert (
+        context.library("financial.financial-indicators", symbol="000001", period="annual")[0][
+            "roe"
+        ]
+        == 7.99
+    )
+    assert (
+        context.library("fundamental.latest", symbol="000001", dataset="financial-indicators")[
+            "roe"
+        ]
+        == 9.01
+    )
     with pytest.raises(Exception, match="报告筛选"):
         context.library("financial.financial-indicators", symbol="000001", period="bad")
     source = (

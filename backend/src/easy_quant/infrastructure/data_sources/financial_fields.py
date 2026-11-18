@@ -11,6 +11,8 @@ ALIASES = {
     "inventory": ("INVENTORY", "INVE", "存货"),
     "accounts_receivable": ("ACCOUNTS_RECE", "ACCORECE", "应收账款"),
     "goodwill": ("GOODWILL", "商誉"),
+    "operating_revenue": ("OPERATE_INCOME", "OPERATEREVE", "BIZINCO", "营业收入"),
+    "total_operating_revenue": ("TOTAL_OPERATE_INCOME", "TOTALOPERATEREVE", "营业总收入"),
     "revenue": ("TOTAL_OPERATE_INCOME", "TOTALOPERATEREVE", "BIZINCO", "营业总收入", "营业收入"),
     "operating_cost": ("OPERATE_COST", "BIZEXPE", "营业成本"),
     "operating_profit": ("OPERATE_PROFIT", "PERPROFIT", "营业利润"),

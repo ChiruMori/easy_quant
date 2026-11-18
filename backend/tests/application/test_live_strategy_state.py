@@ -103,3 +103,24 @@ def test_notification_failure_recovers_without_reexecuting_strategy(fixed_now, m
     assert len(delivered) == 1
     assert container.state.live_instances["l"]["notification_outbox"] == {}
     assert container.state.live_instances["l"]["strategy_state"] == {"n": 1}
+
+
+def test_live_factor_usage_is_persisted_and_completed_phase_is_not_recounted(fixed_now):
+    source = (
+        "def before_market(c,p):\n c.factor('technical.ma',symbol='000001',window=1)\n return []"
+    )
+    container = prepare(fixed_now, source)
+    container.market_data.upsert_bars(
+        [
+            {
+                "symbol": "000001",
+                "trading_day": "2026-09-28",
+                "close": "10",
+                "available_at": "2026-09-28T15:00:00+08:00",
+            }
+        ]
+    )
+    analyze_live_instance(container, "l", "before_market", fixed_now)
+    assert container.factor_statistics.snapshot()["technical.ma"]["calls"] == 1
+    analyze_live_instance(container, "l", "before_market", fixed_now)
+    assert container.factor_statistics.snapshot()["technical.ma"]["calls"] == 1

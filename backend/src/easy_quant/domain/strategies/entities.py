@@ -74,3 +74,5 @@ class StrategyRun:
     error: str | None = None
     state: dict[str, object] = field(default_factory=dict)
     mock_usage: list[dict[str, object]] = field(default_factory=list)
+    factor_metrics: dict[str, dict[str, int]] = field(default_factory=dict)
+    factor_event_id: str = ""

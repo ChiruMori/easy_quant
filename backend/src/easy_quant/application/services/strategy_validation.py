@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 
 from easy_quant.domain.shared.errors import ValidationError
+from easy_quant.strategy_api.imports import validate_numeric_imports
 
 FORBIDDEN_NAMES = {"breakpoint", "eval", "exec", "open", "__import__"}
 DEFAULT_HISTORY_TRADING_DAYS = 250
@@ -142,6 +143,13 @@ def extract_factor_dependencies(source_code: str) -> set[str]:
             "valuation": {"market-values"},
         }
         datasets.update(helpers.get(node.func.attr, set()))
+        if node.func.attr == "history":
+            dataset_node = next(
+                (k.value for k in node.keywords if k.arg == "dataset"),
+                node.args[1] if len(node.args) > 1 else ast.Constant("daily-bars"),
+            )
+            if isinstance(dataset_node, ast.Constant) and isinstance(dataset_node.value, str):
+                datasets.add(dataset_node.value)
         if (
             node.func.attr not in {"factor", "library"}
             or not node.args
@@ -175,6 +183,7 @@ class PythonStrategyValidator:
             tree = ast.parse(source_code)
         except SyntaxError as error:
             raise ValidationError("策略语法错误", {"line": error.lineno or 0}) from error
+        validate_numeric_imports(tree)
         functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
         entries = {
             node.name
@@ -214,8 +223,6 @@ class PythonStrategyValidator:
                 raise ValidationError(
                     "原始数据读取已迁移，请将 context.factor 改为 context.library"
                 )
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                raise ValidationError("策略不允许导入模块")
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)

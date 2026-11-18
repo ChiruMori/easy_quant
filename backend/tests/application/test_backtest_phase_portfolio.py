@@ -87,12 +87,14 @@ def after_market(c,p):
             },
         ),
     )
+    assert container.factor_statistics.snapshot() == {}
     execute_backtest(container, "b")
+    assert container.factor_statistics.snapshot()["technical.ma"]["calls"] == 2
     run = container.backtests.get("b")
     assert [phase["stdout"] for phase in quick["phase_results"]] == [
         row["text"] for row in run["strategy_outputs"][:3]
     ]
-    assert run["strategy_outputs"][0]["text"] == "1 True 10\n"
+    assert run["strategy_outputs"][0]["text"] == "1 True 10.0\n"
     assert run["strategy_outputs"][3]["text"].startswith("2 True")
     assert quick["trades"][1]["price"] == "11.00"
     assert run["assumptions"]["warmup_start_day"] == "2026-09-14"

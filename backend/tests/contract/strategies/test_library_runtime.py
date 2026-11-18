@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -20,7 +20,7 @@ from easy_quant.strategy_api.context import RuntimeContext, SnapshotGateway
         ("stat.expected-return", {}),
     ],
 )
-def test_subprocess_uses_same_decimal_factor_as_platform(key, parameters, fixed_now):
+def test_subprocess_uses_same_float_factor_as_platform(key, parameters, fixed_now):
     data: dict[str, Any] = {
         "prices": {"x": [str(Decimal(10) + Decimal(index) / 10) for index in range(40)]}
     }
@@ -37,7 +37,7 @@ def test_subprocess_uses_same_decimal_factor_as_platform(key, parameters, fixed_
     )
     assert run.status is StrategyRunStatus.SUCCEEDED
     assert run.stdout.strip() == str(expected)
-    assert "Decimal" in run.stdout
+    assert "Decimal" not in run.stdout
 
 
 def test_partial_sizing_decimal_fees_and_budget_are_respected():
@@ -146,7 +146,7 @@ def test_mock_is_explicit_deterministic_and_unavailable_to_real_runtimes():
         assert not result["available"]
     quick = RuntimeContext({**base, "runtime": "quick_test"})
     result = quick.factor("technical.ma", symbol="x", window=30)
-    assert result["available"] and isinstance(result["value"], Decimal)
+    assert result["available"] and isinstance(result["value"], float)
     assert quick.mock_usage == [{"factor": "technical.ma", "symbol": "x", "count": 28}]
 
 
@@ -165,7 +165,7 @@ def test_future_finance_is_hidden_and_history_is_sorted():
             },
         }
     )
-    assert [row["roe"] for row in cast(list[dict[str, Any]], context.financials("x"))] == [
+    assert context.financials("x")["roe"].tolist() == [
         Decimal(10),
         Decimal(12),
     ]
