@@ -13,6 +13,7 @@ from decimal import Decimal
 # -I 不读取工作目录/PYTHONPATH；只添加随应用发布的固定 src 路径。
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from easy_quant.infrastructure.strategy_runtime.numeric_modules import numeric_importer
@@ -240,6 +241,8 @@ def _execute_call(
             "stdout": output.getvalue()[:65536],
             "state": state,
             "mock_usage": runtime_context.mock_usage if runtime_context else [],
+            "factor_metrics": runtime_context.factor_metrics if runtime_context else {},
+            "factor_event_id": str(uuid4()),
         }
     except Exception as error:
         return {
@@ -247,6 +250,8 @@ def _execute_call(
             "signals": [],
             "stdout": output.getvalue()[:65536],
             "error": f"{type(error).__name__}: {error}",
+            "factor_metrics": runtime_context.factor_metrics if runtime_context else {},
+            "factor_event_id": str(uuid4()),
         }
 
 

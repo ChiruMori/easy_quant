@@ -1,5 +1,5 @@
+import math
 from copy import deepcopy
-from decimal import Decimal
 
 import pytest
 
@@ -12,6 +12,7 @@ def financial_records():
     fields = {
         "balance-sheets": {
             "total_assets": 1000,
+            "accounts_receivable": 100,
             "total_liabilities": 400,
             "total_equity": 600,
             "current_assets": 300,
@@ -20,6 +21,7 @@ def financial_records():
         },
         "income-statements": {
             "eps": 2,
+            "operating_revenue": 500,
             "net_profit": 100,
             "parent_net_profit": 80,
             "adjusted_net_profit": 60,
@@ -48,11 +50,11 @@ def financial_records():
                     **{key: str(value * multiplier) for key, value in values.items()},
                 }
                 for period, available, multiplier in (
-                    ("2024-03-31", "2024-04-30T00:00:00+00:00", Decimal("0.2")),
-                    ("2024-06-30", "2024-08-01T00:00:00+00:00", Decimal("0.4")),
-                    ("2024-12-31", "2025-04-01T00:00:00+00:00", Decimal(1)),
-                    ("2025-03-31", "2025-04-30T00:00:00+00:00", Decimal("0.3")),
-                    ("2025-06-30", "2025-08-01T00:00:00+00:00", Decimal("0.6")),
+                    ("2024-03-31", "2024-04-30T00:00:00+00:00", float("0.2")),
+                    ("2024-06-30", "2024-08-01T00:00:00+00:00", float("0.4")),
+                    ("2024-12-31", "2025-04-01T00:00:00+00:00", float(1)),
+                    ("2025-03-31", "2025-04-30T00:00:00+00:00", float("0.3")),
+                    ("2025-06-30", "2025-08-01T00:00:00+00:00", float("0.6")),
                 )
             ]
     records["market-values"] = {
@@ -71,21 +73,33 @@ def runtime(records=None, at="2025-08-02T00:00:00+00:00"):
 def test_every_financial_factor_has_real_decimal_result(formula):
     result = runtime().factor(formula.key, symbol="a", symbols=["a", "b"])
     assert result["available"], result
-    assert result["value"].is_finite()
+    assert math.isfinite(result["value"])
     if formula.ranked:
-        assert result["value"] == Decimal("0.75")
+        assert result["value"] == pytest.approx(float("0.75"), rel=1e-10, abs=1e-12)
 
 
 def test_hand_calculated_ttm_quarter_annual_and_cash_flow_values():
     c = runtime()
     # 归母 TTM=48+80-32=96；半年末权益=360，不使用全年600或加权ROE。
-    assert c.factor("roe_ttm", symbol="a")["value"] == Decimal(96) / 360
-    assert c.factor("roe_y", symbol="a")["value"] == Decimal(80) / 600
-    assert c.factor("quick_ratio", symbol="a")["value"] == Decimal(1)
-    assert c.factor("earnings_to_price", symbol="a")["value"] == Decimal("0.048")
-    assert c.factor("ncf_to_market", symbol="a")["value"] == Decimal("0.072")
+    assert c.factor("roe_ttm", symbol="a")["value"] == pytest.approx(
+        float(96) / 360, rel=1e-10, abs=1e-12
+    )
+    assert c.factor("roe_y", symbol="a")["value"] == pytest.approx(
+        float(80) / 600, rel=1e-10, abs=1e-12
+    )
+    assert c.factor("quick_ratio", symbol="a")["value"] == pytest.approx(
+        float(1), rel=1e-10, abs=1e-12
+    )
+    assert c.factor("earnings_to_price", symbol="a")["value"] == pytest.approx(
+        float("0.048"), rel=1e-10, abs=1e-12
+    )
+    assert c.factor("ncf_to_market", symbol="a")["value"] == pytest.approx(
+        float("0.072"), rel=1e-10, abs=1e-12
+    )
     formula = next(f for f in FORMULAS if f.key == "opt_tpro")
-    assert raw_value(c._factor_context, "a", formula) == Decimal(36) / 39
+    assert raw_value(c._factor_context, "a", formula) == pytest.approx(
+        float(36) / 39, rel=1e-10, abs=1e-12
+    )
 
 
 def test_future_revision_and_late_old_period_do_not_replace_current_report():
@@ -95,11 +109,12 @@ def test_future_revision_and_late_old_period_do_not_replace_current_report():
         {**rows[-1], "parent_net_profit": "9999", "available_at": "2026-01-01T00:00:00+00:00"}
     )
     rows.append({**rows[1], "parent_net_profit": "36", "available_at": "2025-08-02T00:00:00+00:00"})
-    assert runtime(records).factor("roe_ttm", symbol="a")["value"] == Decimal(48 + 80 - 36) / 360
-    assert (
-        runtime(at="2025-07-01T00:00:00+00:00").factor("roe_ttm", symbol="a")["value"]
-        == Decimal(88) / 180
+    assert runtime(records).factor("roe_ttm", symbol="a")["value"] == pytest.approx(
+        float(48 + 80 - 36) / 360, rel=1e-10, abs=1e-12
     )
+    assert runtime(at="2025-07-01T00:00:00+00:00").factor("roe_ttm", symbol="a")[
+        "value"
+    ] == pytest.approx(float(88) / 180, rel=1e-10, abs=1e-12)
 
 
 @pytest.mark.parametrize(
@@ -139,7 +154,9 @@ def test_rank_requires_real_universe_and_rejects_missing_members():
     records = financial_records()
     records["income-statements"]["b"][-1]["net_profit"] = "120"
     c = runtime(records)
-    assert c.factor("roa_ttm", symbol="a", symbols=["a", "b"])["value"] == Decimal("0.5")
+    assert c.factor("roa_ttm", symbol="a", symbols=["a", "b"])["value"] == pytest.approx(
+        float("0.5"), rel=1e-10, abs=1e-12
+    )
     assert c.factor("roa_ttm", symbol="b", symbols=["a", "b"])["value"] == 1
 
 
@@ -149,7 +166,9 @@ def test_inventory_profit_growth_uses_report_quarters_and_prior_balance():
     c = runtime(records)
     formula = next(f for f in FORMULAS if f.key == "np_to_inventory_yoy")
     # 当前(60-30)/60=.5，去年(40-20)/20=1，增长率=-.5。
-    assert raw_value(c._factor_context, "a", formula) == Decimal("-0.5")
+    assert raw_value(c._factor_context, "a", formula) == pytest.approx(
+        float("-0.5"), rel=1e-10, abs=1e-12
+    )
     records["income-statements"]["a"].pop(0)
     assert not runtime(records).factor(formula.key, symbol="a", symbols=["a", "b"])["available"]
 
@@ -159,6 +178,50 @@ def test_future_market_cap_and_future_report_period_are_rejected():
     records["market-values"]["a"].append(
         {"market_cap": "1", "available_at": "2026-01-01T00:00:00+00:00"}
     )
-    assert runtime(records).factor("earnings_to_price", symbol="a")["value"] == Decimal(".048")
+    assert runtime(records).factor("earnings_to_price", symbol="a")["value"] == pytest.approx(
+        float(".048"), rel=1e-10, abs=1e-12
+    )
     records["balance-sheets"]["a"][-1]["report_period"] = "2027-06-30"
     assert runtime(records).factor("de", symbol="a")["reason"] == "future_report_period"
+
+
+def test_legacy_raw_revenue_projection_preserves_source_and_never_guesses_mixed_revenue():
+    records = financial_records()
+    for row in records["income-statements"]["a"]:
+        revenue = row.pop("operating_revenue")
+        row["revenue"] = "999999"
+        row["raw_fields"] = {"OPERATE_INCOME": revenue, "TOTAL_OPERATE_INCOME": "999999"}
+    c = runtime(records)
+    assert raw_value(
+        c._factor_context, "a", next(f for f in FORMULAS if f.key == "npm_y")
+    ) == pytest.approx(0.2)
+    assert raw_value(
+        c._factor_context, "a", next(f for f in FORMULAS if f.key == "opm_ttm")
+    ) == pytest.approx(0.24)
+    projected = c.history("a", "income-statements")
+    assert projected.iloc[-1]["operating_revenue"] == 300.0
+    assert projected.iloc[-1]["total_operating_revenue"] == 999999.0
+    assert projected.iloc[-1]["source"] == "eastmoney"
+    records["income-statements"]["a"][-1]["raw_fields"] = {}
+    assert (
+        runtime(records).factor("npm_ttm", symbol="a", symbols=["a", "b"])["reason"]
+        == "missing_field"
+    )
+
+
+def test_new_revenue_factors_follow_rank_and_single_quarter_sales_contract():
+    c = runtime()
+    for key in (
+        "npm_q",
+        "npm_y",
+        "npm_ttm",
+        "opm_y",
+        "opm_ttm",
+        "asset_turnover",
+        "receivable_turnover",
+        "equity_turnover",
+    ):
+        assert c.factor(key, symbol="a", symbols=["a", "b"])["value"] == 0.75
+        assert not c.factor(key, symbol="a")["available"]
+    # 2025Q2收入=(300-150)，除以当前可见市值2000。
+    assert c.factor("sales_to_market", symbol="a")["value"] == pytest.approx(0.075)

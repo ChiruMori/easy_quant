@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
 from functools import partial
 
 from easy_quant.factors.series import Unavailable, divide, number, percentile
@@ -25,6 +24,19 @@ class FinancialFormula:
 
 # 流量字段先按 basis 组合；时点分母必须与流量报告期一致。
 FORMULAS = (
+    FinancialFormula("npm_q", ("net_profit",), "operating_revenue", "quarter", True),
+    FinancialFormula("asset_turnover", ("operating_revenue",), "total_assets", ranked=True),
+    FinancialFormula("npm_y", ("net_profit",), "operating_revenue", "annual", True),
+    FinancialFormula("opm_y", ("operating_profit",), "operating_revenue", "annual", True),
+    FinancialFormula("npm_ttm", ("net_profit",), "operating_revenue", ranked=True),
+    FinancialFormula("opm_ttm", ("operating_profit",), "operating_revenue", ranked=True),
+    FinancialFormula(
+        "receivable_turnover", ("operating_revenue",), "accounts_receivable", ranked=True
+    ),
+    FinancialFormula("equity_turnover", ("operating_revenue",), "total_equity", ranked=True),
+    FinancialFormula(
+        "sales_to_market", ("operating_revenue",), "market_cap", "quarter", category="Value"
+    ),
     FinancialFormula("eps_y", ("eps",), "one", "annual", True),
     FinancialFormula("np_to_inventory_yoy", ("net_profit",), "inventory", "quarter", True),
     FinancialFormula(
@@ -66,6 +78,7 @@ FORMULAS = (
 
 FIELDS = {
     BALANCE: {
+        "accounts_receivable",
         "total_liabilities",
         "total_assets",
         "total_equity",
@@ -74,6 +87,7 @@ FIELDS = {
         "inventory",
     },
     INCOME: {
+        "operating_revenue",
         "eps",
         "parent_net_profit",
         "net_profit",
@@ -174,7 +188,7 @@ def raw_value(context, symbol, formula):
 
     def amount(field):
         if field == "one":
-            return Decimal(1)
+            return float(1)
         if field != "market_cap":
             return reports.amount(field, formula.basis)
         rows = context.read("market-values", symbol)
@@ -187,7 +201,7 @@ def raw_value(context, symbol, formula):
 
     numerator = sum(
         ((-1 if f.startswith("-") else 1) * amount(f.removeprefix("-")) for f in formula.numerator),
-        Decimal(0),
+        float(0),
     )
     denominator = amount(formula.denominator)
     if denominator <= 0:

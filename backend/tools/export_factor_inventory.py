@@ -117,7 +117,7 @@ def main():
     lines = [
         "# 因子支持限制",
         "",
-        f"截至2026-11-17，公开{len(baseline)}项中{len(implemented)}项支持、"
+        f"截至2026-11-18，公开{len(baseline)}项中{len(implemented)}项支持、"
         f"{len(baseline) - len(implemented)}项未注册。"
         "逐项状态见 [factor-inventory.json](factor-inventory.json)。"
         "本页只说明当前缺口及启用条件，不承诺未来交付。",

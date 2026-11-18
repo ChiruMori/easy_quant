@@ -882,9 +882,11 @@
   {
     "category": "Quality",
     "name": "npm_q",
-    "status": "blocked",
-    "reason": "规范化revenue字段混合营业总收入与营业收入，金融行业尤其不保证可与营业成本配比；部分条目还缺固定资产/预收预付或历史滞后。",
-    "required_changes": "先分离operating_revenue与total_operating_revenue，重归一化已有原始报表并核验行业口径；再补齐 单季净利润、单季营业收入。"
+    "status": "implemented",
+    "history": 1,
+    "datasets": [
+      "income-statements"
+    ]
   },
   {
     "category": "Quality",
@@ -903,9 +905,12 @@
   {
     "category": "Quality",
     "name": "asset_turnover",
-    "status": "blocked",
-    "reason": "规范化revenue字段混合营业总收入与营业收入，金融行业尤其不保证可与营业成本配比；部分条目还缺固定资产/预收预付或历史滞后。",
-    "required_changes": "先分离operating_revenue与total_operating_revenue，重归一化已有原始报表并核验行业口径；再补齐 营业收入TTM、总资产。"
+    "status": "implemented",
+    "history": 1,
+    "datasets": [
+      "balance-sheets",
+      "income-statements"
+    ]
   },
   {
     "category": "Quality",
@@ -981,16 +986,20 @@
   {
     "category": "Quality",
     "name": "npm_y",
-    "status": "blocked",
-    "reason": "规范化revenue字段混合营业总收入与营业收入，金融行业尤其不保证可与营业成本配比；部分条目还缺固定资产/预收预付或历史滞后。",
-    "required_changes": "先分离operating_revenue与total_operating_revenue，重归一化已有原始报表并核验行业口径；再补齐 年度净利润、年度营业收入。"
+    "status": "implemented",
+    "history": 1,
+    "datasets": [
+      "income-statements"
+    ]
   },
   {
     "category": "Quality",
     "name": "opm_y",
-    "status": "blocked",
-    "reason": "规范化revenue字段混合营业总收入与营业收入，金融行业尤其不保证可与营业成本配比；部分条目还缺固定资产/预收预付或历史滞后。",
-    "required_changes": "先分离operating_revenue与total_operating_revenue，重归一化已有原始报表并核验行业口径；再补齐 年度营业利润、年度营业收入。"
+    "status": "implemented",
+    "history": 1,
+    "datasets": [
+      "income-statements"
+    ]
   },
   {
     "category": "Quality",
@@ -1080,23 +1089,30 @@
   {
     "category": "Quality",
     "name": "npm_ttm",
-    "status": "blocked",
-    "reason": "规范化revenue字段混合营业总收入与营业收入，金融行业尤其不保证可与营业成本配比；部分条目还缺固定资产/预收预付或历史滞后。",
-    "required_changes": "先分离operating_revenue与total_operating_revenue，重归一化已有原始报表并核验行业口径；再补齐 净利润TTM、营业收入TTM。"
+    "status": "implemented",
+    "history": 1,
+    "datasets": [
+      "income-statements"
+    ]
   },
   {
     "category": "Quality",
     "name": "opm_ttm",
-    "status": "blocked",
-    "reason": "规范化revenue字段混合营业总收入与营业收入，金融行业尤其不保证可与营业成本配比；部分条目还缺固定资产/预收预付或历史滞后。",
-    "required_changes": "先分离operating_revenue与total_operating_revenue，重归一化已有原始报表并核验行业口径；再补齐 营业利润TTM、营业收入TTM。"
+    "status": "implemented",
+    "history": 1,
+    "datasets": [
+      "income-statements"
+    ]
   },
   {
     "category": "Quality",
     "name": "receivable_turnover",
-    "status": "blocked",
-    "reason": "规范化revenue字段混合营业总收入与营业收入，金融行业尤其不保证可与营业成本配比；部分条目还缺固定资产/预收预付或历史滞后。",
-    "required_changes": "先分离operating_revenue与total_operating_revenue，重归一化已有原始报表并核验行业口径；再补齐 营业收入TTM、应收账款。"
+    "status": "implemented",
+    "history": 1,
+    "datasets": [
+      "balance-sheets",
+      "income-statements"
+    ]
   },
   {
     "category": "Quality",
@@ -1240,9 +1256,12 @@
   {
     "category": "Quality",
     "name": "equity_turnover",
-    "status": "blocked",
-    "reason": "规范化revenue字段混合营业总收入与营业收入，金融行业尤其不保证可与营业成本配比；部分条目还缺固定资产/预收预付或历史滞后。",
-    "required_changes": "先分离operating_revenue与total_operating_revenue，重归一化已有原始报表并核验行业口径；再补齐 营业收入TTM、股东权益。"
+    "status": "implemented",
+    "history": 1,
+    "datasets": [
+      "balance-sheets",
+      "income-statements"
+    ]
   },
   {
     "category": "Quality",
@@ -1632,8 +1651,11 @@
   {
     "category": "Value",
     "name": "sales_to_market",
-    "status": "blocked",
-    "reason": "规范化revenue字段混合营业总收入与营业收入，金融行业尤其不保证可与营业成本配比；部分条目还缺固定资产/预收预付或历史滞后。",
-    "required_changes": "先分离operating_revenue与total_operating_revenue，重归一化已有原始报表并核验行业口径；再补齐 单季营业收入及同一时点总市值。"
+    "status": "implemented",
+    "history": 1,
+    "datasets": [
+      "income-statements",
+      "market-values"
+    ]
   }
 ]

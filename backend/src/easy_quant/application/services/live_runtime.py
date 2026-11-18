@@ -288,6 +288,7 @@ def _analyze_live_instance(
         phase=phase,
         **({"quotes": requested_quotes} if phase == "on_market" else {}),
     )
+    container.factor_statistics.record(result.factor_event_id, result.factor_metrics)
     if result.status != "succeeded":
         raise StateConflictError(
             "实盘策略运行失败", {"phase": phase, "strategy_error": result.error}

@@ -189,6 +189,8 @@ class SubprocessStrategyRunner:
         if not isinstance(payload, dict):
             run.status, run.error = StrategyRunStatus.FAILED, "策略子进程返回无效结果"
             return
+        run.factor_metrics = dict(payload.get("factor_metrics", {}))
+        run.factor_event_id = str(payload.get("factor_event_id", ""))
         raw_stdout = str(payload.get("stdout", ""))
         if len(raw_stdout.encode("utf-8")) > self.output_limit:
             run.status, run.error = StrategyRunStatus.FAILED, "策略输出超过限制"

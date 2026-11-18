@@ -26,6 +26,10 @@ from easy_quant.infrastructure.data_sources.eastmoney.adapters import EastMoneyS
 from easy_quant.infrastructure.data_sources.eastmoney.client import EastMoneyClient
 from easy_quant.infrastructure.data_sources.tencent.adapters import TencentDailySource
 from easy_quant.infrastructure.data_sources.tencent.quotes import TencentQuoteSource
+from easy_quant.infrastructure.persistence.factor_statistics import (
+    InMemoryFactorStatistics,
+    SqlFactorStatistics,
+)
 from easy_quant.infrastructure.persistence.repositories.identity import SqlAlchemyIdentityRepository
 from easy_quant.infrastructure.persistence.repositories.jobs import SqlAlchemyJobRepository
 from easy_quant.infrastructure.persistence.repositories.live_actions import (
@@ -244,6 +248,7 @@ class PlatformState:
 
 @dataclass(slots=True)
 class Container:
+    factor_statistics: Any = field(default_factory=InMemoryFactorStatistics, init=False)
     settings: Settings
     authentication: AuthenticationService
     state: PlatformState = field(default_factory=PlatformState)
@@ -336,6 +341,7 @@ def build_container(settings: Settings | None = None) -> Container:
         SqlResourceLifecycleStore,
     )
 
+    container.factor_statistics = SqlFactorStatistics(create_session_factory(engine))
     container.resource_lifecycle = SqlResourceLifecycleStore(create_session_factory(engine))
     raw_cache = SqlAlchemyCompressedRawCache(session, create_session_factory(engine))
     container.data_sync = _build_market_data_sync(container, raw_cache)

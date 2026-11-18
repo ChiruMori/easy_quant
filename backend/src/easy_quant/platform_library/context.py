@@ -50,6 +50,17 @@ class FactorContext:
     def random(self) -> random.Random:
         return random.Random(self.random_seed)
 
+    def frame(self, dataset: str, symbol: str):
+        """PIT 过滤后转换研究表；原始存储和非数值元数据保持兼容。"""
+        from easy_quant.domain.market_data.fundamentals import FIELD_METADATA, FINANCIAL_DATASETS
+        from easy_quant.platform_library.financials import visible_versions
+        from easy_quant.platform_library.frames import research_frame
+
+        rows = self.read(dataset, symbol)
+        if dataset in FINANCIAL_DATASETS:
+            rows = visible_versions(rows)
+        return research_frame(rows, FIELD_METADATA)
+
 
 def copy_record(row: Mapping[str, object]) -> dict[str, object]:
     return {

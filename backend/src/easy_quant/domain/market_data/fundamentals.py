@@ -23,6 +23,8 @@ FIELD_METADATA = {
     "inventory": ("存货", "元"),
     "accounts_receivable": ("应收账款", "元"),
     "goodwill": ("商誉", "元"),
+    "operating_revenue": ("营业收入", "元"),
+    "total_operating_revenue": ("营业总收入（独立口径）", "元"),
     "revenue": ("营业总收入", "元"),
     "operating_cost": ("营业成本", "元"),
     "operating_profit": ("营业利润", "元"),

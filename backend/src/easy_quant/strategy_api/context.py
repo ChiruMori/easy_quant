@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from datetime import datetime
 from decimal import ROUND_DOWN, Decimal
+from time import perf_counter_ns
 from typing import Any
 
 from easy_quant.domain.market_data.fundamentals import FIELD_METADATA
@@ -43,8 +44,17 @@ class SnapshotGateway:
             if dataset == "market-values" and self.data.get("market_values", {}).get(symbol):
                 rows = [self.data["market_values"][symbol]]
         normalized = []
+        boundary = datetime.fromisoformat(str(cutoff))
         for row in rows:
-            item = dict(row)
+            raw_at = row.get("available_at", cutoff)
+            at = raw_at if isinstance(raw_at, datetime) else datetime.fromisoformat(str(raw_at))
+            if at > boundary:
+                continue
+            from easy_quant.infrastructure.data_sources.financial_normalization import (
+                project_legacy_revenue,
+            )
+
+            item = project_legacy_revenue(row) if dataset == "income-statements" else dict(row)
             for name in (
                 "open",
                 "high",
@@ -63,7 +73,7 @@ class SnapshotGateway:
                 *FIELD_METADATA,
             ):
                 if item.get(name) not in (None, "", "-"):
-                    item[name] = decimal_value(item[name])
+                    item[name] = float(str(item[name]))
             raw = item.get("available_at", cutoff)
             item["available_at"] = (
                 raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
@@ -113,6 +123,7 @@ class RuntimeContext:
         self.store = StrategyStore(state if state is not None else {})
         self._quote_provider = quote_provider
         self._quotes: dict[str, Decimal] = {}
+        self.factor_metrics: dict[str, dict[str, int]] = {}
         self.mock_usage: list[dict[str, object]] = []
         self._reserved_cash = decimal_value(data.get("reserved_cash", 0))
         self._reserved_positions = {
@@ -153,8 +164,16 @@ class RuntimeContext:
             return None
         return {**(value or {}), **(industry or {})}
 
-    def financials(self, symbol: str) -> object:
-        return self.library("fundamental.history", symbol=symbol, dataset="financial-indicators")
+    def history(self, symbol: str, dataset: str = "daily-bars"):
+        return self._factor_context.frame(dataset, symbol)
+
+    def financials(self, symbol: str):
+        from easy_quant.platform_library.frames import research_frame
+
+        return research_frame(
+            self.library("fundamental.history", symbol=symbol, dataset="financial-indicators"),
+            FIELD_METADATA,
+        )
 
     def valuation(self, symbol: str) -> object:
         return self.library("market.value", symbol=symbol)
@@ -198,7 +217,14 @@ class RuntimeContext:
             if data is self.data
             else FactorContext(SnapshotGateway(data), as_of)
         )
-        return REGISTRY.call(key, context, parameters)
+        REGISTRY.get(key)
+        started = perf_counter_ns()
+        try:
+            return REGISTRY.call(key, context, parameters)
+        finally:
+            metric = self.factor_metrics.setdefault(key, {"calls": 0, "elapsed_ns": 0})
+            metric["calls"] += 1
+            metric["elapsed_ns"] += perf_counter_ns() - started
 
     def quotes(self, symbols: list[str]) -> dict[str, Decimal]:
         wanted = sorted(set(str(symbol) for symbol in symbols))

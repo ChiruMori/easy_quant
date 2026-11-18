@@ -143,6 +143,13 @@ def extract_factor_dependencies(source_code: str) -> set[str]:
             "valuation": {"market-values"},
         }
         datasets.update(helpers.get(node.func.attr, set()))
+        if node.func.attr == "history":
+            dataset_node = next(
+                (k.value for k in node.keywords if k.arg == "dataset"),
+                node.args[1] if len(node.args) > 1 else ast.Constant("daily-bars"),
+            )
+            if isinstance(dataset_node, ast.Constant) and isinstance(dataset_node.value, str):
+                datasets.add(dataset_node.value)
         if (
             node.func.attr not in {"factor", "library"}
             or not node.args

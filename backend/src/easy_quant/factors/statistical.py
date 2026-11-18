@@ -1,21 +1,24 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from typing import cast
 
 from easy_quant.factors.context import FactorContext
 
 
 def expected_return(context: FactorContext, parameters: dict[str, object]) -> object:
-    rows = context.read("daily-bars", str(parameters["symbol"]))
-    closes = [Decimal(str(row["close"])) for row in rows]
-    if len(closes) < 2:
+    import math
+
+    rows = context.frame("daily-bars", str(parameters["symbol"]))
+    if len(rows) < 2:
         return {"available": False, "expected_return": None, "win_rate": None}
-    returns = [
-        (current / previous) - 1 for previous, current in zip(closes, closes[1:], strict=False)
-    ]
-    wins = sum(value > 0 for value in returns)
+    if "close" not in rows or any(not math.isfinite(value) for value in rows["close"]):
+        return {"available": False, "reason": "missing_or_non_finite_close"}
+    closes = rows["close"]
+    if (closes.iloc[:-1] == 0).any():
+        return {"available": False, "reason": "zero_denominator"}
+    returns = closes.pct_change(fill_method=None).iloc[1:]
     return {
         "available": True,
-        "expected_return": sum(returns) / len(returns),
-        "win_rate": Decimal(wins) / len(returns),
+        "expected_return": float(cast(float, returns.mean())),
+        "win_rate": float(cast(float, (returns > 0).mean())),
     }

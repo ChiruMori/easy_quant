@@ -41,7 +41,7 @@ def test_talib_and_financial_factor_execute_in_both_protocols(fixed_now):
     }
     run = SubprocessStrategyRunner().run(version, {}, data)
     assert run.status == StrategyRunStatus.SUCCEEDED, run.error
-    assert run.stdout.startswith("4.0\n100.0\n{'available': True, 'value': Decimal('0.2666")
+    assert run.stdout.startswith("4.0\n100.0\n{'available': True, 'value': 0.2666")
     with StreamingStrategyRunner(version, {}) as stream:
         streamed = stream.run_phase(
             date(2025, 8, 2),
