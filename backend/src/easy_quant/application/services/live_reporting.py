@@ -263,7 +263,16 @@ def portfolio_summary(
             (value * prices.get(key, Decimal(0)) for key, value in actual.positions.items()),
             Decimal(0),
         )
-        valid = not missing and not baseline_missing
+        from easy_quant.application.services.live_corporate_actions import pending_actions
+
+        corporate_error = None
+        try:
+            unresolved = pending_actions(state, instance_id, corporate_book, at)
+            if unresolved:
+                corporate_error = "持仓公司行为待核对，收益暂不可验证"
+        except StateConflictError as error:
+            corporate_error = error.message
+        valid = not missing and not baseline_missing and corporate_error is None
         profit = equity - baseline - added
         capital = baseline + added
         return {
@@ -272,8 +281,13 @@ def portfolio_summary(
             "profit": str(profit) if valid else None,
             "return_rate": str(profit / capital) if valid and capital > 0 else None,
             "missing_symbols": sorted(set(missing + baseline_missing)),
+            "corporate_action_error": corporate_error,
         }
 
+    from easy_quant.application.services.corporate_actions import runtime_snapshot
+    from easy_quant.domain.market_data.corporate_actions import CorporateActionBook
+
+    corporate_book = CorporateActionBook(runtime_snapshot(market_data)["corporate_actions"])
     # 每个已发布行情日保留一个收盘点，并补启动及当前点。
     zone = ZoneInfo("Asia/Shanghai")
     times = {started, now} if include_curve else set()
@@ -311,6 +325,7 @@ def portfolio_summary(
                 "price": str(row.price),
             }
             for row in entries
+            if row.kind != "corporate_action"
             if row.symbol and row.quantity_delta and row.occurred_at <= now
         ]
         if include_curve
@@ -318,5 +333,6 @@ def portfolio_summary(
         "valuation_note": (
             "按已发布日线收盘价估值；收益扣除追加资金，收益率=累计收益/累计投入资金。"
             "初始持仓缺启动时估值或当前持仓缺行情时暂不计算。"
-        ),
+        )
+        + (str(current["corporate_action_error"]) if current.get("corporate_action_error") else ""),
     }

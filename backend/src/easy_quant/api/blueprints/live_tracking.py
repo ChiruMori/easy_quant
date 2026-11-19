@@ -33,6 +33,29 @@ from easy_quant.infrastructure.core import UuidGenerator
 blueprint = Blueprint("live_tracking", __name__, url_prefix="/api/v1/live-instances")
 
 
+@blueprint.get("/<instance_id>/corporate-actions")
+@require_user
+def corporate_actions_pending(instance_id: str):
+    from easy_quant.application.services.live_corporate_actions import list_pending
+
+    return success(list_pending(get_container(), instance_id, g.current_user.id))
+
+
+@blueprint.post("/<instance_id>/corporate-actions/confirm")
+@require_user
+@resource_mutation
+def corporate_action_confirm(instance_id: str):
+    from easy_quant.application.services.live_corporate_actions import confirm_action
+
+    try:
+        result = confirm_action(
+            get_container(), instance_id, g.current_user.id, request.get_json() or {}
+        )
+    except (ValueError, ArithmeticError) as error:
+        raise ValidationError("公司行为确认字段无效") from error
+    return success(result)
+
+
 @blueprint.get("/<instance_id>/deletion-preview")
 @require_user
 def deletion_preview(instance_id: str):

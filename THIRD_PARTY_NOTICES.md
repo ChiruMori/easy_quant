@@ -4,6 +4,8 @@
 [jing2uo/tdx2db](https://github.com/jing2uo/tdx2db)，参考提交
 `80b287bf65019c79ff8db40ee42db5389f874731`，涉及 `tdx/merge.go`、
 `tdx/holidays.go`、`workflow/task_daily.go` 和 `workflow/tdx_helper.go`。
+GBBQ 解码及公开格式常量亦改编自该项目的 `tdx/gbbq.go`、`tdx/gbbq_var.go`；
+只用于官方公开归档的本地解析，不代表数据来源已具备完整公告及到账时点。
 本项目使用 Python 适配器直接写入 MariaDB，保留以下上游 MIT 许可。
 
 ```text

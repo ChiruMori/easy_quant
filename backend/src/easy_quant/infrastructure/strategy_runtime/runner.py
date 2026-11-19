@@ -281,6 +281,7 @@ class StreamingStrategyRunner:
         self.timeout_seconds = timeout_seconds
         self.result_limit = result_limit
         self._decoder = SubprocessStrategyRunner(timeout_seconds, output_limit, result_limit)
+        self._corporate_snapshot: list[dict[str, Any]] | None = None
         child = Path(__file__).with_name("child.py")
         environment = {
             key: value
@@ -407,6 +408,10 @@ class StreamingStrategyRunner:
         fee_rate: str = "0.0003",
         slippage_rate: str = "0",
         prior_intraday: list[dict[str, object]] | None = None,
+        price_policy: str | None = None,
+        corporate_actions: list[dict[str, Any]] | None = None,
+        receivable_cash: str = "0",
+        locked_shares: dict[str, str] | None = None,
     ) -> StrategyRun:
         request = _day_request(
             trading_day,
@@ -419,6 +424,16 @@ class StreamingStrategyRunner:
             records,
         )
         request.update({"phase": phase, "positions": dict(positions), "cash": cash})
+        request.update(
+            price_policy=price_policy,
+            corporate_actions=corporate_actions or [],
+            receivable_cash=receivable_cash,
+            locked_shares=locked_shares or {},
+        )
+        if corporate_actions is self._corporate_snapshot:
+            request.pop("corporate_actions", None)
+        else:
+            self._corporate_snapshot = corporate_actions
         request["prior_intraday"] = prior_intraday or []
         request.update(
             {
@@ -493,6 +508,9 @@ def _day_request(
                     "close",
                     "volume",
                     "amount",
+                    "source",
+                    "adjustment",
+                    "archive_sha256",
                 )
                 if name in row
             }

@@ -4,7 +4,9 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.corporate_actions import runtime_snapshot
 from easy_quant.application.services.live_reporting import read_portfolio
+from easy_quant.domain.market_data.corporate_actions import CorporateActionBook
 from easy_quant.domain.market_data.indices import INDEX_CATALOG, index_instruments
 from easy_quant.domain.shared.errors import NotFoundError, StateConflictError, ValidationError
 
@@ -170,22 +172,29 @@ def comparison_series(
                     by_day.setdefault(day, at)
         points = sorted(by_day.items())
 
-    def known_price(at):
+    action_book = CorporateActionBook(
+        runtime_snapshot(container.market_data, [symbol])["corporate_actions"]
+    )
+
+    def known_prices(at):
         found = [
             row for row in bars if datetime.fromisoformat(str(row["available_at"])) <= min(at, now)
         ]
         if not found:
-            return None
-        price = Decimal(str(found[-1]["close"]))
-        return price if price.is_finite() and price > 0 else None
+            return []
+        return action_book.adjust(found, symbol, min(at, now))
 
-    baseline = known_price(baseline_at)
-    if baseline is None:
+    baseline_rows = known_prices(baseline_at)
+    if not baseline_rows:
         raise StateConflictError("比较标的缺少区间起点可获知的真实行情，请先同步数据")
+    baseline_day = str(baseline_rows[-1]["trading_day"])
     values = []
     for day, at in points:
-        price = known_price(at)
-        ratio = price / baseline - 1 if price is not None else None
+        visible = known_prices(at)
+        price = Decimal(str(visible[-1]["close"])) if visible else None
+        original = next((row for row in visible if str(row["trading_day"]) == baseline_day), None)
+        baseline = Decimal(str(original["close"])) if original else None
+        ratio = price / baseline - 1 if price is not None and baseline else None
         values.append(
             {
                 "day": day,
@@ -198,5 +207,6 @@ def comparison_series(
     return {
         "id": f"instrument:{symbol}",
         "name": str((instrument or {}).get("name") or INDEX_CATALOG.get(symbol) or symbol),
+        "price_basis": "decision-time-qfq-price-return",
         "points": values,
     }

@@ -173,6 +173,8 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
     def field(name):
         def value(row):
             try:
+                if name == "volume" and row.get("adjusted_volume") is not None:
+                    return number(row["adjusted_volume"])
                 return number(row.get(name))
             except Unavailable:
                 return None
@@ -183,7 +185,12 @@ def calculate_alpha(context: FactorContext, parameters: dict[str, object], index
     r = c / c.delay(1) - 1
     adv = v.roll(20, mean)
     # 成交量以股、成交额以元归一；缺成交额不以典型价冒充 VWAP。
-    vw = field("amount") / v
+    # 复权价使用同尺度 VWAP；原始成交额不随价格复权变造。
+    vw = (
+        field("adjusted_vwap")
+        if any(row.get("price_scale") is not None for values in rows.values() for row in values)
+        else field("amount") / v
+    )
     d = c.delta(1)
 
     def conditional_delta(window):

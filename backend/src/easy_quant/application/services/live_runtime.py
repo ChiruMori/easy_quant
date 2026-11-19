@@ -10,6 +10,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from easy_quant.application.services.acquisition import AcquisitionFailed
+from easy_quant.application.services.corporate_actions import (
+    decision_snapshot,
+    require_raw_bars,
+    runtime_snapshot,
+)
 from easy_quant.application.services.instrument_eligibility import currently_unavailable_symbols
 from easy_quant.application.services.notification_runtime import notify_owner
 from easy_quant.application.services.recommendation_actions import (
@@ -173,6 +178,7 @@ def _analyze_live_instance(
     visible_bars: dict[str, list[dict[str, object]]] = {}
     found_bars = False
     bar_rows = [] if quote_only else page_cache.days((*previous_days, trading_day))
+    require_raw_bars(row for row in bar_rows if str(row["symbol"]) not in excluded)
     for row in bar_rows:
         day = date.fromisoformat(str(row["trading_day"]))
         symbol = str(row["symbol"])
@@ -255,6 +261,17 @@ def _analyze_live_instance(
         return {symbol: quote_cache[symbol] for symbol in symbols}
 
     checkpoint("strategy")
+    corporate_snapshot = runtime_snapshot(container.market_data)
+    from easy_quant.application.services.corporate_actions import validate_research_coverage
+
+    validate_research_coverage(
+        corporate_snapshot,
+        [row for row in bar_rows if str(row["symbol"]) not in excluded],
+        decision_at,
+    )
+    from easy_quant.application.services.live_corporate_actions import ensure_reconciled
+
+    ensure_reconciled(container, instance_id, decision_at, corporate_snapshot)
     if quote_only and portfolio.positions:
         requested_quotes(sorted(set(portfolio.positions) - excluded))
     runner = SubprocessStrategyRunner(
@@ -266,6 +283,7 @@ def _analyze_live_instance(
         version,
         dict(instance.get("parameters", {})),
         {
+            **decision_snapshot(corporate_snapshot, decision_at),
             "universe": universe,
             "prices": prices,
             "bars": visible_bars,

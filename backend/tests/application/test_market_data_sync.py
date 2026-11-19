@@ -322,7 +322,7 @@ def test_daily_bar_sync_reports_no_new_trading_days() -> None:
     assert "000016 最新 2026-09-03" in str(result["message"])
 
 
-def test_daily_bar_sync_keeps_qfq_default_and_rejects_unknown_history() -> None:
+def test_daily_bar_sync_uses_raw_default_and_rejects_unknown_history() -> None:
     source = FakeAcquisition(
         [{"日期": "2026-09-04", "开盘": 10, "最高": 11, "最低": 9, "收盘": 10.5, "成交量": 100}]
     )
@@ -331,8 +331,8 @@ def test_daily_bar_sync_keeps_qfq_default_and_rejects_unknown_history() -> None:
     service.sync(
         "daily-bars", symbols=["000001"], start_day=date(2026, 9, 4), end_day=date(2026, 9, 4)
     )
-    assert source.requests[0].parameters["adjustment"] == "qfq"
-    assert store.bar_adjustment("000001") == "qfq"
+    assert source.requests[0].parameters["adjustment"] == "none"
+    assert store.bar_adjustment("000001") == "none"
 
     store.daily_bars[("000002", "2026-09-03")] = {
         "symbol": "000002",
@@ -365,13 +365,12 @@ def test_daily_bar_cache_identity_includes_adjustment() -> None:
         "daily-bars", symbols=["000016"], start_day=date(2026, 9, 4), end_day=date(2026, 9, 4)
     )
     store.daily_bars[("000016", "2026-09-03")]["adjustment"] = "qfq"
-    service.sync(
-        "daily-bars", symbols=["000016"], start_day=date(2026, 9, 4), end_day=date(2026, 9, 4)
-    )
-
+    with pytest.raises(StateConflictError, match="口径不明确"):
+        service.sync(
+            "daily-bars", symbols=["000016"], start_day=date(2026, 9, 4), end_day=date(2026, 9, 4)
+        )
+    assert len(source.requests) == 1
     assert source.requests[0].parameters["adjustment"] == "none"
-    assert source.requests[1].parameters["adjustment"] == "qfq"
-    assert source.requests[0].identity != source.requests[1].identity
 
 
 def test_mixed_historical_adjustments_are_rejected_before_acquisition() -> None:

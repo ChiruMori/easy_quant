@@ -15,6 +15,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from easy_quant.application.services.backtest_reporting import performance_rows
+from easy_quant.application.services.corporate_actions import (
+    decision_snapshot,
+    require_raw_bars,
+    runtime_snapshot,
+)
 from easy_quant.application.services.instrument_eligibility import delisted_symbols
 from easy_quant.application.services.run_profile import RunProfile
 from easy_quant.application.services.strategy_validation import (
@@ -25,6 +30,7 @@ from easy_quant.domain.backtesting.engine import PhasedBacktestSession
 from easy_quant.domain.backtesting.entities import BacktestConfig
 from easy_quant.domain.backtesting.execution import MarketBar
 from easy_quant.domain.market_data.calendar import TradingCalendar
+from easy_quant.domain.market_data.corporate_actions import CorporateActionBook
 from easy_quant.domain.market_data.indices import INDEX_CATALOG, benchmark_symbol, is_index
 from easy_quant.domain.shared.errors import StateConflictError
 from easy_quant.domain.strategies.entities import Signal
@@ -250,6 +256,7 @@ def _execute_backtest(
                 break
             started_encode = clock.monotonic()
             accepted = [row for row in batch if str(row["symbol"]) not in excluded]
+            require_raw_bars(accepted)
             for row in accepted:
                 snapshot.append(row)
             profile.workload["snapshot_encode_seconds"] = (
@@ -267,6 +274,17 @@ def _execute_backtest(
         day for day in container.market_data.list_trading_days() if day < start_day
     )[-history_window:]
     history_start = warmup_days[0] if warmup_days else start_day
+    corporate_snapshot = runtime_snapshot(container.market_data)
+    corporate_book = CorporateActionBook(corporate_snapshot["corporate_actions"])
+    for symbol, bounds in coverage.items():
+        if symbol in excluded or is_index(symbol):
+            continue
+        left = max(history_start, bounds["first_day"])
+        right = min(end_day, bounds["last_day"])
+        if left <= right:
+            corporate_book.require_coverage(
+                symbol, left, right, datetime.combine(left, time(0), ZoneInfo("Asia/Shanghai"))
+            )
     profile.workload.update(
         history_start=history_start.isoformat(),
         start_day=start_day.isoformat(),
@@ -384,6 +402,14 @@ def _execute_backtest(
                         if phase == "on_market"
                         else before_cutoff
                     ).isoformat(),
+                    **decision_snapshot(
+                        corporate_snapshot,
+                        after_cutoff
+                        if phase == "after_market"
+                        else intraday_cutoff
+                        if phase == "on_market"
+                        else before_cutoff,
+                    ),
                 }
                 for phase in ("before_market", "on_market", "after_market")
             }
@@ -413,6 +439,10 @@ def _execute_backtest(
                         symbol: str(quantity) for symbol, quantity in portfolio.positions.items()
                     },
                     cash=str(portfolio.cash),
+                    receivable_cash=str(portfolio.receivable_cash),
+                    locked_shares={
+                        symbol: str(value) for symbol, value in portfolio.locked_shares.items()
+                    },
                     costs={symbol: str(value) for symbol, value in portfolio.costs.items()},
                     fee_rate=str(config.fee_rate),
                     slippage_rate=str(config.slippage_rate),
@@ -457,8 +487,27 @@ def _execute_backtest(
                     if signal.symbol not in excluded and not is_index(signal.symbol)
                 ]
 
-            backtest_session.advance(trading_day, day_bars, strategy)
-            final_prices = {bar.symbol: bar.close for bar in day_bars}
+            # 覆盖检查使用当前决策时点；不把未来事件/修订送入经济账本。
+            events = []
+            for symbol in sorted(set(today_symbols) | set(backtest_session.portfolio.positions)):
+                if symbol in excluded or is_index(symbol):
+                    continue
+                corporate_book.require_coverage(
+                    symbol,
+                    max(history_start, coverage[symbol]["first_day"]),
+                    trading_day,
+                    before_cutoff,
+                )
+                events.extend(corporate_book.events(symbol, before_cutoff))
+            closing_events = tuple(
+                event
+                for symbol in sorted(set(today_symbols) | set(backtest_session.portfolio.positions))
+                for event in corporate_book.events(symbol, after_cutoff)
+            )
+            backtest_session.advance(
+                trading_day, day_bars, strategy, tuple(events), closing_events=closing_events
+            )
+            final_prices = dict(backtest_session.marks)
             report(
                 "loading_data",
                 15 + int(70 * min(day_count, len(expected_days)) / len(expected_days)),
@@ -536,6 +585,8 @@ def _execute_backtest(
                 }
                 for item in trades
             ],
+            "corporate_action_ledger": backtest_session.corporate_ledger.audit,
+            "corporate_action_snapshot": corporate_snapshot["corporate_actions"],
             "symbol_performance": performance_rows(
                 [
                     {
@@ -549,9 +600,16 @@ def _execute_backtest(
                     for item in trades
                 ],
                 final_prices,
+                backtest_session.corporate_ledger.audit,
             ),
             "assumptions": {
                 "frequency": "daily",
+                "price_policy": corporate_snapshot["price_policy"],
+                "corporate_actions_sha256": corporate_snapshot["corporate_actions_sha256"],
+                "input_identity_sha256": hashlib.sha256(
+                    f"{snapshot_id}:{corporate_snapshot['corporate_actions_sha256']}".encode()
+                ).hexdigest(),
+                "research_prices": "decision-time qfq; raw execution; gross dividends",
                 "strategy_context_protocol": "strategy-library-v2",
                 "intraday_quote": "open-close-midpoint-v1 (contains closing information)",
                 "warmup_start_day": history_start.isoformat(),

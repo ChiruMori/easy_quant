@@ -6,6 +6,14 @@ from typing import Any, cast
 import pandas as pd
 
 NUMERIC_FIELDS = {
+    "adjusted_volume",
+    "adjusted_vwap",
+    "raw_open",
+    "raw_high",
+    "raw_low",
+    "raw_close",
+    "price_scale",
+    "share_scale",
     "open",
     "high",
     "low",
@@ -24,10 +32,20 @@ NUMERIC_FIELDS = {
 
 
 def research_frame(rows: Iterable[Mapping[str, object]], extra_fields=()):
-    frame = pd.DataFrame([dict(row) for row in rows])
-    for name in (NUMERIC_FIELDS | set(extra_fields)) & set(frame.columns):
-        # 非法字符串不能静默进入研究集；缺失保持 NaN，计算者决定完整性。
-        frame[name] = cast(Any, pd.to_numeric(frame[name], errors="raise")).astype("float64")
+    records = list(rows)
+    names = dict.fromkeys(name for row in records for name in row)
+    numeric = NUMERIC_FIELDS | set(extra_fields)
+    # 按列一次构建，避免每只股票逐列插入/转换 Series 的开销。
+    # 非法字符串仍报错；缺失保持 NaN，计算者决定完整性。
+    columns = {}
+    for name in names:
+        values = [row.get(name) for row in records]
+        columns[name] = (
+            cast(Any, pd.to_numeric(values, errors="raise")).astype("float64")
+            if name in numeric
+            else values
+        )
+    frame = pd.DataFrame(columns)
     if "trading_day" in frame:
         frame = frame.sort_values("trading_day", kind="stable").reset_index(drop=True)
     return frame

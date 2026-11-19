@@ -9,7 +9,7 @@ from easy_quant.domain.backtesting.entities import SimulatedTrade
 from easy_quant.domain.shared.errors import NotFoundError, StateConflictError
 
 
-def performance_rows(trades, prices):
+def performance_rows(trades, prices, corporate_actions=()):
     return [
         {
             key: str(value) if isinstance(value, Decimal) else value
@@ -29,6 +29,7 @@ def performance_rows(trades, prices):
                 for row in trades
             ],
             prices,
+            corporate_actions,
         )
     ]
 
