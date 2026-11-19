@@ -13,6 +13,7 @@ from easy_quant.infrastructure.persistence.repositories.in_memory_identity impor
 )
 from easy_quant.infrastructure.persistence.repositories.jobs import InMemoryJobRepository
 from tests.fakes.core import FixedClock, SequentialIdGenerator
+from tests.fakes.corporate_actions import VerifiedFixtureMarketStore
 
 
 class OfflineSettings(Settings):
@@ -54,6 +55,13 @@ def make_test_container(
         SequentialIdGenerator(),
     )
     container = Container(settings, authentication)
+    container.market_data = VerifiedFixtureMarketStore(
+        container.state.daily_bars,
+        container.state.instruments,
+        container.state.trading_days,
+        container.state.market_records,
+    )
+    container.market_data.fixture_state = container.state
     container.jobs = InMemoryJobRepository()
     if initialize_admin:
         authentication.initialize_admin(

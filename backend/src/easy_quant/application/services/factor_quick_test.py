@@ -1,6 +1,6 @@
 """同步、只读因子快测，复用受限策略子进程，绝不补造输入。"""
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from time import monotonic
 from zoneinfo import ZoneInfo
 
@@ -52,6 +52,13 @@ def quick_test_factor(container, key, parameters, trading_day, *, timeout_second
     ]
     start = days[0] if days else trading_day - timedelta(days=window * 2)
     data = {"bars": {}, "records": {}, "decision_at": cutoff.isoformat()}
+    from easy_quant.application.services.corporate_actions import (
+        decision_snapshot,
+        runtime_snapshot,
+    )
+    from easy_quant.domain.market_data.corporate_actions import CorporateActionBook
+
+    corporate_snapshot = {"corporate_actions": []}
     rows_count = 0
 
     def check_budget():
@@ -66,11 +73,21 @@ def quick_test_factor(container, key, parameters, trading_day, *, timeout_second
         wanted.add("sh000001")
     elif key.endswith("_000300"):
         wanted.add("sh000300")
+    if "daily-bars" in definition.datasets:
+        corporate_snapshot = runtime_snapshot(container.market_data, wanted, check=check_budget)
+        data.update(decision_snapshot(corporate_snapshot, cutoff))
     for dataset in definition.datasets:
         for member in sorted(wanted):
             check_budget()
             if dataset == "daily-bars":
                 rows = container.market_data.list_bars(start, trading_day, member)
+                if rows:
+                    CorporateActionBook(corporate_snapshot["corporate_actions"]).require_coverage(
+                        member,
+                        min(date.fromisoformat(str(row["trading_day"])) for row in rows),
+                        trading_day,
+                        cutoff,
+                    )
                 data["bars"][member] = rows
             else:
                 rows = container.market_data.list_records(dataset, member, as_of=cutoff)

@@ -167,7 +167,9 @@ def test_backtest_uses_streams_and_preserves_snapshot_hash(fixed_now, monkeypatc
     }
     backtest_runtime.execute_backtest(container, "b")
     assert len(observed) == 1
-    expected = json.dumps([row], ensure_ascii=False, sort_keys=True).encode("utf-8")
+    expected = json.dumps(
+        [{"source": "fixture", "adjustment": "none", **row}], ensure_ascii=False, sort_keys=True
+    ).encode("utf-8")
     assert container.backtests.get("b")["snapshot_id"] == hashlib.sha256(expected).hexdigest()
 
 

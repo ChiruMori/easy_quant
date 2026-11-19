@@ -41,6 +41,7 @@ class PortfolioLedgerEntry:
     quantity_delta: Decimal = Decimal(0)
     price: Decimal = Decimal(0)
     sequence: int = 0
+    kind: str = "trade"
 
 
 @dataclass(slots=True)
@@ -114,7 +115,11 @@ def rebuild_portfolio(
             current = previous + entry.quantity_delta
             if current < 0:
                 raise StateConflictError("账本产生负持仓")
-            if entry.quantity_delta > 0:
+            if entry.kind == "corporate_action" and current:
+                portfolio.costs[entry.symbol] = (
+                    portfolio.costs.get(entry.symbol, Decimal(0)) * previous / current
+                )
+            elif entry.quantity_delta > 0:
                 previous_cost = portfolio.costs.get(entry.symbol, Decimal(0)) * previous
                 portfolio.costs[entry.symbol] = (
                     previous_cost + entry.price * entry.quantity_delta

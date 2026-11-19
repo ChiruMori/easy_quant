@@ -61,7 +61,7 @@ from easy_quant.infrastructure.persistence.session import (
 )
 from easy_quant.infrastructure.security import SecretBox
 
-_DAILY_BARS_DESCRIPTION = "股票沿用已有复权口径；指数固定不复权"
+_DAILY_BARS_DESCRIPTION = "保存不复权原价；研究复权须核验公司行为，指数不复权"
 _TENCENT_DAILY_SOURCE = {"key": "tencent", "name": "腾讯行情", "enabled": True}
 _TRADING_STATUS_DESCRIPTION = "盘后自动确认停牌及真实成交复牌；不以行情缺失或预计复牌日推断状态"
 
@@ -71,6 +71,7 @@ def _refresh_dataset_description(datasets: Any) -> None:
         if dataset.get("key") == "daily-bars" and dataset.get("description") in {
             "前复权日线开高低收与成交量",
             "日线行情；公开接口提供前复权，通达信全量导入为不复权",
+            "股票沿用已有复权口径；指数固定不复权",
         }:
             dataset["description"] = _DAILY_BARS_DESCRIPTION
             datasets[index] = dataset
@@ -347,6 +348,7 @@ def build_container(settings: Settings | None = None) -> Container:
     container.data_sync = _build_market_data_sync(container, raw_cache)
     import httpx
 
+    from easy_quant.application.services.corporate_actions import sync_tdx_candidates
     from easy_quant.application.services.tdx_incremental import TdxDailyUpdateService
     from easy_quant.infrastructure.imports.tdx_daily import OfficialDailyFeed
     from easy_quant.infrastructure.persistence.repositories.tdx_daily import SqlDailyStore
@@ -355,6 +357,9 @@ def build_container(settings: Settings | None = None) -> Container:
         OfficialDailyFeed(
             httpx.Client(timeout=60, follow_redirects=True, trust_env=False),
             BACKEND_ROOT / ".local-data/tdx/daily",
+            corporate_archive=lambda payload: sync_tdx_candidates(
+                container.market_data, payload, SystemClock().now()
+            ),
         ),
         SqlDailyStore(create_session_factory(engine), SystemClock().now),
         SystemClock().now,

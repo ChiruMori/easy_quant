@@ -31,6 +31,28 @@ def act(recommendation_id: str, kind: str):
         raise ValidationError("未知建议处理动作") from error
     payload = RecommendationActionRequest.model_validate(request.get_json() or {})
     container = get_container()
+    if operation_kind is not OperationKind.REJECT:
+        instance_id = None
+        with container.live_tracking.transaction() as state:
+            for key, items in state.recommendations.items():
+                if any(
+                    row["id"] == recommendation_id
+                    and row.get("owner_id") == g.current_user.id
+                    and row.get("status") == "pending"
+                    for row in items
+                ):
+                    instance_id = key
+                    break
+        if instance_id is not None:
+            from easy_quant.application.services.corporate_actions import runtime_snapshot
+            from easy_quant.application.services.live_corporate_actions import ensure_reconciled
+
+            ensure_reconciled(
+                container,
+                instance_id,
+                container.authentication.clock.now(),
+                runtime_snapshot(container.market_data),
+            )
     service = RecommendationActionService(
         container.live_tracking,
         container.authentication.clock,

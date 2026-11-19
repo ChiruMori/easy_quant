@@ -29,8 +29,24 @@ def decimal_value(value: object) -> Decimal:
 class SnapshotGateway:
     def __init__(self, data: dict[str, Any]) -> None:
         self.data = data
+        from easy_quant.domain.market_data.corporate_actions import CorporateActionBook
+
+        self._corporate_book = CorporateActionBook(data.get("corporate_actions", []))
 
     def records(self, dataset: str, symbol: str) -> Iterable[Mapping[str, object]]:
+        if dataset in {"daily-bars", "raw-daily-bars", "hfq-daily-bars"} and self.data.get(
+            "price_policy"
+        ):
+            cutoff = datetime.fromisoformat(self.data["decision_at"])
+            mode = {"daily-bars": "qfq", "raw-daily-bars": "raw", "hfq-daily-bars": "hfq"}[dataset]
+            adjusted = self._corporate_book.adjust(
+                self.data.get("bars", {}).get(symbol, []), symbol, cutoff, mode=mode
+            )
+            data = {**self.data, "bars": {symbol: adjusted}}
+            data.pop("price_policy")
+            # 已经使用当前实例的索引校验和复权，归一化时无需重建全市场事件索引。
+            data.pop("corporate_actions", None)
+            return SnapshotGateway(data).records("daily-bars", symbol)
         cutoff = self.data.get("decision_at", "9999-12-31T00:00:00+00:00")
         if dataset == "daily-bars":
             rows = self.data.get("bars", {}).get(symbol)
@@ -62,6 +78,12 @@ class SnapshotGateway:
                 "close",
                 "volume",
                 "amount",
+                "raw_open",
+                "raw_high",
+                "raw_low",
+                "raw_close",
+                "adjusted_volume",
+                "adjusted_vwap",
                 "pe_ratio",
                 "pb_ratio",
                 "market_cap",
@@ -79,6 +101,10 @@ class SnapshotGateway:
                 raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
             )
             normalized.append(item)
+        if dataset == "daily-bars":
+            return sorted(
+                normalized, key=lambda row: (str(row.get("trading_day", "")), row["available_at"])
+            )
         return sorted(
             normalized,
             key=lambda row: (row["available_at"], str(row.get("report_period", ""))),
@@ -119,7 +145,8 @@ class RuntimeContext:
         state: dict[str, Any] | None = None,
         quote_provider: Callable[[list[str]], dict[str, object]] | None = None,
     ) -> None:
-        self.data = data
+        # 完整性审计包含晚到/未来修订，不能直接暴露给策略代码。
+        self.data = {key: value for key, value in data.items() if key != "corporate_actions"}
         self.store = StrategyStore(state if state is not None else {})
         self._quote_provider = quote_provider
         self._quotes: dict[str, Decimal] = {}
@@ -129,6 +156,10 @@ class RuntimeContext:
         self._reserved_positions = {
             key: decimal_value(value) for key, value in data.get("reserved_positions", {}).items()
         }
+        for symbol, value in data.get("locked_shares", {}).items():
+            self._reserved_positions[symbol] = self._reserved_positions.get(
+                symbol, Decimal(0)
+            ) + decimal_value(value)
         as_of = datetime.fromisoformat(data.get("decision_at", "9999-12-31T00:00:00+00:00"))
         self._factor_context = FactorContext(SnapshotGateway(data), as_of)
         self._buy_symbols = set(data.get("pending_buy_symbols", []))
@@ -164,8 +195,40 @@ class RuntimeContext:
             return None
         return {**(value or {}), **(industry or {})}
 
-    def history(self, symbol: str, dataset: str = "daily-bars"):
+    def history(self, symbol: str, dataset: str = "daily-bars", *, adjustment: str = "qfq"):
+        if dataset == "daily-bars":
+            if adjustment not in {"raw", "qfq", "hfq"}:
+                raise ValueError("复权方式必须为 raw、qfq 或 hfq")
+            dataset = {"raw": "raw-daily-bars", "qfq": "daily-bars", "hfq": "hfq-daily-bars"}[
+                adjustment
+            ]
         return self._factor_context.frame(dataset, symbol)
+
+    def corporate_actions(self, symbol: str) -> list[dict[str, object]]:
+        from easy_quant.domain.market_data.corporate_actions import ZONE
+
+        cutoff = self._factor_context.as_of
+        gateway = self._factor_context.gateway
+        assert isinstance(gateway, SnapshotGateway)
+        return [
+            {
+                "event_id": event.event_id,
+                "record_key": event.record_key,
+                "ex_date": str(event.ex_date),
+                "price_ratio": float(event.price_ratio),
+                "share_multiplier": float(event.share_multiplier),
+                "cash_per_share": float(event.cash_per_share),
+            }
+            for event in gateway._corporate_book.events(symbol, cutoff)
+            if event.ex_date <= cutoff.astimezone(ZONE).date()
+        ]
+
+    def trading_day(self) -> str:
+        from easy_quant.domain.market_data.corporate_actions import ZONE
+
+        return str(
+            self.data.get("trading_day") or self._factor_context.as_of.astimezone(ZONE).date()
+        )
 
     def financials(self, symbol: str):
         from easy_quant.platform_library.frames import research_frame
@@ -198,7 +261,7 @@ class RuntimeContext:
             )
             if not 1 <= required <= 2500:
                 raise ValueError("窗口必须在 1–2500 之间")
-            prices = list(data.get("prices", {}).get(symbol, []))
+            prices = [str(row["close"]) for row in self._factor_context.read("daily-bars", symbol)]
             if prices and len(prices) < required:
                 self.mock_usage.append(
                     {"factor": key, "symbol": symbol, "count": required - len(prices)}
@@ -211,6 +274,7 @@ class RuntimeContext:
                         symbol: [prices[0]] * (required - len(prices)) + prices,
                     },
                 }
+                data.pop("price_policy", None)
         as_of = datetime.fromisoformat(data.get("decision_at", "9999-12-31T00:00:00+00:00"))
         context = (
             self._factor_context
@@ -254,7 +318,7 @@ class RuntimeContext:
         return decimal_value(self.data.get("positions", {}).get(symbol, 0))
 
     def portfolio(self) -> dict[str, object]:
-        return {
+        result = {
             "cash": decimal_value(self.data.get("cash") or 0),
             "available_cash": max(
                 Decimal(0), decimal_value(self.data.get("cash") or 0) - self._reserved_cash
@@ -269,6 +333,13 @@ class RuntimeContext:
                 key: decimal_value(value) for key, value in self.data.get("costs", {}).items()
             },
         }
+        if decimal_value(self.data.get("receivable_cash", 0)) or self.data.get("locked_shares"):
+            result["receivable_cash"] = decimal_value(self.data.get("receivable_cash", 0))
+            result["locked_shares"] = {
+                key: decimal_value(value)
+                for key, value in self.data.get("locked_shares", {}).items()
+            }
+        return result
 
     def signal(
         self,
@@ -308,6 +379,7 @@ class RuntimeContext:
             reference_price = decimal_value(raw_price)
             # 单标的预算固定于调用开始，预留只减少可用额，不缩小预算。
             equity = decimal_value(self.data.get("cash") or 0)
+            equity += decimal_value(self.data.get("receivable_cash", 0))
             for held, held_quantity in self.data.get("positions", {}).items():
                 history = self.data.get("prices", {}).get(held, [])
                 mark = (

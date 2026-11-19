@@ -144,14 +144,17 @@ def test_runtime_store_batches_symbols_and_sorts_rows_by_day() -> None:
             return ["000002", "000001"]
 
         def execute(self, _statement):
+            if "bar_provenance" in str(_statement):
+                return [(1, "fixture", "none", None)]
             return [
-                ("000002", date(2026, 9, 2), date(2026, 9, 2), 2, 2, 2, 2, 200, 400),
-                ("000001", date(2026, 9, 1), date(2026, 9, 1), 1, 1, 1, 1, 100, 100),
+                ("000002", date(2026, 9, 2), date(2026, 9, 2), 2, 2, 2, 2, 200, 400, 1),
+                ("000001", date(2026, 9, 1), date(2026, 9, 1), 1, 1, 1, 1, 100, 100, 1),
             ]
 
     store = SqlAlchemyMarketDataStore(cast(Session, FakeSession()))
     rows = store.list_runtime_bars(date(2026, 9, 1), date(2026, 9, 2))
     assert [row["symbol"] for row in rows] == ["000001", "000002"]
+    assert all(row["adjustment"] == "none" and row["source"] == "fixture" for row in rows)
 
 
 def test_backtest_runtime_iterator_reads_one_month_at_a_time(monkeypatch) -> None:

@@ -272,6 +272,9 @@ class InMemoryMarketDataStore:
             "close",
             "volume",
             "amount",
+            "source",
+            "adjustment",
+            "archive_sha256",
         )
         return [
             {field: row.get(field) for field in fields}
@@ -404,7 +407,7 @@ class InMemoryMarketDataStore:
             key = str(row["record_key"])
             overwritten += int((dataset_key, key) in self.market_records)
             if (
-                dataset_key not in FINANCIAL_DATASETS
+                dataset_key not in {*FINANCIAL_DATASETS, "corporate-actions"}
                 or (dataset_key, key) not in self.market_records
             ):
                 self.market_records[(dataset_key, key)] = row
@@ -703,7 +706,7 @@ class SqlAlchemyMarketDataStore:
         return [self._snapshot_row(row) for row in self.session.scalars(statement)]
 
     def list_runtime_bars(self, start_day: date, end_day: date) -> list[dict[str, Any]]:
-        return self._runtime_rows(start_day, end_day)
+        return list(self.iter_backtest_bars(start_day, end_day))
 
     def _runtime_rows(self, start_day: date, end_day: date, metadata=None) -> list[dict[str, Any]]:
         symbols = list(
@@ -1050,7 +1053,7 @@ class SqlAlchemyMarketDataStore:
                     or 0
                 )
             statement = insert(JsonMarketRecordModel)
-            if dataset_key in FINANCIAL_DATASETS:
+            if dataset_key in {*FINANCIAL_DATASETS, "corporate-actions"}:
                 statement = statement.on_duplicate_key_update(
                     record_key=statement.inserted.record_key
                 )

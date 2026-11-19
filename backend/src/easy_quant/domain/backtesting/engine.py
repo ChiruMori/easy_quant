@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
 
+from easy_quant.domain.backtesting.corporate_actions import CorporateActionLedger
 from easy_quant.domain.backtesting.entities import (
     BacktestConfig,
     BacktestPeriod,
@@ -12,6 +13,7 @@ from easy_quant.domain.backtesting.entities import (
 )
 from easy_quant.domain.backtesting.execution import MarketBar, execute_signal
 from easy_quant.domain.backtesting.metrics import calculate_metrics
+from easy_quant.domain.market_data.corporate_actions import CorporateAction
 from easy_quant.domain.strategies.entities import Signal
 
 StrategyAtDay = Callable[[date], list[Signal]]
@@ -92,14 +94,20 @@ class PhasedBacktestSession:
         self.portfolio = Portfolio(config.initial_cash)
         self.periods: list[BacktestPeriod] = []
         self.trades: list[SimulatedTrade] = []
+        self.corporate_ledger = CorporateActionLedger()
+        self.marks: dict[str, Decimal] = {}
 
     def advance(
         self,
         trading_day: date,
         day_bars: list[MarketBar],
         strategy: Callable[[str], list[Signal]],
+        events: tuple[CorporateAction, ...] = (),
+        *,
+        closing_events: tuple[CorporateAction, ...] | None = None,
     ) -> None:
         visible_bars = {bar.symbol: bar for bar in day_bars}
+        self.corporate_ledger.open(trading_day, self.portfolio, events, self.marks)
         for phase in ("before_market", "on_market", "after_market"):
             for signal in strategy(phase):
                 bar = visible_bars.get(signal.symbol)
@@ -118,18 +126,22 @@ class PhasedBacktestSession:
                 )
                 if trade is not None:
                     self.trades.append(trade)
+        self.corporate_ledger.close(
+            trading_day, self.portfolio, closing_events if closing_events is not None else events
+        )
+        self.marks.update({bar.symbol: bar.close for bar in day_bars})
         positions_value = sum(
             (
-                visible_bars[symbol].close * quantity
+                self.marks[symbol] * quantity
                 for symbol, quantity in self.portfolio.positions.items()
-                if symbol in visible_bars
+                if symbol in self.marks
             ),
             Decimal(0),
         )
         self.periods.append(
             BacktestPeriod(
                 trading_day,
-                self.portfolio.cash + positions_value,
+                self.portfolio.cash + self.portfolio.receivable_cash + positions_value,
                 self.portfolio.cash,
                 positions_value,
             )

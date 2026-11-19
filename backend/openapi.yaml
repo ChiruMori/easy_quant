@@ -10,6 +10,98 @@
     "securitySchemes": {"cookieSession": {"type": "apiKey", "in": "cookie", "name": "session"}, "csrf": {"type": "apiKey", "in": "header", "name": "X-CSRF-Token"}}
   },
   "paths": {
+    "/live-instances/{instance_id}/corporate-actions": {
+      "get": {
+        "operationId": "listCorporateActions",
+        "summary": "实盘公司行为核对",
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "核对结果"
+          },
+          "409": {
+            "description": "覆盖未核实、版本冲突或权益尚未到账"
+          }
+        }
+      }
+    },
+    "/live-instances/{instance_id}/corporate-actions/confirm": {
+      "post": {
+        "operationId": "confirmCorporateAction",
+        "summary": "实盘公司行为核对",
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "核对结果"
+          },
+          "409": {
+            "description": "覆盖未核实、版本冲突或权益尚未到账"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "event_id",
+                  "record_key",
+                  "cash",
+                  "share_delta",
+                  "evidence"
+                ],
+                "properties": {
+                  "event_id": {
+                    "type": "string"
+                  },
+                  "record_key": {
+                    "type": "string"
+                  },
+                  "cash": {
+                    "type": "string"
+                  },
+                  "share_delta": {
+                    "type": "string"
+                  },
+                  "evidence": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/factors/{key}/quick-test": {
       "post": {
         "operationId": "quickTestFactor",

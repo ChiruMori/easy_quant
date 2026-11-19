@@ -57,6 +57,7 @@ import {
   resumeLive,
   terminateLive,
 } from "../api"
+import { CorporateActionsPanel } from "../components/corporate-actions-panel"
 import { LiveSchedulePanel } from "../components/live-schedule-panel"
 import { ManualOperationDialog } from "../components/manual-operation-dialog"
 import { RecommendationActions } from "../components/recommendation-actions"
@@ -286,6 +287,9 @@ export function LiveDetailPage({
         }
       />
       <LiveSchedulePanel instanceId={current.id} status={current.status} />
+      {current.status !== "terminated" && (
+        <CorporateActionsPanel instanceId={current.id} onChanged={refresh} />
+      )}
       {error && (
         <Alert variant="destructive">
           <AlertTitle>操作未完成</AlertTitle>

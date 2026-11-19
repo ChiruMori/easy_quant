@@ -138,7 +138,12 @@ def test_backtest_excludes_delisted_bars_and_hardcoded_signals(monkeypatch, fixe
     assert run["trades"] == []
     assert run["assumptions"]["excluded_delisted_symbols"] == ["000002"]
     expected = json.dumps(
-        [_bar("000001"), _bar("000003")], ensure_ascii=False, sort_keys=True
+        [
+            {"source": "fixture", "adjustment": "none", **_bar(symbol)}
+            for symbol in ("000001", "000003")
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
     ).encode("utf-8")
     assert run["snapshot_id"] == hashlib.sha256(expected).hexdigest()
 
@@ -190,7 +195,9 @@ def test_truncated_suspended_history_does_not_block_but_active_gaps_do(
     else:
         backtest_runtime.execute_backtest(container, "b")
         assert observed == [("2026-09-29", ["000001", "000003"]), ("2026-09-30", ["000001"])]
-        assert container.market_data.list_bars(symbol="000003") == [_bar("000003")]
+        assert container.market_data.list_bars(symbol="000003") == [
+            {"source": "fixture", "adjustment": "none", **_bar("000003")}
+        ]
         assert container.backtests.get("b")["assumptions"]["coverage_exempt_suspended_symbols"] == [
             "000003"
         ]

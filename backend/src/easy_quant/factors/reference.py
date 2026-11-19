@@ -42,7 +42,10 @@ def bars(context, symbol):
 
 
 def column(rows, name):
-    return [number(row.get(name)) for row in rows]
+    return [
+        number(row.get("adjusted_volume", row.get(name)) if name == "volume" else row.get(name))
+        for row in rows
+    ]
 
 
 def calculate(

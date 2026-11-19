@@ -8,9 +8,11 @@ from datetime import UTC, date, datetime
 
 import httpx
 
+from easy_quant.application.services.corporate_actions import sync_tdx_candidates
 from easy_quant.application.services.tdx_incremental import TdxDailyUpdateService
 from easy_quant.config import BACKEND_ROOT, get_settings
 from easy_quant.infrastructure.imports.tdx_daily import OfficialDailyFeed
+from easy_quant.infrastructure.persistence.repositories.runtime import SqlAlchemyMarketDataStore
 from easy_quant.infrastructure.persistence.repositories.tdx_daily import SqlDailyStore
 from easy_quant.infrastructure.persistence.session import (
     create_database_engine,
@@ -41,11 +43,15 @@ def main() -> int:
         if stop_requested:
             raise KeyboardInterrupt
 
+    def corporate_archive(payload: bytes) -> None:
+        with create_session_factory(engine)() as session:
+            sync_tdx_candidates(SqlAlchemyMarketDataStore(session), payload, datetime.now(UTC))
+
     previous_handler = signal.signal(signal.SIGINT, request_stop)
     try:
         with httpx.Client(timeout=60, follow_redirects=True, trust_env=False) as client:
             service = TdxDailyUpdateService(
-                OfficialDailyFeed(client, directory),
+                OfficialDailyFeed(client, directory, corporate_archive=corporate_archive),
                 SqlDailyStore(create_session_factory(engine), lambda: datetime.now(UTC)),
                 lambda: datetime.now(UTC),
             )
