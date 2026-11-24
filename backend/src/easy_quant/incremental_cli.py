@@ -47,6 +47,32 @@ def main() -> int:
         with create_session_factory(engine)() as session:
             sync_tdx_candidates(SqlAlchemyMarketDataStore(session), payload, datetime.now(UTC))
 
+    def publish_tdx_prices():
+        from easy_quant.application.services.tdx_price_sync import prepare_tdx_prices
+
+        with create_session_factory(engine)() as session:
+            prepare_tdx_prices(
+                SqlAlchemyMarketDataStore(session),
+                (directory / "gbbq.zip").read_bytes(),
+                datetime.now(UTC),
+                apply=True,
+                force_rebuild=True,
+            )
+            from types import SimpleNamespace
+
+            from easy_quant.infrastructure.persistence.repositories.jobs import (
+                SqlAlchemyJobRepository,
+            )
+            from easy_quant.worker.handlers.corporate_actions import enqueue_equity_enrichment
+
+            enqueue_equity_enrichment(
+                SimpleNamespace(
+                    market_data=SqlAlchemyMarketDataStore(session),
+                    jobs=SqlAlchemyJobRepository(session),
+                ),
+                datetime.now(UTC),
+            )
+
     previous_handler = signal.signal(signal.SIGINT, request_stop)
     try:
         with httpx.Client(timeout=60, follow_redirects=True, trust_env=False) as client:
@@ -54,6 +80,7 @@ def main() -> int:
                 OfficialDailyFeed(client, directory, corporate_archive=corporate_archive),
                 SqlDailyStore(create_session_factory(engine), lambda: datetime.now(UTC)),
                 lambda: datetime.now(UTC),
+                after_update=publish_tdx_prices,
             )
             result = service.update(
                 start_day=args.start_day,

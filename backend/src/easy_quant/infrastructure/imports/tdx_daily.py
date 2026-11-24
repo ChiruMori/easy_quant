@@ -158,6 +158,13 @@ class OfficialDailyFeed:
         temporary = target.with_suffix(".zip.part")
         temporary.write_bytes(payload)
         temporary.replace(target)
+        if name == "gbbq.zip":
+            # 保留来源版本，研究重建和回测快照可追溯到实际下载的完整归档。
+            import hashlib
+
+            archived = self.directory / f"gbbq-{hashlib.sha256(payload).hexdigest()}.zip"
+            if not archived.exists():
+                archived.write_bytes(payload)
 
     def calendar(self) -> HolidayCalendar:
         payload = self._download(CALENDAR_URL)

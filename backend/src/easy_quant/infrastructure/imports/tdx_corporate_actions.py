@@ -64,6 +64,7 @@ def archive_candidates(
         if names.count("gbbq") != 1 or archive.getinfo("gbbq").file_size > 32 * 1024 * 1024:
             raise ValueError("GBBQ 归档成员缺失、重复或过大")
         content = archive.read("gbbq")
+        snapshot_day = datetime(*archive.getinfo("gbbq").date_time).date().isoformat()
     digest = hashlib.sha256(content).hexdigest()
     rows = []
     for symbol, ex_date, category, values in decode_records(content):
@@ -98,4 +99,6 @@ def archive_candidates(
             }
         )
         rows.append(row)
+        # 归档时间只用于操作覆盖边界，不改变既有候选的经济内容身份。
+        row["archive_snapshot_day"] = snapshot_day
     return rows

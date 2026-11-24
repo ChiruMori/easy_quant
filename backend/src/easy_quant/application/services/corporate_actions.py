@@ -167,6 +167,8 @@ def dividend_candidates(rows: list[dict]) -> list[dict]:
 def runtime_snapshot(store, symbols=None, *, check=lambda: None) -> dict:
     # 完整性证明和晚到记录亦须进入审计快照；经济事件由领域层按时点选择。
     records = []
+    from easy_quant.domain.market_data.research_actions import TDX_PRICE_DATASET
+
     for symbol in sorted(set(symbols)) if symbols is not None else [None]:
         check()
         records.extend(
@@ -174,6 +176,8 @@ def runtime_snapshot(store, symbols=None, *, check=lambda: None) -> dict:
             for row in store.list_records(DATASET, symbol)
             if row.get("price_event_candidate") is not False
         )
+        records.extend(store.list_records(TDX_PRICE_DATASET, symbol))
+        records.extend(store.list_records("tdx-equity-checks", symbol))
         check()
     return {
         "price_policy": POLICY,
@@ -195,11 +199,15 @@ def require_raw_bars(rows) -> None:
 
 
 def decision_snapshot(snapshot: dict, cutoff: datetime) -> dict:
+    from easy_quant.domain.market_data.corporate_actions import ZONE
+
     # 子进程连私有属性也拿不到未来经济版本；完整审计仅由宿主保存。
     records = [
         row
         for row in snapshot["corporate_actions"]
-        if row.get("record_kind") == "event" and instant(row["available_at"]) <= cutoff
+        if row.get("record_kind") == "event"
+        and instant(row["available_at"]) <= cutoff
+        and day(row["ex_date"]) <= cutoff.astimezone(ZONE).date()
     ]
     known_keys = {row["record_key"] for row in records}
     records.extend(
@@ -207,10 +215,33 @@ def decision_snapshot(snapshot: dict, cutoff: datetime) -> dict:
         for row in snapshot["corporate_actions"]
         if row.get("record_kind") == "coverage"
     )
+    records.extend(
+        {
+            **{
+                key: value
+                for key, value in row.items()
+                if key not in {"share_listing_days", "equity_issues"}
+            },
+            "events": [
+                event
+                for event in row["events"]
+                if day(event["ex_date"]) <= cutoff.astimezone(ZONE).date()
+            ],
+            "issues": [
+                issue
+                for issue in row.get("issues", [])
+                if day(issue["ex_date"]) <= cutoff.astimezone(ZONE).date()
+            ],
+        }
+        for row in snapshot["corporate_actions"]
+        if row.get("record_kind") == "tdx_price_publication"
+    )
     return {"price_policy": POLICY, "corporate_actions": records}
 
 
-def validate_research_coverage(snapshot: dict, bars, cutoff: datetime) -> None:
+def validate_research_coverage(
+    snapshot: dict, bars, cutoff: datetime, *, exclude_unheld=False, held_symbols=()
+) -> list:
     from easy_quant.domain.market_data.corporate_actions import ZONE
 
     starts = {}
@@ -220,8 +251,24 @@ def validate_research_coverage(snapshot: dict, bars, cutoff: datetime) -> None:
         if trading_day <= end:
             starts[symbol] = min(starts.get(symbol, trading_day), trading_day)
     book = CorporateActionBook(snapshot["corporate_actions"])
+    exclusions = []
     for symbol, start in starts.items():
+        problems = book.price_problems(symbol, start, end, cutoff)
+        if problems and exclude_unheld and symbol not in held_symbols:
+            exclusions.extend({"symbol": symbol, **issue} for issue in problems)
+            continue
         book.require_coverage(symbol, start, end, cutoff)
+    return exclusions
+
+
+def require_signal_quality(signals, exclusions) -> None:
+    """在宿主校验最终信号，旧策略直接返回字典也不能绕过异常证券隔离。"""
+    symbols = {signal.symbol for signal in signals}
+    problems = [row for row in exclusions if row["symbol"] in symbols]
+    if problems:
+        from easy_quant.domain.shared.errors import StateConflictError
+
+        raise StateConflictError("策略信号涉及尚未解决的价格事件", {"issues": problems})
 
 
 def sync_tdx_candidates(store, payload: bytes, observed_at: datetime) -> None:

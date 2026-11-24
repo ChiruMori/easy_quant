@@ -264,10 +264,12 @@ def _analyze_live_instance(
     corporate_snapshot = runtime_snapshot(container.market_data)
     from easy_quant.application.services.corporate_actions import validate_research_coverage
 
-    validate_research_coverage(
+    quality_exclusions = validate_research_coverage(
         corporate_snapshot,
         [row for row in bar_rows if str(row["symbol"]) not in excluded],
         decision_at,
+        exclude_unheld=True,
+        held_symbols=portfolio.positions,
     )
     from easy_quant.application.services.live_corporate_actions import ensure_reconciled
 
@@ -312,6 +314,9 @@ def _analyze_live_instance(
             "实盘策略运行失败", {"phase": phase, "strategy_error": result.error}
         )
 
+    from easy_quant.application.services.corporate_actions import require_signal_quality
+
+    require_signal_quality(result.signals, quality_exclusions)
     if phase == "on_market":
         requested_quotes(
             sorted(
@@ -475,6 +480,7 @@ def _analyze_live_instance(
         "stdout": result.stdout,
         "timings": timings,
         "elapsed_seconds": round(monotonic() - started, 3),
+        "data_quality_exclusions": quality_exclusions,
     }
 
 

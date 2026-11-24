@@ -91,9 +91,10 @@ def test_actual_gbbq_fixed_binary_fixture_and_archive_bounds():
     assert decoded[2][3] == [3, 0, 4, 0]
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("gbbq", content)
+        archive.writestr(zipfile.ZipInfo("gbbq", (2026, 9, 24, 0, 0, 0)), content)
     candidates = archive_candidates(buffer.getvalue(), AS_OF)
     assert len(candidates) == 5 and not any(row["record_kind"] == "event" for row in candidates)
+    assert {row["archive_snapshot_day"] for row in candidates} == {"2026-09-24"}
     with pytest.raises(ValueError):
         list(decode_records(content[:-1]))
 

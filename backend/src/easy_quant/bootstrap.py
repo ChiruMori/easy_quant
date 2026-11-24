@@ -260,6 +260,7 @@ class Container:
     financial_bulk: Any = None
     collection_checkpoints: Any = field(default_factory=dict)
     tdx_daily: Any = None
+    equity_source: Any = None
     jobs: Any = None
     secret_box: SecretBox | None = None
     notification_channels: dict[str, Any] = field(default_factory=dict)
@@ -350,8 +351,25 @@ def build_container(settings: Settings | None = None) -> Container:
 
     from easy_quant.application.services.corporate_actions import sync_tdx_candidates
     from easy_quant.application.services.tdx_incremental import TdxDailyUpdateService
+    from easy_quant.infrastructure.data_sources.cninfo_actions import CninfoEquitySource
     from easy_quant.infrastructure.imports.tdx_daily import OfficialDailyFeed
     from easy_quant.infrastructure.persistence.repositories.tdx_daily import SqlDailyStore
+
+    container.equity_source = CninfoEquitySource()
+
+    def publish_tdx_prices():
+        from easy_quant.application.services.tdx_price_sync import prepare_tdx_prices
+
+        archive = BACKEND_ROOT / ".local-data/tdx/daily/gbbq.zip"
+        if archive.exists():
+            session.expire_all()
+            prepare_tdx_prices(
+                container.market_data,
+                archive.read_bytes(),
+                SystemClock().now(),
+                apply=True,
+                force_rebuild=True,
+            )
 
     container.tdx_daily = TdxDailyUpdateService(
         OfficialDailyFeed(
@@ -363,6 +381,7 @@ def build_container(settings: Settings | None = None) -> Container:
         ),
         SqlDailyStore(create_session_factory(engine), SystemClock().now),
         SystemClock().now,
+        after_update=publish_tdx_prices,
     )
     encryption_secret = (
         settings.credential_encryption_key.get_secret_value()

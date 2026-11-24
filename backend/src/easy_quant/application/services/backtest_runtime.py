@@ -276,12 +276,17 @@ def _execute_backtest(
     history_start = warmup_days[0] if warmup_days else start_day
     corporate_snapshot = runtime_snapshot(container.market_data)
     corporate_book = CorporateActionBook(corporate_snapshot["corporate_actions"])
+    quality_exclusions = {}
     for symbol, bounds in coverage.items():
         if symbol in excluded or is_index(symbol):
             continue
         left = max(history_start, bounds["first_day"])
         right = min(end_day, bounds["last_day"])
         if left <= right:
+            if corporate_book.price_problems(
+                symbol, left, right, datetime.combine(left, time(0), ZoneInfo("Asia/Shanghai"))
+            ):
+                continue
             corporate_book.require_coverage(
                 symbol, left, right, datetime.combine(left, time(0), ZoneInfo("Asia/Shanghai"))
             )
@@ -414,11 +419,14 @@ def _execute_backtest(
                 for phase in ("before_market", "on_market", "after_market")
             }
 
+            daily_exclusions: list[dict[str, Any]] = []
+
             def strategy(
                 phase: str,
                 day: date = trading_day,
                 inputs: dict[str, dict[str, Any]] = phase_inputs,
                 completed_days: int = day_count,
+                blocked_rows: list[dict[str, Any]] = daily_exclusions,
             ) -> list[Signal]:
                 portfolio = backtest_session.portfolio
                 progress = 15 + int(
@@ -481,6 +489,9 @@ def _execute_backtest(
                             "text": result.stdout,
                         }
                     )
+                from easy_quant.application.services.corporate_actions import require_signal_quality
+
+                require_signal_quality(result.signals, blocked_rows)
                 return [
                     signal
                     for signal in result.signals
@@ -492,12 +503,27 @@ def _execute_backtest(
             for symbol in sorted(set(today_symbols) | set(backtest_session.portfolio.positions)):
                 if symbol in excluded or is_index(symbol):
                     continue
+                window_start = max(expire_before, coverage[symbol]["first_day"])
+                problems = corporate_book.price_problems(
+                    symbol, window_start, trading_day, before_cutoff
+                )
+                if problems and not backtest_session.portfolio.position(symbol):
+                    daily_exclusions.extend({"symbol": symbol, **issue} for issue in problems)
+                    for issue in problems:
+                        key = f"{symbol}:{issue['ex_date']}"
+                        quality_exclusions.setdefault(
+                            key, {"symbol": symbol, **issue, "first_excluded_day": str(trading_day)}
+                        )
+                        quality_exclusions[key]["last_excluded_day"] = str(trading_day)
+                    continue
                 corporate_book.require_coverage(
                     symbol,
-                    max(history_start, coverage[symbol]["first_day"]),
+                    window_start,
                     trading_day,
                     before_cutoff,
                 )
+                if backtest_session.portfolio.position(symbol):
+                    corporate_book.require_equity(symbol, trading_day, before_cutoff)
                 events.extend(corporate_book.events(symbol, before_cutoff))
             closing_events = tuple(
                 event
@@ -587,6 +613,7 @@ def _execute_backtest(
             ],
             "corporate_action_ledger": backtest_session.corporate_ledger.audit,
             "corporate_action_snapshot": corporate_snapshot["corporate_actions"],
+            "data_quality_exclusions": list(quality_exclusions.values()),
             "symbol_performance": performance_rows(
                 [
                     {
@@ -610,6 +637,15 @@ def _execute_backtest(
                     f"{snapshot_id}:{corporate_snapshot['corporate_actions_sha256']}".encode()
                 ).hexdigest(),
                 "research_prices": "decision-time qfq; raw execution; gross dividends",
+                "price_event_basis": "tdx historical effective-date reconstruction"
+                if any(
+                    row.get("record_kind") == "tdx_price_publication"
+                    for row in corporate_snapshot["corporate_actions"]
+                )
+                else "verified event versions",
+                "data_quality_excluded_symbols": sorted(
+                    {row["symbol"] for row in quality_exclusions.values()}
+                ),
                 "strategy_context_protocol": "strategy-library-v2",
                 "intraday_quote": "open-close-midpoint-v1 (contains closing information)",
                 "warmup_start_day": history_start.isoformat(),

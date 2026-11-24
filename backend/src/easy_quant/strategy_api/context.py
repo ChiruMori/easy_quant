@@ -175,7 +175,28 @@ class RuntimeContext:
             if listed_on and str(listed_on) > str(self.data.get("trading_day", "9999-12-31")):
                 continue
             symbols.add(symbol)
-        return sorted(symbol for symbol in symbols if not is_index(symbol))
+        return sorted(
+            symbol
+            for symbol in symbols
+            if not is_index(symbol) and not self._price_problems(symbol)
+        )
+
+    def _price_problems(self, symbol: str):
+        from easy_quant.domain.market_data.corporate_actions import ZONE, day
+
+        gateway = self._factor_context.gateway
+        assert isinstance(gateway, SnapshotGateway)
+        rows = self.data.get("bars", {}).get(symbol, [])
+        start = min(
+            (day(row["trading_day"]) for row in rows if row.get("trading_day")),
+            default=self._factor_context.as_of.astimezone(ZONE).date(),
+        )
+        return gateway._corporate_book.price_problems(
+            symbol,
+            start,
+            self._factor_context.as_of.astimezone(ZONE).date(),
+            self._factor_context.as_of,
+        )
 
     def securities(self, industry: str | None = None) -> list[str]:
         if industry is None:
@@ -204,12 +225,20 @@ class RuntimeContext:
             ]
         return self._factor_context.frame(dataset, symbol)
 
-    def corporate_actions(self, symbol: str) -> list[dict[str, object]]:
-        from easy_quant.domain.market_data.corporate_actions import ZONE
+    def corporate_actions(
+        self, symbol: str, *, since: str | None = None
+    ) -> list[dict[str, object]]:
+        from easy_quant.domain.market_data.corporate_actions import ZONE, day
 
         cutoff = self._factor_context.as_of
         gateway = self._factor_context.gateway
         assert isinstance(gateway, SnapshotGateway)
+        publication = gateway._corporate_book.price_publication(symbol)
+        start = day(since) if since else day(publication["start_day"]) if publication else None
+        if publication and start:
+            gateway._corporate_book.require_coverage(
+                symbol, start, cutoff.astimezone(ZONE).date(), cutoff
+            )
         return [
             {
                 "event_id": event.event_id,
@@ -219,8 +248,9 @@ class RuntimeContext:
                 "share_multiplier": float(event.share_multiplier),
                 "cash_per_share": float(event.cash_per_share),
             }
-            for event in gateway._corporate_book.events(symbol, cutoff)
+            for event in gateway._corporate_book.price_events(symbol, cutoff)
             if event.ex_date <= cutoff.astimezone(ZONE).date()
+            and (start is None or event.ex_date > start)
         ]
 
     def trading_day(self) -> str:
@@ -354,6 +384,8 @@ class RuntimeContext:
         trigger_operator: str | None = None,
         expected_holdings: int = 10,
     ) -> dict[str, object]:
+        if self._price_problems(symbol):
+            raise ValueError("该证券的通达信价格事件未能可靠转换，不能生成交易信号")
         fraction = decimal_value(ratio)
         if (
             not 0 < fraction <= 1

@@ -65,8 +65,15 @@ class DailyUpdateResult:
 
 
 class TdxDailyUpdateService:
-    def __init__(self, feed: DailyFeed, store: DailyStore, now: Callable[[], datetime]) -> None:
+    def __init__(
+        self,
+        feed: DailyFeed,
+        store: DailyStore,
+        now: Callable[[], datetime],
+        after_update: Callable[[], None] = lambda: None,
+    ) -> None:
         self.feed, self.store, self.now = feed, store, now
+        self.after_update = after_update
 
     def update(
         self,
@@ -160,4 +167,5 @@ class TdxDailyUpdateService:
                     )
                 progress(result)
                 day += timedelta(days=1)
+            self.after_update()
             return result

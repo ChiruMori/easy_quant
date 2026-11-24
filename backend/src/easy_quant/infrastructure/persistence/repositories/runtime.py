@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
 
-from sqlalchemy import Table, case, delete, func, or_, select, tuple_
+from sqlalchemy import Table, case, delete, func, literal, or_, select, tuple_, union_all
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
@@ -280,6 +280,27 @@ class InMemoryMarketDataStore:
             {field: row.get(field) for field in fields}
             for row in self.list_bars(start_day, end_day)
         ]
+
+    def price_event_contexts(
+        self, event_days: dict[str, list[date]], first_days: dict[str, date], end_day: date
+    ):
+        result = {}
+        for symbol, dates in event_days.items():
+            bars = self.list_bars(None, end_day, symbol)
+            rows = {}
+            for cutoff in [
+                *dates,
+                first_days[symbol] + timedelta(days=1),
+                end_day + timedelta(days=1),
+            ]:
+                preceding = [
+                    row for row in bars if date.fromisoformat(str(row["trading_day"])) < cutoff
+                ]
+                if preceding:
+                    row = max(preceding, key=lambda item: str(item["trading_day"]))
+                    rows[str(row["trading_day"])] = row
+            result[symbol] = list(rows.values())
+        return result
 
     def iter_runtime_bars(self, start_day: date, end_day: date) -> Iterator[dict[str, Any]]:
         yield from sorted(
@@ -707,6 +728,71 @@ class SqlAlchemyMarketDataStore:
 
     def list_runtime_bars(self, start_day: date, end_day: date) -> list[dict[str, Any]]:
         return list(self.iter_backtest_bars(start_day, end_day))
+
+    def price_event_contexts(
+        self, event_days: dict[str, list[date]], first_days: dict[str, date], end_day: date
+    ):
+        # 每个事件只读取前一条真实收盘；批量标量查询避免搬运全市场千万条无关日线。
+        Bar = self.storage.physical
+        metadata = {
+            key: (source, adjustment)
+            for key, source, adjustment in self.session.execute(
+                select(provenance.c.id, provenance.c.source, provenance.c.adjustment)
+            )
+        }
+        requests = sorted(
+            {
+                (symbol, cutoff)
+                for symbol, dates in event_days.items()
+                for cutoff in [
+                    *dates,
+                    first_days[symbol] + timedelta(days=1),
+                    end_day + timedelta(days=1),
+                ]
+            }
+        )
+        result: dict[str, dict] = {symbol: {} for symbol in event_days}
+        for offset in range(0, len(requests), 200):
+
+            def target(symbol, cutoff):
+                # 常量边界让 MariaDB 使用完整主键范围；相关派生表边界会退化为逐股扫描。
+                def prior(column):
+                    return (
+                        select(column)
+                        .where(
+                            Bar.symbol == symbol,
+                            Bar.trading_day < min(cutoff, end_day + timedelta(days=1)),
+                        )
+                        .order_by(Bar.trading_day.desc())
+                        .limit(1)
+                        .with_hint(
+                            self.storage.table, "FORCE INDEX (PRIMARY)", dialect_name="mysql"
+                        )
+                        .scalar_subquery()
+                    )
+
+                return select(
+                    literal(symbol).label("symbol"),
+                    prior(Bar.trading_day),
+                    prior(Bar.close),
+                    prior(Bar.provenance_id),
+                )
+
+            statement = union_all(
+                *[target(symbol, cutoff) for symbol, cutoff in requests[offset : offset + 200]]
+            )
+            for symbol, trading_day, close, origin in self.session.execute(statement):
+                if trading_day is None:
+                    continue
+                source, adjustment = metadata.get(origin, (None, None))
+                result[symbol][str(trading_day)] = {
+                    "symbol": symbol,
+                    "trading_day": str(trading_day),
+                    "close": str(close),
+                    "source": source,
+                    "adjustment": adjustment,
+                }
+        return {symbol: list(rows.values()) for symbol, rows in result.items()}
 
     def _runtime_rows(self, start_day: date, end_day: date, metadata=None) -> list[dict[str, Any]]:
         symbols = list(

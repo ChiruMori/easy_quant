@@ -193,3 +193,29 @@ def test_index_coverage_query_is_limited_to_requested_symbols():
     assert "symbol IN" in str(compiled)
     assert compiled.params["symbol_1"] == ["sh000300"]
     assert "FORCE INDEX (ix_daily_bars_coverage)" in str(compiled)
+
+
+def test_price_context_uses_constant_index_boundaries_and_deduplicates_predecessors():
+    statements = []
+
+    class FakeSession:
+        def execute(self, statement):
+            if "bar_provenance" in str(statement):
+                return [(1, "tdx-official", "none")]
+            statements.append(statement)
+            return [("000001", date(2026, 9, 21), 10, 1)] * 3
+
+    store = SqlAlchemyMarketDataStore(cast(Session, FakeSession()))
+    rows = store.price_event_contexts(
+        {"000001": [date(2026, 9, 22)]}, {"000001": date(2026, 9, 21)}, date(2026, 9, 25)
+    )
+    assert len(rows["000001"]) == 1
+    assert rows["000001"][0]["close"] == "10"
+    compiled = statements[0].compile(
+        dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}
+    )
+    sql = str(compiled)
+    assert "FORCE INDEX (PRIMARY)" in sql and "LIMIT 1" in sql
+    assert "daily_bars.symbol = '000001'" in sql
+    assert "daily_bars.trading_day < '2026-09-22'" in sql
+    assert "daily_bars.volume" not in sql

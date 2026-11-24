@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -119,6 +119,68 @@ class CorporateActionBook:
         for row in self.records:
             self.by_symbol.setdefault(str(row.get("symbol", "")), []).append(row)
 
+    def price_publication(self, symbol: str):
+        publications = [
+            row
+            for row in self.by_symbol.get(symbol, [])
+            if row.get("record_kind") == "tdx_price_publication"
+        ]
+        return max(publications, key=lambda row: instant(row["available_at"]), default=None)
+
+    def price_events(self, symbol: str, as_of: datetime):
+        from easy_quant.domain.market_data.research_actions import PriceAdjustment
+
+        publication = self.price_publication(symbol)
+        if publication is None:
+            return self.events(symbol, as_of)
+        # 历史重建只暴露已生效的机械价格变换，不伪造历史公告版本。
+        return tuple(
+            PriceAdjustment.parse(row)
+            for row in publication["events"]
+            if day(row["ex_date"]) <= instant(as_of).astimezone(ZONE).date()
+        )
+
+    def price_problems(self, symbol: str, start: date, end: date, as_of: datetime):
+        publication = self.price_publication(symbol)
+        return (
+            [
+                issue
+                for issue in publication.get("issues", [])
+                if start
+                <= day(issue["ex_date"])
+                <= min(end, instant(as_of).astimezone(ZONE).date())
+            ]
+            if publication
+            else []
+        )
+
+    def require_equity(self, symbol: str, ex_day: date, as_of: datetime) -> None:
+        publication = self.price_publication(symbol)
+        if publication is None:
+            return
+        for check in self.by_symbol.get(symbol, []):
+            if check.get("record_kind") == "tdx_equity_check" and f"{symbol}:{ex_day}" in check.get(
+                "invalidated_event_ids", []
+            ):
+                raise StateConflictError(
+                    "实际权益补充资料发生不兼容修订，需重新核实",
+                    {"symbol": symbol, "ex_date": str(ex_day)},
+                )
+        for issue in publication.get("equity_issues", []):
+            if day(issue["ex_date"]) == ex_day:
+                raise StateConflictError("持仓存在尚不支持的权证权益", {"symbol": symbol, **issue})
+        full = {event.event_id: event for event in self.events(symbol, as_of)}
+        rows = {str(row.get("record_key")): row for row in self.by_symbol.get(symbol, [])}
+        for price in self.price_events(symbol, as_of):
+            if price.ex_date != ex_day:
+                continue
+            event = full.get(price.event_id)
+            if event is None or rows[event.record_key].get("tdx_price_key") != price.record_key:
+                raise StateConflictError(
+                    "价格复权可用，但持仓公司行为缺少对应权益资料；已停止该持仓的权益处理",
+                    {"symbol": symbol, "event_id": price.event_id, "capability": "equity"},
+                )
+
     def events(self, symbol: str, as_of: datetime) -> tuple[CorporateAction, ...]:
         as_of = instant(as_of)
         versions: dict[str, Mapping[str, Any]] = {}
@@ -138,6 +200,21 @@ class CorporateActionBook:
             for row in versions.values()
             if row.get("status") != "cancelled"
         ]
+        publication = self.price_publication(symbol)
+        if publication is not None:
+            prices = {row["event_id"]: row for row in publication["events"]}
+            events = [
+                replace(
+                    event,
+                    previous_close=number(prices[event.event_id]["previous_close"]),
+                    reference_price=number(prices[event.event_id]["reference_price"]),
+                )
+                if event.event_id in prices
+                and versions[event.event_id].get("tdx_price_key")
+                == prices[event.event_id]["record_key"]
+                else event
+                for event in events
+            ]
         events.sort(key=lambda event: (event.ex_date, event.event_id))
         if len({event.ex_date for event in events}) != len(events):
             raise StateConflictError("同日公司行为必须合并为一个除权事件", {"symbol": symbol})
@@ -146,6 +223,17 @@ class CorporateActionBook:
     def require_coverage(self, symbol: str, start: date, end: date, as_of: datetime) -> None:
         as_of = instant(as_of)
         if is_index(symbol) or start > end:
+            return
+        publication = self.price_publication(symbol)
+        if publication is not None:
+            if start < day(publication["start_day"]) or end > day(publication["end_day"]):
+                raise StateConflictError(
+                    "通达信价格调整覆盖不足，请运行盘后更新", {"symbol": symbol}
+                )
+            for issue in self.price_problems(symbol, start, end, as_of):
+                raise StateConflictError(
+                    "通达信价格事件尚不能可靠转换", {"symbol": symbol, **issue}
+                )
             return
         intervals = sorted(
             (day(row["start_day"]), day(row["end_day"]))
@@ -244,7 +332,9 @@ class CorporateActionBook:
             return [{**row, "price_basis": "raw-index"} for row in bars]
         start = day(bars[0]["trading_day"])
         self.require_coverage(symbol, start, anchor, as_of)
-        events = [event for event in self.events(symbol, as_of) if start < event.ex_date <= anchor]
+        events = [
+            event for event in self.price_events(symbol, as_of) if start < event.ex_date <= anchor
+        ]
         for event in events:
             preceding = [row for row in bars if day(row["trading_day"]) < event.ex_date]
             if preceding and abs(number(preceding[-1]["close"]) - event.previous_close) > Decimal(
@@ -270,6 +360,13 @@ class CorporateActionBook:
                 adjustment_anchor=str(start if mode == "hfq" else anchor),
                 share_scale=float(share_scale),
             )
+            publication = self.price_publication(symbol)
+            if publication is not None:
+                row.update(
+                    adjustment_source="tdx-official-gbbq",
+                    availability_basis=publication["availability_basis"],
+                    adjustment_input_id=publication.get("content_identity"),
+                )
             for name in ("open", "high", "low", "close"):
                 if row.get(name) is not None:
                     row[f"raw_{name}"] = row[name]

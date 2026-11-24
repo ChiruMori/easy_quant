@@ -162,11 +162,11 @@
   {
     "key": "context.corporate_actions",
     "name": "已生效公司行为",
-    "signature": "context.corporate_actions(symbol)",
-    "description": "读取决策时点可获知且已生效的事件，供策略调整保存的价格锚。",
-    "parameters": "symbol：证券代码",
+    "signature": "context.corporate_actions(symbol, *, since=None)",
+    "description": "读取已生效的价格调整事件，供策略调整保存的价格锚。通达信数据采用生效日历史重建，原始观测时间保留在输入审计中。",
+    "parameters": "symbol：证券代码；since：价格锚所属日期，仅返回该日期之后的事件。",
     "output": "事件列表：event_id、record_key、ex_date、price_ratio、share_multiplier、cash_per_share",
     "example": "events = context.corporate_actions('000001')",
-    "runtime": "不会提供未来事件或未来修订；按event_id与record_key幂等处理状态，已处理事件修订时须人工复核。"
+    "runtime": "不暴露未来生效事件；现金和股份分量用于价格换算，不替代实际权益账本。按event_id与record_key幂等处理；范围内未知事件会报错，已处理源条款修订须复核。"
   }
 ]

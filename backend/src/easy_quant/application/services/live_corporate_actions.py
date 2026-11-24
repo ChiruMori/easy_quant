@@ -41,6 +41,25 @@ def pending_actions(state, instance_id: str, book: CorporateActionBook, at: date
         book.require_coverage(
             symbol, started.astimezone(ZONE).date(), at.astimezone(ZONE).date(), at
         )
+        publication = book.price_publication(symbol) or {}
+        equity_days = {price.ex_date for price in book.price_events(symbol, at)} | {
+            date.fromisoformat(issue["ex_date"]) for issue in publication.get("equity_issues", [])
+        }
+        for ex_day in sorted(equity_days):
+            ex_open = datetime.combine(ex_day, time(9), ZONE)
+            if ex_open < started or ex_open > at:
+                continue
+            prior_holdings = rebuild_portfolio(
+                number(instance.get("initial_cash", "100000")),
+                [
+                    row
+                    for row in entries
+                    if row.occurred_at < datetime.combine(ex_day, time.min, ZONE)
+                ],
+                initial,
+            )
+            if prior_holdings.positions.get(symbol, Decimal(0)):
+                book.require_equity(symbol, ex_day, at)
         for action in book.events(symbol, at):
             record_at = datetime.combine(action.record_date, time.max, ZONE)
             if record_at < started or action.ex_date > at.astimezone(ZONE).date():
@@ -95,7 +114,7 @@ def ensure_reconciled(container, instance_id: str, at: datetime, snapshot: dict)
         for item in recommendations:
             if item.get("status") != "pending":
                 continue
-            for action in book.events(str(item["instrument_id"]), at):
+            for action in book.price_events(str(item["instrument_id"]), at):
                 if (
                     instant(item["decision_at"]).astimezone(ZONE).date()
                     < action.ex_date

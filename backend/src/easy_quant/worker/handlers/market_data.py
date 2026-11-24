@@ -20,6 +20,11 @@ from easy_quant.worker.registry import JobHandlerRegistry
 def register_market_data_handlers(
     registry: JobHandlerRegistry, container: Any | None = None
 ) -> None:
+    if container is not None:
+        from easy_quant.worker.handlers.corporate_actions import register_corporate_action_handlers
+
+        register_corporate_action_handlers(registry, container)
+
     def enabled_sources(dataset_key: str) -> set[str] | None:
         assert container is not None
         dataset = next(
@@ -41,6 +46,10 @@ def register_market_data_handlers(
             else None,
             end_day=date.fromisoformat(str(payload["end_day"])) if payload.get("end_day") else None,
         )
+        if getattr(container, "equity_source", None) is not None:
+            from easy_quant.worker.handlers.corporate_actions import enqueue_equity_enrichment
+
+            enqueue_equity_enrichment(container, container.authentication.clock.now())
         if result.unresolved:
             dates = ",".join(item["day"] for item in result.unresolved)
             raise RuntimeError(f"通达信增量存在未解决日期：{dates}；下次运行自动重试")

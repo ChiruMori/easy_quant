@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 import { getInstrument, getInstrumentDailyBars, updateInstrumentStatus } from "../api"
@@ -32,6 +33,8 @@ export function InstrumentDetailPage({ readOnly = false }: { readOnly?: boolean 
   const [range, setRange] = useState({ start: "", end: "" })
   const [appliedRange, setAppliedRange] = useState(range)
   const [period, setPeriod] = useState<CandlePeriod>("day")
+  const [adjustment, setAdjustment] = useState<"raw" | "qfq" | "hfq">("qfq")
+  const priceBasis = isIndex ? "raw" : adjustment
   const [statusReason, setStatusReason] = useState("")
   const [statusMessage, setStatusMessage] = useState("")
   const [statusSaving, setStatusSaving] = useState(false)
@@ -41,8 +44,9 @@ export function InstrumentDetailPage({ readOnly = false }: { readOnly?: boolean 
     queryFn: () => getInstrument(symbol, readOnly),
   })
   const bars = useQuery({
-    queryKey: ["instrument-bars", symbol, appliedRange],
-    queryFn: () => getInstrumentDailyBars(symbol, appliedRange.start, appliedRange.end, readOnly),
+    queryKey: ["instrument-bars", symbol, appliedRange, priceBasis, readOnly],
+    queryFn: () =>
+      getInstrumentDailyBars(symbol, appliedRange.start, appliedRange.end, readOnly, priceBasis),
   })
   const chartData = useMemo(() => aggregateCandles(bars.data ?? [], period), [bars.data, period])
   if (instrument.isLoading) return <LoadingState label="正在加载股票详情" />
@@ -144,69 +148,88 @@ export function InstrumentDetailPage({ readOnly = false }: { readOnly?: boolean 
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <ToggleGroup
-            type="single"
-            value={period}
-            onValueChange={(value) => {
-              if (value) setPeriod(value as CandlePeriod)
-            }}
-            variant="outline"
-            aria-label="K 线周期"
+          <Tabs
+            value={priceBasis}
+            onValueChange={(value) => setAdjustment(value as typeof adjustment)}
           >
-            <ToggleGroupItem value="day">日 K</ToggleGroupItem>
-            <ToggleGroupItem value="week">周 K</ToggleGroupItem>
-            <ToggleGroupItem value="month">月 K</ToggleGroupItem>
-          </ToggleGroup>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              setAppliedRange(range)
-            }}
-          >
-            <FieldGroup className="sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
-              <Field>
-                <FieldLabel htmlFor="bar-start">开始日期</FieldLabel>
-                <DatePicker
-                  id="bar-start"
-
-                  value={range.start}
-                  onValueChange={(dateValue) =>
-                    setRange((value) => ({ ...value, start: dateValue }))
-                  }
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="bar-end">结束日期</FieldLabel>
-                <DatePicker
-                  id="bar-end"
-
-                  value={range.end}
-                  onValueChange={(dateValue) => setRange((value) => ({ ...value, end: dateValue }))}
-                />
-              </Field>
-              <Button type="submit">查询</Button>
-            </FieldGroup>
-          </form>
-          {bars.isLoading ? (
-            <LoadingState label="正在加载日线" />
-          ) : bars.error ? (
-            <div className="flex flex-col items-start gap-3">
-              <ErrorState title="无法加载日线" message={bars.error.message} />
-              <Button
+            <TabsList aria-label="价格复权方式">
+              {!isIndex && <TabsTrigger value="qfq">前复权</TabsTrigger>}
+              <TabsTrigger value="raw">不复权</TabsTrigger>
+              {!isIndex && <TabsTrigger value="hfq">后复权</TabsTrigger>}
+            </TabsList>
+            <TabsContent value={priceBasis} className="flex flex-col gap-4">
+              <p className="text-sm text-muted-foreground" aria-live="polite">
+                {priceBasis === "raw"
+                  ? "不复权：展示原始成交价格。"
+                  : "复权价格用于研究；成交量、成交额保留实际口径，不代表实际账户收益。"}
+              </p>
+              <ToggleGroup
+                type="single"
+                value={period}
+                onValueChange={(value) => {
+                  if (value) setPeriod(value as CandlePeriod)
+                }}
                 variant="outline"
-                disabled={bars.isFetching}
-                onClick={() => void bars.refetch()}
+                aria-label="K 线周期"
               >
-                重试日线
-              </Button>
-            </div>
-          ) : chartData.length ? (
-            <Suspense fallback={<LoadingState label="正在加载 K 线图" />}>
-              <CandlestickChart bars={chartData} period={period} />
-            </Suspense>
-          ) : (
-            <p className="text-muted-foreground">所选范围内没有日线数据，请先同步该股票。</p>
-          )}
+                <ToggleGroupItem value="day">日 K</ToggleGroupItem>
+                <ToggleGroupItem value="week">周 K</ToggleGroupItem>
+                <ToggleGroupItem value="month">月 K</ToggleGroupItem>
+              </ToggleGroup>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  setAppliedRange(range)
+                }}
+              >
+                <FieldGroup className="sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                  <Field>
+                    <FieldLabel htmlFor="bar-start">开始日期</FieldLabel>
+                    <DatePicker
+                      id="bar-start"
+
+                      value={range.start}
+                      onValueChange={(dateValue) =>
+                        setRange((value) => ({ ...value, start: dateValue }))
+                      }
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="bar-end">结束日期</FieldLabel>
+                    <DatePicker
+                      id="bar-end"
+
+                      value={range.end}
+                      onValueChange={(dateValue) =>
+                        setRange((value) => ({ ...value, end: dateValue }))
+                      }
+                    />
+                  </Field>
+                  <Button type="submit">查询</Button>
+                </FieldGroup>
+              </form>
+              {bars.isLoading ? (
+                <LoadingState label="正在加载日线" />
+              ) : bars.error ? (
+                <div className="flex flex-col items-start gap-3">
+                  <ErrorState title="无法加载日线" message={bars.error.message} />
+                  <Button
+                    variant="outline"
+                    disabled={bars.isFetching}
+                    onClick={() => void bars.refetch()}
+                  >
+                    重试日线
+                  </Button>
+                </div>
+              ) : chartData.length ? (
+                <Suspense fallback={<LoadingState label="正在加载 K 线图" />}>
+                  <CandlestickChart bars={chartData} period={period} />
+                </Suspense>
+              ) : (
+                <p className="text-muted-foreground">所选范围内没有日线数据，请先同步该股票。</p>
+              )}
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
       {!isIndex && (

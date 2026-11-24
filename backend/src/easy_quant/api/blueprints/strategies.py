@@ -82,7 +82,7 @@ def on_market(context, parameters):
                      parameters.get("anchor_day", context.trading_day())))
     anchor = Decimal(str(context.store.get("grid_anchor_price", anchor)))
     applied = context.store.get("grid_corporate_actions", {})
-    for event in context.corporate_actions(symbol):
+    for event in context.corporate_actions(symbol, since=anchor_day):
         if event["ex_date"] <= anchor_day:
             continue
         previous = applied.get(event["event_id"])

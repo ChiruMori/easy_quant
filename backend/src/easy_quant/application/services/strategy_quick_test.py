@@ -131,10 +131,14 @@ def _execute_strategy_tick(
 
     phases = ("before_market", "on_market", "after_market")
     corporate_snapshot = runtime_snapshot(container.market_data)
-    from easy_quant.application.services.corporate_actions import validate_research_coverage
+    from easy_quant.application.services.corporate_actions import (
+        require_signal_quality,
+        validate_research_coverage,
+    )
 
     profile.enter("context")
     contexts: list[tuple[dict[str, object], str]] = []
+    quality_exclusions = []
     for phase in phases:
         include_today = phase == "after_market"
         cutoff = datetime.combine(
@@ -146,7 +150,9 @@ def _execute_strategy_tick(
             else time(9),
             ZoneInfo("Asia/Shanghai"),
         ).astimezone(UTC)
-        validate_research_coverage(corporate_snapshot, bars, cutoff)
+        quality_exclusions = validate_research_coverage(
+            corporate_snapshot, bars, cutoff, exclude_unheld=True
+        )
         visible_bars = [
             row
             for row in bars
@@ -315,6 +321,7 @@ def _execute_strategy_tick(
             )
             if result.status != "succeeded":
                 raise StateConflictError("策略快速测试失败", {"phase_results": phase_results})
+            require_signal_quality(result.signals, quality_exclusions)
             return result.signals
 
         session.advance(trading_day, market_bars, strategy)

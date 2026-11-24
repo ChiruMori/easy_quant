@@ -46,6 +46,7 @@ const labels: Record<string, string> = {
   "market-data-collection": "盘后聚合数据采集",
   "market-data-nightly": "盘后综合数据同步",
   "tdx-daily-update": "通达信 A 股盘后增量",
+  "tdx-equity-enrichment": "通达信事件权益补齐",
   "live-analysis": "实盘策略分析",
   before_market: "盘前",
   on_market: "盘中",
