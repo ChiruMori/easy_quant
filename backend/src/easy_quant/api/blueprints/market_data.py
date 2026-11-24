@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from flask import Blueprint, request
 
@@ -22,6 +22,33 @@ def daily_bars_response(symbol: str):
     start_day = request.args.get("start_day", type=date.fromisoformat)
     end_day = request.args.get("end_day", type=date.fromisoformat)
     rows = get_container().market_data.list_bars(start_day, end_day, normalized)
+    mode = request.args.get("adjustment", "raw")
+    if mode not in {"raw", "qfq", "hfq"}:
+        raise ValidationError("复权方式必须为 raw、qfq 或 hfq")
+    if mode != "raw" or request.args.get("as_of"):
+        from easy_quant.application.services.corporate_actions import runtime_snapshot
+        from easy_quant.domain.market_data.corporate_actions import CorporateActionBook
+
+        container = get_container()
+        try:
+            as_of = (
+                datetime.fromisoformat(request.args["as_of"])
+                if request.args.get("as_of")
+                else container.authentication.clock.now()
+            )
+            rows = CorporateActionBook(
+                runtime_snapshot(container.market_data, [normalized])["corporate_actions"]
+            ).adjust(
+                rows,
+                normalized,
+                as_of,
+                mode=mode,
+                anchor=max(date.fromisoformat(str(row["trading_day"])) for row in rows)
+                if rows and not request.args.get("as_of")
+                else None,
+            )
+        except ValueError as error:
+            raise ValidationError(str(error)) from error
     return success(rows[-180:] if start_day is None and end_day is None else rows[-1000:])
 
 
@@ -45,6 +72,9 @@ DETAIL_DATASETS = {
     "sw-industry-memberships": "申万行业归属",
     "security-status": "证券状态与风险",
     "daily-bar-availability": "行情可用性",
+    "corporate-actions": "公司行为与核验覆盖",
+    "tdx-price-adjustments": "通达信价格复权发布",
+    "tdx-equity-checks": "实际权益补齐检查",
 }
 
 

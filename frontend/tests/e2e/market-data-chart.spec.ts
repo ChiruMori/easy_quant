@@ -82,6 +82,8 @@ test("股票详情可切换日周月 K 线", async ({ page }) => {
   await page.getByRole("button", { name: "确认导入" }).click()
   await expect(page.getByText(/已导入/)).toBeVisible()
   await page.goto("/admin/data/instruments/000001")
+  // CSV 未声明复权口径时只浏览原价；不把未知口径默认为可研究的前复权。
+  await page.getByRole("tab", { name: "不复权", exact: true }).click()
   await expect(page.getByRole("img", { name: "可缩放和拖动的 K 线图" })).toBeVisible()
   for (const period of ["周 K", "月 K", "日 K"]) {
     await page.getByRole("radio", { name: period }).click()

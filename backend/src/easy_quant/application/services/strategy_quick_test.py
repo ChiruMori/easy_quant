@@ -9,6 +9,11 @@ from time import perf_counter
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+from easy_quant.application.services.corporate_actions import (
+    decision_snapshot,
+    require_raw_bars,
+    runtime_snapshot,
+)
 from easy_quant.application.services.instrument_eligibility import currently_unavailable_symbols
 from easy_quant.application.services.run_profile import RunProfile
 from easy_quant.application.services.strategy_validation import (
@@ -97,6 +102,7 @@ def _execute_strategy_tick(
         if str(row["symbol"]) not in excluded
     ]
     read_finished = perf_counter()
+    require_raw_bars(bars)
     logger.info(
         "快测行情已读取 job_id=%s rows=%d pages=%d seconds=%.3f",
         job_id,
@@ -124,8 +130,15 @@ def _execute_strategy_tick(
         ]
 
     phases = ("before_market", "on_market", "after_market")
+    corporate_snapshot = runtime_snapshot(container.market_data)
+    from easy_quant.application.services.corporate_actions import (
+        require_signal_quality,
+        validate_research_coverage,
+    )
+
     profile.enter("context")
     contexts: list[tuple[dict[str, object], str]] = []
+    quality_exclusions = []
     for phase in phases:
         include_today = phase == "after_market"
         cutoff = datetime.combine(
@@ -137,6 +150,9 @@ def _execute_strategy_tick(
             else time(9),
             ZoneInfo("Asia/Shanghai"),
         ).astimezone(UTC)
+        quality_exclusions = validate_research_coverage(
+            corporate_snapshot, bars, cutoff, exclude_unheld=True
+        )
         visible_bars = [
             row
             for row in bars
@@ -165,6 +181,7 @@ def _execute_strategy_tick(
         contexts.append(
             (
                 {
+                    **decision_snapshot(corporate_snapshot, cutoff),
                     "universe": symbols,
                     "prices": prices,
                     "bars": grouped_bars,
@@ -269,6 +286,12 @@ def _execute_strategy_tick(
                 positions={key: str(value) for key, value in session.portfolio.positions.items()},
                 costs={key: str(value) for key, value in session.portfolio.costs.items()},
                 cash=str(session.portfolio.cash),
+                price_policy=str(corporate_snapshot["price_policy"]),
+                corporate_actions=cast(list[dict[str, Any]], context["corporate_actions"]),
+                receivable_cash=str(session.portfolio.receivable_cash),
+                locked_shares={
+                    key: str(value) for key, value in session.portfolio.locked_shares.items()
+                },
                 runtime="quick_test",
                 allow_mock=bool(payload.get("allow_mock", True)),
                 decision_at=str(context["decision_at"]),
@@ -298,6 +321,7 @@ def _execute_strategy_tick(
             )
             if result.status != "succeeded":
                 raise StateConflictError("策略快速测试失败", {"phase_results": phase_results})
+            require_signal_quality(result.signals, quality_exclusions)
             return result.signals
 
         session.advance(trading_day, market_bars, strategy)

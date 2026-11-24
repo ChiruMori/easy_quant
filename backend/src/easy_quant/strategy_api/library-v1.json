@@ -1,13 +1,23 @@
 [
   {
+    "key": "trading_day",
+    "name": "当前交易日",
+    "signature": "context.trading_day()",
+    "description": "返回当前运行阶段的交易日，不读取行情；缺省时使用决策时点的上海日期。",
+    "parameters": "无",
+    "output": "YYYY-MM-DD 字符串。",
+    "example": "today = context.trading_day()",
+    "runtime": "快测、回测和实盘均使用注入的决策时点。"
+  },
+  {
     "key": "history",
     "name": "研究数据表",
-    "signature": "context.history(symbol, dataset='daily-bars')",
+    "signature": "context.history(symbol, dataset=\"daily-bars\", *, adjustment=\"qfq\")",
     "description": "只读取决策时点可见数据，显式数值列转换为float64，日线按交易日升序；返回独立副本。",
-    "parameters": "symbol：证券代码；dataset：数据集，默认daily-bars。",
+    "parameters": "symbol：证券代码；dataset：数据集；adjustment：raw/qfq/hfq。",
     "output": "pandas.DataFrame；无记录为空表；证券代码保持字符串，缺失数值为NaN。",
     "example": "bars = context.history(symbol)\nif not bars.empty:\n    print(bars['close'].rolling(5).mean().iloc[-1])",
-    "runtime": "盘前/盘中不读取当日收盘；数据依赖可静态提取，动态dataset须显式声明因子或库依赖。"
+    "runtime": "验证原价、公司行为覆盖与PIT；默认决策日锚定前复权，hfq以窗口首日为基准；成交量/额保留实际值，另提供adjusted_volume、adjusted_vwap。"
   },
   {
     "key": "universe",
@@ -135,7 +145,7 @@
     "signature": "context.library(key, **parameters)",
     "description": "读取平台维护的数据。",
     "parameters": "market.daily-bars、market.value、fundamental.latest、fundamental.history；symbol，基本面另传 dataset。",
-    "output": "可见记录序列、最新记录或 None；数值为 Decimal。",
+    "output": "可见记录序列、最新记录或None；研究数值为float。market.daily-bars默认按决策日锚定前复权。",
     "example": "bars = context.library('market.daily-bars', symbol=symbol)",
     "runtime": "回测预热后只读快照，遵守 available_at；原始数据必须使用 library；factor 仅计算因子。"
   },
@@ -148,5 +158,15 @@
     "output": "各报告期当时可见版本的记录序列，按报告期升序。缺失数值为None；金额元、比例百分数。",
     "example": "reports = context.library('financial.income-statements', symbol='000001', period='annual')\nfor row in reports:\n    print(row['report_period'], row.get('parent_net_profit'))",
     "runtime": "三个运行时一致，先按available_at过滤未来，再选择报告版本；利润和现金流为累计口径。未知版本时间只在实际采集后可见。"
+  },
+  {
+    "key": "context.corporate_actions",
+    "name": "已生效公司行为",
+    "signature": "context.corporate_actions(symbol, *, since=None)",
+    "description": "读取已生效的价格调整事件，供策略调整保存的价格锚。通达信数据采用生效日历史重建，原始观测时间保留在输入审计中。",
+    "parameters": "symbol：证券代码；since：价格锚所属日期，仅返回该日期之后的事件。",
+    "output": "事件列表：event_id、record_key、ex_date、price_ratio、share_multiplier、cash_per_share",
+    "example": "events = context.corporate_actions('000001')",
+    "runtime": "不暴露未来生效事件；现金和股份分量用于价格换算，不替代实际权益账本。按event_id与record_key幂等处理；范围内未知事件会报错，已处理源条款修订须复核。"
   }
 ]

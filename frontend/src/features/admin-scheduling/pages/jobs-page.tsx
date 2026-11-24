@@ -139,11 +139,13 @@ export function JobsPage() {
                     job.error_summary?.message ||
                     (job.lease_expired ? "等待 worker 重新领取；请检查 worker 日志" : null) ||
                     (job.result_summary?.skipped ? String(job.result_summary.skipped) : null) ||
-                    (job.job_type === "tdx-daily-update" && job.result_summary
-                      ? `更新 ${Number(job.result_summary.imported_days ?? 0)} 日 / ${Number(job.result_summary.imported_rows ?? 0)} 条；未变化 ${Number(job.result_summary.unchanged_days ?? 0)} 日；休市 ${Number(job.result_summary.closed_days ?? 0)} 日`
-                      : job.job_type === "index-daily-update" && job.result_summary
-                        ? `同步 ${Number(job.result_summary.record_count ?? 0)} 条 · 截至 ${String(job.result_summary.end_day ?? "—")}`
-                        : "—")}
+                    (job.job_type === "tdx-equity-enrichment" && job.result_summary
+                      ? `已检查 ${Number(job.result_summary.completed ?? 0)} / ${Number(job.result_summary.total ?? 0)} 只；新增权益 ${Number(job.result_summary.added ?? 0)} 条；待补齐 ${Number(job.result_summary.unresolved ?? 0)} 条；请求失败 ${Array.isArray(job.result_summary.failed) ? job.result_summary.failed.length : 0} 只${job.result_summary.status === "partial" ? "（存在缺口）" : ""}`
+                      : job.job_type === "tdx-daily-update" && job.result_summary
+                        ? `更新 ${Number(job.result_summary.imported_days ?? 0)} 日 / ${Number(job.result_summary.imported_rows ?? 0)} 条；未变化 ${Number(job.result_summary.unchanged_days ?? 0)} 日；休市 ${Number(job.result_summary.closed_days ?? 0)} 日`
+                        : job.job_type === "index-daily-update" && job.result_summary
+                          ? `同步 ${Number(job.result_summary.record_count ?? 0)} 条 · 截至 ${String(job.result_summary.end_day ?? "—")}`
+                          : "—")}
                 </TableCell>
               </TableRow>
             ))}

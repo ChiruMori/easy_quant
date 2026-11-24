@@ -65,8 +65,15 @@ class DailyUpdateResult:
 
 
 class TdxDailyUpdateService:
-    def __init__(self, feed: DailyFeed, store: DailyStore, now: Callable[[], datetime]) -> None:
+    def __init__(
+        self,
+        feed: DailyFeed,
+        store: DailyStore,
+        now: Callable[[], datetime],
+        after_update: Callable[[], None] = lambda: None,
+    ) -> None:
         self.feed, self.store, self.now = feed, store, now
+        self.after_update = after_update
 
     def update(
         self,
@@ -112,6 +119,9 @@ class TdxDailyUpdateService:
             if start > end:
                 if start_day is not None:
                     raise ValueError("开始日期不能晚于结束日期")
+                # 原价已更新到截止日，仍需检查目录；盘前不能沿用无限过期的公司行为清单。
+                self.feed.calendar()
+                self.after_update()
                 return DailyUpdateResult(str(start), str(end))
             if (end - start).days >= 90:
                 raise ValueError("单次最多更新 90 个自然日；请显式分段补数或重新全量导入")
@@ -160,4 +170,6 @@ class TdxDailyUpdateService:
                     )
                 progress(result)
                 day += timedelta(days=1)
+            if not result.unresolved:
+                self.after_update()
             return result

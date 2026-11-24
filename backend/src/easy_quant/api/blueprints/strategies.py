@@ -77,6 +77,23 @@ def before_market(context, parameters):
 def on_market(context, parameters):
     symbol = str(parameters.get("symbol", "000001"))
     anchor = Decimal(str(parameters.get("anchor_price", "10")))
+    # 锚定价属于指定日期的原价尺度；后续除权只调整锚，不制造网格穿越。
+    anchor_day = str(context.store.get("grid_anchor_day",
+                     parameters.get("anchor_day", context.trading_day())))
+    anchor = Decimal(str(context.store.get("grid_anchor_price", anchor)))
+    applied = context.store.get("grid_corporate_actions", {})
+    for event in context.corporate_actions(symbol, since=anchor_day):
+        if event["ex_date"] <= anchor_day:
+            continue
+        previous = applied.get(event["event_id"])
+        if previous and previous != event["record_key"]:
+            raise ValueError("公司行为已修订，请复核网格状态")
+        if not previous:
+            anchor = anchor * Decimal(str(event["price_ratio"]))
+            applied[event["event_id"]] = event["record_key"]
+    context.store.set("grid_anchor_day", anchor_day)
+    context.store.set("grid_anchor_price", anchor)
+    context.store.set("grid_corporate_actions", applied)
     step = Decimal(str(parameters.get("grid_step", "0.05")))
     base = Decimal(str(parameters.get("base_weight", "0.5")))
     weight = Decimal(str(parameters.get("grid_weight", "0.1")))
@@ -90,7 +107,7 @@ def on_market(context, parameters):
     if symbol in account["pending_buy_symbols"]:
         return []
     held = context.position(symbol)
-    equity = account["cash"] + held * price
+    equity = account["cash"] + account.get("receivable_cash", Decimal(0)) + held * price
     if equity <= 0:
         return []
     level = int((anchor - price) / (anchor * step))

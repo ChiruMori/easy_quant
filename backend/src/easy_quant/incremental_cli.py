@@ -8,9 +8,11 @@ from datetime import UTC, date, datetime
 
 import httpx
 
+from easy_quant.application.services.corporate_actions import sync_tdx_candidates
 from easy_quant.application.services.tdx_incremental import TdxDailyUpdateService
 from easy_quant.config import BACKEND_ROOT, get_settings
 from easy_quant.infrastructure.imports.tdx_daily import OfficialDailyFeed
+from easy_quant.infrastructure.persistence.repositories.runtime import SqlAlchemyMarketDataStore
 from easy_quant.infrastructure.persistence.repositories.tdx_daily import SqlDailyStore
 from easy_quant.infrastructure.persistence.session import (
     create_database_engine,
@@ -41,13 +43,51 @@ def main() -> int:
         if stop_requested:
             raise KeyboardInterrupt
 
+    catalog_checked_at = None
+
+    def corporate_archive(payload: bytes) -> None:
+        nonlocal catalog_checked_at
+        with create_session_factory(engine)() as session:
+            checked_at = datetime.now(UTC)
+            sync_tdx_candidates(SqlAlchemyMarketDataStore(session), payload, checked_at)
+            catalog_checked_at = checked_at
+
+    def publish_tdx_prices():
+        from easy_quant.application.services.tdx_price_sync import prepare_tdx_prices
+
+        with create_session_factory(engine)() as session:
+            checked_at = datetime.now(UTC)
+            prepare_tdx_prices(
+                SqlAlchemyMarketDataStore(session),
+                (directory / "gbbq.zip").read_bytes(),
+                checked_at,
+                apply=True,
+                force_rebuild=True,
+                catalog_checked_at=catalog_checked_at,
+            )
+            from types import SimpleNamespace
+
+            from easy_quant.infrastructure.persistence.repositories.jobs import (
+                SqlAlchemyJobRepository,
+            )
+            from easy_quant.worker.handlers.corporate_actions import enqueue_equity_enrichment
+
+            enqueue_equity_enrichment(
+                SimpleNamespace(
+                    market_data=SqlAlchemyMarketDataStore(session),
+                    jobs=SqlAlchemyJobRepository(session),
+                ),
+                datetime.now(UTC),
+            )
+
     previous_handler = signal.signal(signal.SIGINT, request_stop)
     try:
         with httpx.Client(timeout=60, follow_redirects=True, trust_env=False) as client:
             service = TdxDailyUpdateService(
-                OfficialDailyFeed(client, directory),
+                OfficialDailyFeed(client, directory, corporate_archive=corporate_archive),
                 SqlDailyStore(create_session_factory(engine), lambda: datetime.now(UTC)),
                 lambda: datetime.now(UTC),
+                after_update=publish_tdx_prices,
             )
             result = service.update(
                 start_day=args.start_day,

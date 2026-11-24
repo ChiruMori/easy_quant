@@ -34,6 +34,8 @@ test("因子—策略保存运行—回测—实盘的真实前后端旅程", as
   await page.getByRole("button", { name: "搜索" }).click()
   await page.getByRole("link", { name: /000001/ }).click()
   await expect(page.getByText("K 线图", { exact: true })).toBeVisible()
+  // 此 CSV 未声明价格口径，只验证原始事实浏览，不能静默用于研究复权。
+  await page.getByRole("tab", { name: "不复权", exact: true }).click()
   await expect(page.getByRole("img", { name: "可缩放和拖动的 K 线图" })).toBeVisible()
 
   await page.goto("/factors")

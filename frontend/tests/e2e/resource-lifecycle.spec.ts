@@ -140,7 +140,9 @@ test("360px 日期选择、关联阻止、取消和删除失败恢复", async ({
 
   await page.goto("/strategies?strategy=s&version=v")
   await page.getByRole("button", { name: "删除策略", exact: true }).click()
-  await expect(page.getByRole("alert")).toContainText("手动删除相关实盘数据")
+  await expect(page.getByRole("alertdialog").getByRole("alert")).toContainText(
+    "手动删除相关实盘数据",
+  )
   await expect(page.getByRole("button", { name: "确认删除策略" })).toBeDisabled()
   await page.getByRole("button", { name: "取消" }).click()
 

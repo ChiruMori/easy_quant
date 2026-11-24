@@ -10,6 +10,98 @@
     "securitySchemes": {"cookieSession": {"type": "apiKey", "in": "cookie", "name": "session"}, "csrf": {"type": "apiKey", "in": "header", "name": "X-CSRF-Token"}}
   },
   "paths": {
+    "/live-instances/{instance_id}/corporate-actions": {
+      "get": {
+        "operationId": "listCorporateActions",
+        "summary": "实盘公司行为核对",
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "核对结果"
+          },
+          "409": {
+            "description": "覆盖未核实、版本冲突或权益尚未到账"
+          }
+        }
+      }
+    },
+    "/live-instances/{instance_id}/corporate-actions/confirm": {
+      "post": {
+        "operationId": "confirmCorporateAction",
+        "summary": "实盘公司行为核对",
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "核对结果"
+          },
+          "409": {
+            "description": "覆盖未核实、版本冲突或权益尚未到账"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "event_id",
+                  "record_key",
+                  "cash",
+                  "share_delta",
+                  "evidence"
+                ],
+                "properties": {
+                  "event_id": {
+                    "type": "string"
+                  },
+                  "record_key": {
+                    "type": "string"
+                  },
+                  "cash": {
+                    "type": "string"
+                  },
+                  "share_delta": {
+                    "type": "string"
+                  },
+                  "evidence": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/factors/{key}/quick-test": {
       "post": {
         "operationId": "quickTestFactor",
@@ -120,7 +212,7 @@
     "/market-data/instruments/{symbol}/daily-bars": {"get": {"operationId": "readInstrumentDailyBars", "description": "登录用户只读查询共享行情；未指定区间时最近180条，指定区间最多最近1000条，不额外访问第三方来源", "parameters": [{"name": "symbol", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "start_day", "in": "query", "schema": {"type": "string", "format": "date"}}, {"name": "end_day", "in": "query", "schema": {"type": "string", "format": "date"}}], "responses": {"200": {"description": "证券日线数组"}, "401": {"description": "未登录"}}}},
     "/admin/market-data/instruments/{symbol}": {"get": {"operationId": "getInstrument", "responses": {"200": {"description": "证券资料"}}}},
     "/admin/market-data/instruments/{symbol}/status": {"put": {"operationId": "updateInstrumentStatus", "responses": {"200": {"description": "已更新交易状态"}, "404": {"description": "证券不存在"}}}},
-    "/admin/market-data/instruments/{symbol}/daily-bars": {"get": {"operationId": "getInstrumentDailyBars", "responses": {"200": {"description": "证券日线"}}}},
+    "/admin/market-data/instruments/{symbol}/daily-bars": {"get": {"operationId": "getInstrumentDailyBars", "description": "原价或通达信口径研究复权；普通图表锚定最后可见日线，显式 as_of 按决策时点检查。历史生效日重建不代表原始公告 PIT，研究价格不等于实际现金与股数账本。", "parameters": [{"name": "adjustment", "in": "query", "schema": {"type": "string", "enum": ["raw", "qfq", "hfq"], "default": "raw"}}, {"name": "as_of", "in": "query", "schema": {"type": "string", "format": "date-time"}}], "responses": {"200": {"description": "证券日线，含价格基准、锚点及来源身份"}, "409": {"description": "缺少价格覆盖或受影响区间存在未解决事件"}}}},
     "/admin/market-data/datasets/{dataset_key}/sources": {"put": {"operationId": "setSources", "responses": {"200": {"description": "updated"}}}},
     "/admin/market-data/acquisitions": {"get": {"operationId": "listAcquisitions", "responses": {"200": {"description": "tasks"}}}, "post": {"operationId": "createAcquisition", "responses": {"202": {"description": "queued"}}}},
     "/admin/market-data/acquisitions/{task_id}": {"get": {"operationId": "getAcquisition", "responses": {"200": {"description": "status"}}}},

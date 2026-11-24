@@ -131,6 +131,7 @@ class Worker:
                 "market-data-collection",
                 "market-data-acquisition",
                 "index-daily-update",
+                "tdx-equity-enrichment",
             }
 
             def check_wait():

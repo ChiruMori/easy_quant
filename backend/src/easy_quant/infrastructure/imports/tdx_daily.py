@@ -8,6 +8,7 @@ import math
 import re
 import struct
 import zipfile
+from collections.abc import Callable
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -123,8 +124,15 @@ def parse_calendar(payload: bytes) -> HolidayCalendar:
 
 
 class OfficialDailyFeed:
-    def __init__(self, client: httpx.Client, directory: Path) -> None:
+    def __init__(
+        self,
+        client: httpx.Client,
+        directory: Path,
+        *,
+        corporate_archive: Callable[[bytes], None] | None = None,
+    ) -> None:
         self.client, self.directory = client, directory
+        self.corporate_archive = corporate_archive
 
     def _download(self, url: str) -> bytes | None:
         try:
@@ -150,6 +158,13 @@ class OfficialDailyFeed:
         temporary = target.with_suffix(".zip.part")
         temporary.write_bytes(payload)
         temporary.replace(target)
+        if name == "gbbq.zip":
+            # 保留来源版本，研究重建和回测快照可追溯到实际下载的完整归档。
+            import hashlib
+
+            archived = self.directory / f"gbbq-{hashlib.sha256(payload).hexdigest()}.zip"
+            if not archived.exists():
+                archived.write_bytes(payload)
 
     def calendar(self) -> HolidayCalendar:
         payload = self._download(CALENDAR_URL)
@@ -160,6 +175,8 @@ class OfficialDailyFeed:
         except (ValueError, KeyError, UnicodeError, zipfile.BadZipFile):
             raise ValueError("官方休市日历归档无效") from None
         self._save("gbbq.zip", payload)
+        if self.corporate_archive is not None:
+            self.corporate_archive(payload)
         return calendar
 
     def fetch(self, day: date) -> DailyArchive | None:

@@ -82,6 +82,7 @@ def save_financial_rows(store, dataset, rows, source, fetched):
         periods=sorted({str(row.get("report_period") or "") for row in rows}),
     )
     all_incoming = []
+    candidate_parents = []
     for symbol, rows in grouped.items():
         existing = versions.get(symbol, [])
         known = {str(row["record_key"]): row for row in existing}
@@ -96,6 +97,7 @@ def save_financial_rows(store, dataset, rows, source, fetched):
             digest = hashlib.sha256(f"{dataset}|{source}|{content}".encode()).hexdigest()
             if digest in known:
                 unchanged += 1
+                candidate_parents.append(known[digest])
                 continue
             publication = raw.get("published_at")
             revision = raw.get("source_updated_at")
@@ -148,6 +150,13 @@ def save_financial_rows(store, dataset, rows, source, fetched):
             )
         # 单只股票的响应先完整校验；无效响应不能留下半张报表。
         all_incoming.extend(incoming)
+        candidate_parents.extend(incoming)
         saved += len(incoming)
     store.upsert_records(dataset, all_incoming, count_overwritten=False)
+    if dataset == "dividend-plans" and candidate_parents:
+        from easy_quant.application.services.corporate_actions import dividend_candidates
+
+        store.upsert_records(
+            "corporate-actions", dividend_candidates(candidate_parents), count_overwritten=False
+        )
     return saved, unchanged

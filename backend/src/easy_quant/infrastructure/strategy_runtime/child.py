@@ -86,6 +86,7 @@ def stream_main() -> None:
     prices: dict[str, list[str]] = {}
     bars: dict[str, list[dict[str, object]]] = {}
     strategy_state: dict[str, object] = {}
+    corporate_actions: object = []
 
     def add_prices(rows: list[dict[str, object]]) -> None:
         for row in rows:
@@ -108,7 +109,9 @@ def stream_main() -> None:
     phases = ("before_market", "on_market", "after_market")
 
     def execute_phase(request: dict[str, object], phase: str) -> dict[str, object]:
-        nonlocal namespace, active_day, phase_index, strategy_state
+        nonlocal namespace, active_day, phase_index, strategy_state, corporate_actions
+        if "corporate_actions" in request:
+            corporate_actions = request["corporate_actions"]
         trading_day = str(request["trading_day"])
         if phase == "before_market":
             if phase_index != 3 or (active_day is not None and trading_day <= active_day):
@@ -161,6 +164,10 @@ def stream_main() -> None:
             "allow_mock": request.get("allow_mock", False),
             "decision_at": request.get("decision_at", "9999-12-31T00:00:00+00:00"),
             "strategy_state": strategy_state,
+            "price_policy": request.get("price_policy"),
+            "corporate_actions": corporate_actions,
+            "receivable_cash": request.get("receivable_cash", "0"),
+            "locked_shares": request.get("locked_shares", {}),
         }
         result = _execute_call(namespace, parameters, {"context": context, "phase": phase})
         if result.get("ok"):
@@ -190,6 +197,7 @@ def _safe_builtins() -> dict[str, object]:
     return {
         "__import__": numeric_importer(),
         "Decimal": Decimal,
+        "ValueError": ValueError,
         "sorted": sorted,
         "set": set,
         "abs": abs,

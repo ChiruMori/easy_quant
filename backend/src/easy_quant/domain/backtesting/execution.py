@@ -50,7 +50,11 @@ def execute_signal(
         ) / (previous + signal.quantity)
         portfolio.positions[signal.symbol] = portfolio.position(signal.symbol) + signal.quantity
     else:
-        if portfolio.position(signal.symbol) < signal.quantity:
+        if (
+            portfolio.position(signal.symbol)
+            - portfolio.locked_shares.get(signal.symbol, Decimal(0))
+            < signal.quantity
+        ):
             return None
         portfolio.cash += gross - fee
         portfolio.positions[signal.symbol] = portfolio.position(signal.symbol) - signal.quantity

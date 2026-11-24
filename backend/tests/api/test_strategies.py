@@ -129,7 +129,10 @@ def test_sample_moving_average_bounds_signals_by_expected_holdings_through_worke
     assert queued.status_code == 202
     _run_worker_once(container)
     run = client.get(f"/api/v1/strategies/{strategy['id']}/runs").get_json()["data"][0]
-    assert run["status"] == "succeeded"
+    assert run["status"] == "succeeded", [
+        (phase["phase"], phase["status"], phase.get("error"))
+        for phase in run.get("phase_results", [])
+    ]
     assert len(run["phase_results"][0]["signals"]) == 10
     assert run["phase_results"][0]["stdout"] == ""
 

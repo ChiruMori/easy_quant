@@ -90,8 +90,10 @@ export const getInstrumentDailyBars = (
   startDay?: string,
   endDay?: string,
   readOnly = false,
+  adjustment: "raw" | "qfq" | "hfq" = "raw",
 ) => {
   const query = new URLSearchParams()
+  query.set("adjustment", adjustment)
   if (startDay) query.set("start_day", startDay)
   if (endDay) query.set("end_day", endDay)
   return apiRequest<DailyBar[]>(

@@ -61,7 +61,7 @@ from easy_quant.infrastructure.persistence.session import (
 )
 from easy_quant.infrastructure.security import SecretBox
 
-_DAILY_BARS_DESCRIPTION = "股票沿用已有复权口径；指数固定不复权"
+_DAILY_BARS_DESCRIPTION = "保存不复权原价；研究复权须核验公司行为，指数不复权"
 _TENCENT_DAILY_SOURCE = {"key": "tencent", "name": "腾讯行情", "enabled": True}
 _TRADING_STATUS_DESCRIPTION = "盘后自动确认停牌及真实成交复牌；不以行情缺失或预计复牌日推断状态"
 
@@ -71,6 +71,7 @@ def _refresh_dataset_description(datasets: Any) -> None:
         if dataset.get("key") == "daily-bars" and dataset.get("description") in {
             "前复权日线开高低收与成交量",
             "日线行情；公开接口提供前复权，通达信全量导入为不复权",
+            "股票沿用已有复权口径；指数固定不复权",
         }:
             dataset["description"] = _DAILY_BARS_DESCRIPTION
             datasets[index] = dataset
@@ -259,6 +260,7 @@ class Container:
     financial_bulk: Any = None
     collection_checkpoints: Any = field(default_factory=dict)
     tdx_daily: Any = None
+    equity_source: Any = None
     jobs: Any = None
     secret_box: SecretBox | None = None
     notification_channels: dict[str, Any] = field(default_factory=dict)
@@ -347,17 +349,46 @@ def build_container(settings: Settings | None = None) -> Container:
     container.data_sync = _build_market_data_sync(container, raw_cache)
     import httpx
 
+    from easy_quant.application.services.corporate_actions import sync_tdx_candidates
     from easy_quant.application.services.tdx_incremental import TdxDailyUpdateService
+    from easy_quant.infrastructure.data_sources.cninfo_actions import CninfoEquitySource
     from easy_quant.infrastructure.imports.tdx_daily import OfficialDailyFeed
     from easy_quant.infrastructure.persistence.repositories.tdx_daily import SqlDailyStore
+
+    container.equity_source = CninfoEquitySource()
+    catalog_checked_at = None
+
+    def receive_corporate_archive(payload):
+        nonlocal catalog_checked_at
+        checked_at = SystemClock().now()
+        sync_tdx_candidates(container.market_data, payload, checked_at)
+        catalog_checked_at = checked_at
+
+    def publish_tdx_prices():
+        from easy_quant.application.services.tdx_price_sync import prepare_tdx_prices
+
+        archive = BACKEND_ROOT / ".local-data/tdx/daily/gbbq.zip"
+        if archive.exists():
+            session.expire_all()
+            checked_at = SystemClock().now()
+            prepare_tdx_prices(
+                container.market_data,
+                archive.read_bytes(),
+                checked_at,
+                apply=True,
+                force_rebuild=True,
+                catalog_checked_at=catalog_checked_at,
+            )
 
     container.tdx_daily = TdxDailyUpdateService(
         OfficialDailyFeed(
             httpx.Client(timeout=60, follow_redirects=True, trust_env=False),
             BACKEND_ROOT / ".local-data/tdx/daily",
+            corporate_archive=receive_corporate_archive,
         ),
         SqlDailyStore(create_session_factory(engine), SystemClock().now),
         SystemClock().now,
+        after_update=publish_tdx_prices,
     )
     encryption_secret = (
         settings.credential_encryption_key.get_secret_value()

@@ -436,8 +436,8 @@ class MarketDataSyncService:
             symbol = str(input_symbol).zfill(6)
             if symbol in suspended:
                 continue
-            adjustment = "none" if is_index(symbol) else self.store.bar_adjustment(symbol) or "qfq"
-            if adjustment not in {"none", "qfq"}:
+            adjustment = self.store.bar_adjustment(symbol) or "none"
+            if adjustment != "none":
                 raise StateConflictError(
                     "历史日线复权口径不明确，无法自动补齐",
                     {"symbol": symbol, "adjustment": adjustment},

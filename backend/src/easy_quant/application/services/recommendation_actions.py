@@ -73,6 +73,7 @@ def ledger_entries(state: LiveTrackingState, instance_id: str) -> list[Portfolio
             Decimal(str(item["quantity_delta"])),
             Decimal(str(item["price"])),
             int(item.get("sequence", 0)),
+            str(item.get("kind", "trade")),
         )
         for item in state.ledger
         if item["live_instance_id"] == instance_id
