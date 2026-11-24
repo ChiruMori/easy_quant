@@ -288,6 +288,8 @@ def test_equity_background_job_resumes_and_does_not_duplicate_completed_source_r
 
 def test_archive_snapshot_limits_coverage_even_when_imported_later():
     store = store_with_prices()
+    with pytest.raises(ValueError, match="空清单"):
+        prepare(store, [], apply=True)
     prepare(store, [{**candidate(), "archive_snapshot_day": "2026-09-24"}], apply=True)
     book = CorporateActionBook(runtime_snapshot(store)["corporate_actions"])
     book.require_coverage("000001", date(2026, 9, 21), date(2026, 9, 24), AS_OF)
@@ -296,6 +298,38 @@ def test_archive_snapshot_limits_coverage_even_when_imported_later():
     with pytest.raises(ValueError, match="旧归档"):
         prepare(store, [{**candidate(), "archive_snapshot_day": "2026-09-23"}], apply=True)
     assert store.list_records(TDX_PRICE_DATASET)[0]["end_day"] == "2026-09-24"
+
+
+def test_previous_session_catalog_serves_premarket_but_stale_catalog_needs_real_check():
+    from easy_quant.application.services.tdx_incremental import HolidayCalendar
+
+    store = store_with_prices()
+    rows = [{**candidate(), "archive_snapshot_day": "2026-09-24"}]
+    calendar = HolidayCalendar(frozenset({2026}), frozenset(), "fixed-calendar")
+    with patch(
+        "easy_quant.application.services.tdx_price_sync.parse_calendar", return_value=calendar
+    ):
+        prepare(store, rows, apply=True)
+        assert store.list_records(TDX_PRICE_DATASET)[0]["end_day"] == "2026-09-25"
+        later = AS_OF + timedelta(days=3)
+        prepare(store, rows, now=later, apply=True)
+        book = CorporateActionBook(runtime_snapshot(store)["corporate_actions"])
+        with pytest.raises(StateConflictError, match="覆盖不足"):
+            book.require_coverage("000001", date(2026, 9, 24), date(2026, 9, 28), later)
+        prepare(store, rows, now=later, catalog_checked_at=later, apply=True)
+        book = CorporateActionBook(runtime_snapshot(store)["corporate_actions"])
+        book.require_coverage("000001", date(2026, 9, 24), date(2026, 9, 28), later)
+        assert store.list_records(TDX_PRICE_DATASET)[0]["catalog_checked_at"] == later.isoformat()
+        assert store.list_records(TDX_PRICE_DATASET)[0]["catalog_valid_through"] == "2026-09-29"
+        book.require_coverage(
+            "000001", date(2026, 9, 24), date(2026, 9, 29), later + timedelta(days=1)
+        )
+        with pytest.raises(StateConflictError, match="覆盖不足"):
+            book.require_coverage(
+                "000001", date(2026, 9, 24), date(2026, 9, 30), later + timedelta(days=2)
+            )
+        with pytest.raises(ValueError, match="检查时间"):
+            prepare(store, rows, catalog_checked_at=later)
 
 
 def test_refresh_is_idempotent_and_source_revision_keeps_observed_version():

@@ -43,20 +43,27 @@ def main() -> int:
         if stop_requested:
             raise KeyboardInterrupt
 
+    catalog_checked_at = None
+
     def corporate_archive(payload: bytes) -> None:
+        nonlocal catalog_checked_at
         with create_session_factory(engine)() as session:
-            sync_tdx_candidates(SqlAlchemyMarketDataStore(session), payload, datetime.now(UTC))
+            checked_at = datetime.now(UTC)
+            sync_tdx_candidates(SqlAlchemyMarketDataStore(session), payload, checked_at)
+            catalog_checked_at = checked_at
 
     def publish_tdx_prices():
         from easy_quant.application.services.tdx_price_sync import prepare_tdx_prices
 
         with create_session_factory(engine)() as session:
+            checked_at = datetime.now(UTC)
             prepare_tdx_prices(
                 SqlAlchemyMarketDataStore(session),
                 (directory / "gbbq.zip").read_bytes(),
-                datetime.now(UTC),
+                checked_at,
                 apply=True,
                 force_rebuild=True,
+                catalog_checked_at=catalog_checked_at,
             )
             from types import SimpleNamespace
 

@@ -71,6 +71,36 @@ def test_replay_is_idempotent_and_source_revision_updates_same_business_keys() -
     assert len(store.bars) == 2 and store.states[DAY].sha256 == "b" * 64
 
 
+def test_premarket_still_checks_catalog_when_daily_bars_are_already_current(monkeypatch):
+    feed, store = Feed(), Store()
+    store.baseline_day = DAY
+    checked, published = [], []
+    original = feed.calendar
+    monkeypatch.setattr(feed, "calendar", lambda: checked.append(True) or original())
+    updater = TdxDailyUpdateService(
+        feed,
+        store,
+        lambda: datetime(2026, 10, 1, 0, tzinfo=UTC),
+        after_update=lambda: published.append(True),
+    )
+    assert updater.update().imported_days == 0
+    assert checked == published == [True] and feed.requested == []
+
+
+def test_failed_raw_day_does_not_publish_catalog_with_wrong_preceding_close():
+    feed, store = Feed(), Store()
+    store.fail = True
+    published = []
+    updater = TdxDailyUpdateService(
+        feed,
+        store,
+        lambda: datetime(2026, 10, 2, 12, tzinfo=UTC),
+        after_update=lambda: published.append(True),
+    )
+    assert updater.update(start_day=DAY, end_day=DAY).unresolved
+    assert published == []
+
+
 def test_explicit_replay_repairs_external_overwrite_even_when_digest_is_unchanged():
     feed, store = Feed(), Store()
     updater = service(feed, store)

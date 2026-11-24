@@ -356,6 +356,13 @@ def build_container(settings: Settings | None = None) -> Container:
     from easy_quant.infrastructure.persistence.repositories.tdx_daily import SqlDailyStore
 
     container.equity_source = CninfoEquitySource()
+    catalog_checked_at = None
+
+    def receive_corporate_archive(payload):
+        nonlocal catalog_checked_at
+        checked_at = SystemClock().now()
+        sync_tdx_candidates(container.market_data, payload, checked_at)
+        catalog_checked_at = checked_at
 
     def publish_tdx_prices():
         from easy_quant.application.services.tdx_price_sync import prepare_tdx_prices
@@ -363,21 +370,21 @@ def build_container(settings: Settings | None = None) -> Container:
         archive = BACKEND_ROOT / ".local-data/tdx/daily/gbbq.zip"
         if archive.exists():
             session.expire_all()
+            checked_at = SystemClock().now()
             prepare_tdx_prices(
                 container.market_data,
                 archive.read_bytes(),
-                SystemClock().now(),
+                checked_at,
                 apply=True,
                 force_rebuild=True,
+                catalog_checked_at=catalog_checked_at,
             )
 
     container.tdx_daily = TdxDailyUpdateService(
         OfficialDailyFeed(
             httpx.Client(timeout=60, follow_redirects=True, trust_env=False),
             BACKEND_ROOT / ".local-data/tdx/daily",
-            corporate_archive=lambda payload: sync_tdx_candidates(
-                container.market_data, payload, SystemClock().now()
-            ),
+            corporate_archive=receive_corporate_archive,
         ),
         SqlDailyStore(create_session_factory(engine), SystemClock().now),
         SystemClock().now,

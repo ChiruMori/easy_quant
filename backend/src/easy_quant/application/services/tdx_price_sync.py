@@ -3,14 +3,16 @@
 import hashlib
 from bisect import bisect_left
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
+from zipfile import BadZipFile
 
 from easy_quant.application.services.corporate_actions import identity
 from easy_quant.domain.market_data.corporate_actions import ZONE, day, number
 from easy_quant.domain.market_data.indices import is_index
 from easy_quant.domain.market_data.research_actions import TDX_PRICE_DATASET, TDX_PRICE_VERSION
 from easy_quant.infrastructure.imports.tdx_corporate_actions import archive_candidates
+from easy_quant.infrastructure.imports.tdx_daily import parse_calendar
 
 NON_PRICE = {2, 3, 5, 6, 7, 8, 9, 10, 12, 13, 14}
 
@@ -23,9 +25,12 @@ def prepare_tdx_prices(
     symbols=None,
     apply=False,
     force_rebuild=False,
+    catalog_checked_at=None,
     progress=lambda _row: None,
 ):
     candidates = archive_candidates(payload, observed_at)
+    if not candidates:
+        raise ValueError("GBBQ 没有有效证券记录，拒绝把空清单发布为无事件覆盖")
     archive_identity = hashlib.sha256(payload).hexdigest()
     grouped = defaultdict(list)
     for row in candidates:
@@ -42,13 +47,33 @@ def prepare_tdx_prices(
     )
     publications, summaries = [], []
     end = observed_at.astimezone(ZONE).date()
+    source_day = None
     snapshot_days = {
         day(row["archive_snapshot_day"]) for row in candidates if row.get("archive_snapshot_day")
     }
-    if snapshot_days:
-        if len(snapshot_days) != 1 or max(snapshot_days) > end:
-            raise ValueError("GBBQ 归档日期不一致或晚于实际观测日期")
-        end = min(end, min(snapshot_days))
+    if snapshot_days and (len(snapshot_days) != 1 or max(snapshot_days) > end):
+        raise ValueError("GBBQ 归档日期不一致或晚于实际观测日期")
+    source_day = min(snapshot_days) if snapshot_days else None
+    if catalog_checked_at is not None and (
+        catalog_checked_at.tzinfo is None or catalog_checked_at > observed_at
+    ):
+        raise ValueError("目录检查时间必须为不晚于观测时点的带时区时间")
+    basis_day = catalog_checked_at.astimezone(ZONE).date() if catalog_checked_at else source_day
+    valid_through = basis_day or end
+    if basis_day is not None:
+        # 最新目录含下一交易日预告，按同包官方日历限定盘前有效期。
+        # 无日历或年份未知时不猜测；检查时间来自真正的下载回调。
+        try:
+            calendar = parse_calendar(payload)
+        except (ValueError, KeyError, UnicodeError, BadZipFile):
+            calendar = None
+        if calendar is not None:
+            following = basis_day + timedelta(days=1)
+            while following.year in calendar.years and calendar.closed(following):
+                following += timedelta(days=1)
+            if following.year in calendar.years:
+                valid_through = following
+        end = min(end, valid_through)
     bounds = store.bar_bounds()
     previous_publications = {row["symbol"]: row for row in store.list_records(TDX_PRICE_DATASET)}
     if apply and any(
@@ -95,6 +120,11 @@ def prepare_tdx_prices(
                 "available_at": observed_at.isoformat(),
                 "observed_at": observed_at.isoformat(),
                 "archive_identity": archive_identity,
+                "archive_snapshot_day": str(source_day) if source_day else None,
+                "catalog_valid_through": str(valid_through),
+                "catalog_checked_at": catalog_checked_at.isoformat()
+                if catalog_checked_at
+                else None,
             }
             publication["content_identity"] = identity(
                 {key: value for key, value in publication.items() if key != "content_identity"}
@@ -217,6 +247,9 @@ def prepare_tdx_prices(
             "observed_at": observed_at.isoformat(),
             "available_at": observed_at.isoformat(),
             "archive_identity": archive_identity,
+            "archive_snapshot_day": str(source_day) if source_day else None,
+            "catalog_valid_through": str(valid_through),
+            "catalog_checked_at": catalog_checked_at.isoformat() if catalog_checked_at else None,
             "context_sources": sorted({str(row["source"]) for row in bars}),
             "supplemental_context_rows": sum(
                 not str(row["source"]).startswith("tdx") for row in bars

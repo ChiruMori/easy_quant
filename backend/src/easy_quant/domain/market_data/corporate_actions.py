@@ -226,7 +226,14 @@ class CorporateActionBook:
             return
         publication = self.price_publication(symbol)
         if publication is not None:
-            if start < day(publication["start_day"]) or end > day(publication["end_day"]):
+            through = max(
+                day(publication["end_day"]),
+                min(
+                    day(publication.get("catalog_valid_through", publication["end_day"])),
+                    as_of.astimezone(ZONE).date(),
+                ),
+            )
+            if start < day(publication["start_day"]) or end > through:
                 raise StateConflictError(
                     "通达信价格调整覆盖不足，请运行盘后更新", {"symbol": symbol}
                 )
